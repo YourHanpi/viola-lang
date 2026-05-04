@@ -1,0 +1,28 @@
+D:\代码\viola\test\backend\hello_world\hello_world.vla
+D:\代码\viola\test\backend\hello_world
+---
+CLASS 0:0:0:0
+viola$lang$string object 0:0:0:0
+END CLASS
+---
+CLASS 0:0:0:0
+viola$collections$Tuple object 0:0:0:0
+END CLASS
+---
+CLASS 0:0:0:0
+viola$lang$exception$Exception object 0:0:0:0
+END CLASS
+---
+METHOD 0:0:0:0
+viola$lang$exception$Exception $what public
+
+
+
+
+---
+FUNC 0:0:0:0
+viola$io$perror
+
+viola$lang$string[] errorMessage
+
+---

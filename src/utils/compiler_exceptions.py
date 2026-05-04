@@ -1,7 +1,23 @@
 # -*- coding: utf-8 -*-
-from .source_info import SourceInfo
+from .source_info import SourceInfo, VIOLA_INIT
 
 from warnings import warn
+
+
+class CommandException(Exception):
+    """
+    命令异常类。
+    """
+
+    def __init__(self, message: str) -> None:
+        """
+        初始化命令异常对象。
+        :param message: 错误信息。
+        """
+        self._message: str = message
+
+    def __str__(self) -> str:
+        return self.__class__.__name__ + ": " + self._message
 
 
 class CompilerException(Exception):
@@ -57,10 +73,27 @@ class CompilerParamError(Exception):
                 f"\tat {self._key}:{self._value}\n")
 
 
-def unable_to_execute_warning(message: str, src_info: SourceInfo):
+class CompilerExceptionGroup(CompilerException):
+    """
+    编译异常组类。
+    """
+
+    def __init__(self, exceptions: list[CompilerException]) -> None:
+        """
+        初始化编译异常组对象。
+        :param exceptions: 错误列表。
+        """
+        super().__init__("", src_info=VIOLA_INIT)
+        self._exceptions: list[CompilerException] = exceptions
+
+    def __str__(self) -> str:
+        return "\n\n".join([str(e) for e in self._exceptions])
+
+
+def unreachable_warning(message: str, src_info: SourceInfo):
     """
     无法执行警告。
     :param message: 警告信息。
     :param src_info: 源代码信息。
     """
-    warn(f"{src_info.traceback}\nUnableToExecuteWarning: {message}")
+    warn(f"{src_info.traceback}\nUnreachableWarning: {message}")
