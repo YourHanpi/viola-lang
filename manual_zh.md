@@ -2,7 +2,7 @@
 
 ## 简介
 
-Viola是一种静态强类型的、编译式的、通用的、大小写敏感的、数据不可变的编程语言，它可以兼容C++。
+Viola是一种静态类型的、编译式的、通用的、大小写敏感的、数据不可变的编程语言，它可以兼容C++。
 
 Viola支持面向对象的程序设计，包括封装、继承、多态和抽象等等。
 
@@ -911,7 +911,7 @@ cpart sq 函数名(参数列表) -> (T) {函数体}
 // T可以为任何数据类型
 ```
 
-此外，还可以向Viola源代码中直接导入C++代码。格式如下：
+此外，还可以向Viola源代码中直接导入C代码。格式如下：
 
 ```viola
 import cpart "文件名"; // 相当于#include "文件名"
@@ -921,7 +921,7 @@ import cpart <文件名>; // 相当于#include <文件名>
 但是导入后需要添加__del__()方法。例如：
 
 ```viola
-import cpart "veryComplexStruct.h";
+import cpart "very_complex_struct.h";
 
 class VeryComplexStruct_ViolaAPI {
     cpart VeryComplexStruct _s;

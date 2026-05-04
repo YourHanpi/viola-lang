@@ -57,10 +57,10 @@ class CompilerParamError(Exception):
                 f"\tat {self._key}:{self._value}\n")
 
 
-def unable_to_execute_warning(message: str, src_info: SourceInfo):
+def unreachable_warning(message: str, src_info: SourceInfo):
     """
     无法执行警告。
     :param message: 警告信息。
     :param src_info: 源代码信息。
     """
-    warn(f"{src_info.traceback}\nUnableToExecuteWarning: {message}")
+    warn(f"{src_info.traceback}\nUnreachableWarning: {message}")

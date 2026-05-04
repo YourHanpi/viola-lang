@@ -11,8 +11,10 @@ class CompilerParams:
     def __getitem__(self, key: str) -> ItemType:
         return self._params[key]
 
-    def __init__(self, param_path: str) -> None:
+    def __init__(self, param_path: str = "") -> None:
         self._params: dict[str, ItemType] = CompilerParams._get_default()
+        if param_path == "":
+            return
         with open(param_path, "rb") as f:
             self._params.update(tomllib.load(f)["compiling"])
 
@@ -27,4 +29,4 @@ class CompilerParams:
         }
 
 
-COMPILER_PARAMS: Optional[CompilerParams] = None
+COMPILER_PARAMS: CompilerParams = CompilerParams()

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
-from .expression import Expression, SYMBOL_TABLE, VariableRef, AttrOp, CallOp, UnpackExpr, CONVERTIBLE_TO_FUNC, TypeRef, ClassRef, StringLiteral
+from .expression import Expression, SYMBOL_TABLE, VariableRef, AttrOp, CallOp, UnpackExpr, CONVERTIBLE_TO_FUNC, TypeRef, ClassRef, StringLiteral, TupleRef
 from .symbol import (
     VariableName,
     TypeName,
@@ -14,7 +14,7 @@ from .symbol import (
     ClassName,
     GenericArgument
 )
-from utils import CompilerException, unable_to_execute_warning, SourceInfo, InternalCompilerException
+from utils import CompilerException, unreachable_warning, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
 from copy import deepcopy
@@ -22,14 +22,14 @@ from enum import Enum
 from typing import Optional
 
 LISTENER_WAIT_FUNC = "viola$lang$thread$waitListener"
-MARK_T: str = "viola$traceback$Mark"
+MARK_T: str = "viola$lang$thread$Mark"
 STACK_A_T: str = "viola$lang$thread$StackA"
 STACK_B_T: str = "viola$lang$thread$StackB"
 STACK_A_PUSH_FUNC: str = "viola$lang$thread$pushStackA"
 STACK_A_POP_FUNC: str = "viola$lang$thread$popStackA"
 STACK_B_PUSH_FUNC: str = "viola$lang$thread$pushStackB"
 STACK_B_POP_FUNC: str = "viola$lang$thread$popStackB"
-THREAD_INFO_T: str = "viola$traceback$ThreadInfo"
+THREAD_INFO_T: str = "viola$lang$thread$ThreadInfo"
 
 VAR_STATE_TABLE: Optional[VariableStateTable] = None
 
@@ -41,6 +41,7 @@ class Mark:
         self._text: StringLiteral = StringLiteral(src_info, src_info.traceback_no_location + "\tat ")
         self._lineno: int = src_info.lineno
         self._mark_name: str = f"$$_MARK_{Mark._mark_counter}"
+        self._is_const_def: bool = False
         Mark._mark_counter += 1
 
     @property
@@ -50,7 +51,8 @@ class Mark:
     @property
     def mark_init(self) -> str:
         result = [
-            f"{self._mark_name} = (({MARK_T} *)malloc(sizeof({MARK_T})));",
+            self._text.head_text,
+            f"{self._mark_name} = ({MARK_T} *)malloc(sizeof({MARK_T}));",
             f"{self._mark_name}->path = $$_PATH;",
             f"{self._mark_name}->line = {self._lineno};",
             self._text.front_text,
@@ -64,11 +66,18 @@ class Mark:
 
     @property
     def mark_insert(self) -> str:
-        return f"{STACK_A_PUSH_FUNC}(listener->executingThreadId, {self._mark_name});"
+        if self._is_const_def:
+            return f"{STACK_A_PUSH_FUNC}(0, {self._mark_name});"
+        return f"{STACK_A_PUSH_FUNC}(listener->currentThreadId, {self._mark_name});"
 
     @property
     def mark_pop(self) -> str:
-        return f"{STACK_A_POP_FUNC}(listener->executingThreadId);"
+        if self._is_const_def:
+            return f"{STACK_A_PUSH_FUNC}(0);"
+        return f"{STACK_A_POP_FUNC}(listener->currentThreadId);"
+
+    def set_as_const_def(self) -> None:
+        self._is_const_def = True
 
 
 class Statement(CompilingItem, ABC):
@@ -83,6 +92,7 @@ class Statement(CompilingItem, ABC):
         else:
             self._mark = None
         self._tail_recursive_mark: Optional[str] = None
+        self._is_const_def: bool = False
 
     @abstractmethod
     def as_async(self) -> "Statement":
@@ -102,13 +112,13 @@ class Statement(CompilingItem, ABC):
     def drop_out(self) -> bool:
         return False
 
-    @abstractmethod
     @property
+    @abstractmethod
     def global_init_text(self) -> str:
         return self._mark.mark_init if self._mark is not None else ""
 
-    @abstractmethod
     @property
+    @abstractmethod
     def head_text(self) -> Optional[str]:
         pass
 
@@ -119,8 +129,8 @@ class Statement(CompilingItem, ABC):
     def inline_mapping(self) -> dict[str, str]:
         return self._inline_mapping
 
-    @abstractmethod
     @property
+    @abstractmethod
     def input_variables(self) -> set[VariableName]:
         pass
 
@@ -132,29 +142,46 @@ class Statement(CompilingItem, ABC):
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
         pass
 
-    @abstractmethod
     @property
+    @abstractmethod
     def is_finished(self) -> bool:
         pass
 
-    @abstractmethod
     @property
+    @abstractmethod
     def new_listeners(self) -> dict[VariableName, str]:
         pass
 
-    @abstractmethod
     @property
+    @abstractmethod
     def new_variables(self) -> set[VariableName]:
         pass
 
     @abstractmethod
-    @property
-    def outer_text(self) -> Optional[str]:
+    def optimize(self) -> "Statement":
         pass
+
+    @property
+    @abstractmethod
+    def outer_text(self) -> Optional[str]:
+        if self._mark is not None:
+            return self._mark.mark_declare
+        return None
+
+    def remove_mark(self) -> None:
+        self._mark = None
+
+    def set_as_const_def(self) -> None:
+        self._is_const_def = True
+        if self._mark is not None:
+            self._mark.set_as_const_def()
 
     @property
     def src_info(self) -> SourceInfo:
         return self._src_info
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        return self
 
     @property
     def tail_recursive_mark(self) -> Optional[str]:
@@ -171,8 +198,11 @@ class Statement(CompilingItem, ABC):
         ]
         return self._indent_text("\n".join(result))
 
-    @abstractmethod
+    def update_const_vars(self, const_vars: dict[VariableName, Expression]) -> dict[VariableName, Expression]:
+        return const_vars
+
     @property
+    @abstractmethod
     def variables_states(self) -> dict[VariableName, VariableState]:
         pass
 
@@ -181,10 +211,83 @@ class Statement(CompilingItem, ABC):
         lines = list(map(lambda line: "\t" * self._indent + line, lines))
         return "\n".join(lines)
 
-    @abstractmethod
     @property
+    @abstractmethod
     def _inner_text(self) -> str:
         pass
+
+
+class _StmtList(Statement):
+
+    def __getitem__(self, item: int) -> Statement:
+        return self._stmts[item]
+
+    def __init__(self, src_info: SourceInfo, stmts: list[Statement]) -> None:
+        super().__init__(src_info)
+        self._stmts: list[Statement] = stmts
+
+    def as_async(self) -> "Statement":
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    def check_tail_recursive(self, func_name: str) -> "Statement":
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    @property
+    def global_init_text(self) -> str:
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    @property
+    def head_text(self) -> Optional[str]:
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    @property
+    def input_variables(self) -> set[VariableName]:
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    @property
+    def is_finished(self) -> bool:
+        return True
+
+    @property
+    def new_listeners(self) -> dict[VariableName, str]:
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    @property
+    def new_variables(self) -> set[VariableName]:
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    def optimize(self) -> "Statement":
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    @property
+    def outer_text(self) -> Optional[str]:
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    @property
+    def stmts(self) -> list[Statement]:
+        return self._stmts
+
+    @property
+    def variables_states(self) -> dict[VariableName, VariableState]:
+        raise InternalCompilerException("Not implemented", self._src_info)
+
+    def update_const_vars(self, const_vars: dict[VariableName, Expression]) -> dict[VariableName, Expression]:
+        for stmt in self._stmts:
+            const_vars = stmt.update_const_vars(const_vars)
+        return const_vars
+
+    @property
+    def _inner_text(self) -> str:
+        raise InternalCompilerException("Not implemented", self._src_info)
 
 
 class DeclStmt(Statement):
@@ -195,6 +298,13 @@ class DeclStmt(Statement):
         self._var: list[VariableName] = []
         self._namespace: list[NamespaceName] = namespace
         self._is_finished: bool = False
+        self._const_vars: dict[VariableName, Expression] = {}
+
+    def add_var(self, var_name: str, var_type_ref: TypeRef, is_global: bool) -> None:
+        if not is_global:
+            self._var.append(TemporaryVariableName(self._src_info, var_name, var_type_ref.return_type))
+        else:
+            self._var.append(GlobalVariableName(self._src_info, self._namespace, var_name, var_type_ref.return_type))
 
     def as_async(self) -> "Statement":
         new_stmt = super().as_async()
@@ -227,6 +337,26 @@ class DeclStmt(Statement):
 
     def finish(self) -> None:
         expr_type = self._var_value.return_type
+        var_names_num: int = len(self._var)
+        if var_names_num > 1 and self._var_value is not None:
+            self._var_value = UnpackExpr(self._src_info, self._var_value)
+        for i, var in enumerate(self._var):
+            if var.type.name == "auto":
+                if self._var_value is None:
+                    raise CompilerException("Can not infer variable type.", self._src_info)
+                expr_type = self._var_value.return_type
+                if isinstance(expr_type, TupleTypeName):
+                    if i < var_names_num - 1:
+                        self._var[i].type.set_real_type(expr_type.types[i])
+                    else:
+                        self._var[i].type.set_real_type(TupleTypeName(self._src_info, expr_type.types[i:]))
+                else:
+                    if var_names_num > 1:
+                        raise CompilerException("Too many variables for unpacking.", self._src_info)
+                    self._var[i].type.set_real_type(expr_type)
+            else:
+                if var.type not in SYMBOL_TABLE:
+                    raise CompilerException(f"{var.type.name} is not defined.", self._src_info)
         if isinstance(expr_type, TupleTypeName):
             if len(self._var) > len(expr_type.types):
                 raise CompilerException("Too many variables for unpacking.", self._src_info)
@@ -288,53 +418,68 @@ class DeclStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return set(self._var)
 
+    def optimize(self) -> "Statement":
+        if self._var_value is not None:
+            self._var_value = self._var_value.optimize()
+            if self._var_value.is_const and len(self._var) == 1 and not self._is_const_def:
+                self._const_vars[self._var[0]] = self._var_value
+                return _StmtList(self._src_info, [])
+        if isinstance(self._var_value, UnpackExpr):
+            to_unpack = self._var_value.to_unpack
+            if len(self._var) == 1:
+                result = DeclStmt(self._src_info, self._namespace)
+                result.set_var_value(to_unpack)
+                result._add_var_object(self._var[0])
+                return result
+            if isinstance(to_unpack, TupleRef) and not self._is_const_def:
+                to_unpack_const: list[Expression] = list(map(lambda expr: expr.optimize().is_const, to_unpack.expressions))
+                results: list[DeclStmt] = [DeclStmt(self._src_info, self._namespace)] * (len(self._var) - len(to_unpack_const))
+                result_count: int = 0
+                expr_count: int = 0
+                for i, var in enumerate(self._var[:-1]):
+                    var_tuple_length: int = -1
+                    if isinstance(self._var[i].type, TupleTypeName):
+                        var_tuple_length = len(self._var[i].type.types)
+                    if to_unpack[i].is_const and not self._is_const_def:
+                        if var_tuple_length == -1:
+                            self._const_vars[self._var[i]] = to_unpack[expr_count]
+                            expr_count += 1
+                        else:
+                            self._const_vars[self._var[i]] = to_unpack[expr_count:expr_count + var_tuple_length]
+                            expr_count += var_tuple_length
+                        continue
+                    result = results[result_count]
+                    if var_tuple_length == -1:
+                        result.set_var_value(to_unpack[expr_count])
+                        expr_count += 1
+                    else:
+                        result.set_var_value(to_unpack[expr_count + var_tuple_length])
+                        expr_count += var_tuple_length
+                    result._add_var_object(self._var[i])
+                    result_count += 1
+                if len(self._var) == len(to_unpack):
+                    if to_unpack[-1].is_const and not self._is_const_def:
+                        self._const_vars[self._var[-1]] = to_unpack[-1]
+                    else:
+                        results[-1].set_var_value(to_unpack[-1])
+                        results[-1]._add_var_object(self._var[-1])
+                else:
+                    results[-1].set_var_value(to_unpack[len(self._var):])
+                    results[-1]._add_var_object(self._var[-1])
+                return _StmtList(self._src_info, results)
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("Declaration is not finished.", self._src_info)
         if self._var_value is not None:
-            return self._var_value.outer_text
-        return None
+            return "\n".join(filter(lambda x: x is not None, [super().outer_text, self._var_value.outer_text]))
+        return super().outer_text
 
     def set_var_value(self, var_value: Expression) -> None:
         var_value.validate()
         self._var_value = var_value
-
-    def set_vars(self, var_list: list[VariableName]) -> None:
-        self._var = var_list
-
-    def set_vars_by_name(self, var_name_list: list[str], var_type_name_list: list[str],
-                         is_global_list: list[bool]) -> None:
-        if not len(var_name_list) == len(var_type_name_list) or not len(var_type_name_list) == len(is_global_list):
-            raise CompilerException("Invalid variable declaration.", self._src_info)
-        var_names_num: int = len(var_name_list)
-        if var_names_num > 1 and self._var_value is not None:
-            self._var_value = UnpackExpr(self._src_info, self._var_value)
-        for i, (var_name, var_type_name, is_global) in enumerate(
-                zip(var_name_list, var_type_name_list, is_global_list)):
-            if var_type_name == "auto":
-                if self._var_value is None:
-                    raise CompilerException("Can not infer variable type.", self._src_info)
-                expr_type = self._var_value.return_type
-                if isinstance(expr_type, TupleTypeName):
-                    if i < var_names_num - 1:
-                        var_type = expr_type.types[i]
-                    else:
-                        var_type = TupleTypeName(self._src_info, expr_type.types[i:])
-                else:
-                    if var_names_num > 1:
-                        raise CompilerException("Too many variables for unpacking.", self._src_info)
-                    var_type = expr_type
-            else:
-                if var_type_name not in SYMBOL_TABLE:
-                    raise CompilerException(f"{var_type_name} is not defined.", self._src_info)
-                var_type = SYMBOL_TABLE[var_type_name]
-                if not isinstance(var_type, TypeName):
-                    raise CompilerException(f"{var_type_name} is not a type.", self._src_info)
-            if is_global:
-                self._var.append(GlobalVariableName(self._src_info, self._namespace, var_name, var_type))
-            else:
-                self._var.append(TemporaryVariableName(self._src_info, var_name, var_type))
 
     def set_vars_with_known_type(self, var_name_list: list[str], var_type_name_list: list[TypeName],
                                  is_global_list: list[bool]):
@@ -348,6 +493,14 @@ class DeclStmt(Statement):
                 self._var.append(GlobalVariableName(self._src_info, self._namespace, var_name, var_type))
             else:
                 self._var.append(TemporaryVariableName(self._src_info, var_name, var_type))
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        self._var_value = self._var_value.substitute(const_vars)
+        return self
+
+    def update_const_vars(self, const_vars: dict[VariableName, Expression]) -> dict[VariableName, Expression]:
+        const_vars.update(self._const_vars)
+        return const_vars
 
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
@@ -368,8 +521,13 @@ class DeclStmt(Statement):
             return TupleTypeName(self._src_info, list(map(lambda var: var.type, self._var)))
         return self._var[0].type
 
+    def _add_var_object(self, var: VariableName) -> None:
+        self._var.append(var)
+
     @property
     def _inner_text(self) -> str:
+        if len(self._var) == 0:
+            return ""
         if self._var_value is not None:
             self._var_value.set_returns(self._var)
             front_text: str = self._var_value.front_text + "\n"
@@ -387,8 +545,9 @@ class AssignStmt(Statement):
         self._is_async: bool = False
         self._is_finished: bool = False
         self._var_types: Optional[TypeName] = None
+        self._const_vars: dict[VariableName, Expression] = {}
 
-    def add_var(self, var_name: str) -> None:
+    def add_var_name(self, var_name: str) -> None:
         symbol = SYMBOL_TABLE[var_name]
         if not isinstance(symbol, VariableName):
             raise CompilerException(f"{var_name} is not a variable.", self._src_info)
@@ -398,6 +557,16 @@ class AssignStmt(Statement):
         new_stmt = super().as_async()
         new_stmt._var_value = self._var_value.as_async()
         new_stmt._is_async = True
+        return new_stmt
+
+    def as_constructor(self, this_var: VariableName) -> "ConstructorAssignStmt":
+        new_stmt = ConstructorAssignStmt(self._src_info, this_var)
+        new_stmt._var = self._var
+        new_stmt._var_value = self._var_value
+        new_stmt._var_types = self._var_types
+        new_stmt._is_async = self._is_async
+        new_stmt._is_finished = self._is_finished
+        new_stmt._const_vars = self._const_vars
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
@@ -478,15 +647,64 @@ class AssignStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return set(self._var)
 
+    def optimize(self) -> "Statement":
+        if self._var_value is not None:
+            self._var_value = self._var_value.optimize()
+            if self._var_value.is_const and len(self._var) == 1:
+                return _StmtList(self._src_info, [])
+        if isinstance(self._var_value, UnpackExpr):
+            to_unpack = self._var_value.to_unpack
+            if len(self._var) == 1:
+                result = AssignStmt(self._src_info)
+                result.set_var_value(to_unpack)
+                result._add_var_object(self._var[0])
+                return result
+            if isinstance(to_unpack, TupleRef):
+                to_unpack_const: list[Expression] = list(
+                    map(lambda expr: expr.optimize().is_const, to_unpack.expressions))
+                results: list[AssignStmt] = [AssignStmt(self._src_info)] * (
+                            len(self._var) - len(to_unpack_const))
+                result_count: int = 0
+                for i, var in enumerate(self._var[:-1]):
+                    if to_unpack[i].is_const:
+                        self._const_vars[self._var[i]] = to_unpack[i]
+                        continue
+                    result = results[result_count]
+                    result.set_var_value(to_unpack[i])
+                    result._add_var_object(self._var[i])
+                    result_count += 1
+                if len(self._var) == len(to_unpack):
+                    if to_unpack[-1].is_const:
+                        self._const_vars[self._var[-1]] = to_unpack[-1]
+                    else:
+                        results[-1].set_var_value(to_unpack[-1])
+                        results[-1]._add_var_object(self._var[-1])
+                else:
+                    results[-1].set_var_value(to_unpack[len(self._var):])
+                    results[-1]._add_var_object(self._var[-1])
+                return _StmtList(self._src_info, results)
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("AssignStmt is not finished.", self._src_info)
-        return self._var_value.outer_text
+        result = "\n".join(filter(lambda x: x is not None, [super().outer_text, self._var_value.outer_text]))
+        if result == "":
+            return None
+        return result
 
     def set_var_value(self, var_value: Expression) -> None:
         var_value.validate()
         self._var_value = var_value
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        self._var_value = self._var_value.substitute(const_vars)
+        return self
+
+    def update_const_vars(self, const_vars: dict[VariableName, Expression]) -> dict[VariableName, Expression]:
+        const_vars.update(self._const_vars)
+        return const_vars
 
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
@@ -496,9 +714,28 @@ class AssignStmt(Statement):
             state = VariableState.ASYNC_ASSIGNED
         return dict(map(lambda var: (var, state), self._var))
 
+    def _add_var_object(self, var: VariableName) -> None:
+        self._var.append(var)
+
     @property
     def _inner_text(self) -> str:
         self._var_value.set_returns(self._var)
+        return self._var_value.front_text
+
+
+class ConstructorAssignStmt(AssignStmt):
+
+    def __init__(self, src_info: SourceInfo, this_var: VariableName) -> None:
+        super().__init__(src_info)
+        self._this_var: VariableName = this_var
+
+    @property
+    def _inner_text(self) -> str:
+        var_list: list[VariableName] = deepcopy(self._var)
+        for i, v in enumerate(var_list):
+            if v.name in self._this_var.type.properties:
+                var_list[i] = TemporaryVariableName(self._src_info, self._this_var.name + "->" + v.name, v.type)
+        self._var_value.set_returns(var_list)
         return self._var_value.front_text
 
 
@@ -534,7 +771,7 @@ class OpStmt(Statement):
 
     @property
     def head_text(self) -> Optional[str]:
-        return self._indent_text(self._expr.head_text)
+        return self._indent_text(self._expr.head_text) if self._expr.head_text is not None else None
 
     @property
     def input_variables(self) -> set[VariableName]:
@@ -560,15 +797,26 @@ class OpStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return set()
 
+    def optimize(self) -> "Statement":
+        self._expr = self._expr.optimize()
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
         if self._expr is None:
             raise CompilerException("OpStmt is not finished.", self._src_info)
-        return self._expr.outer_text
+        result = "\n".join(filter(lambda x: x is not None, [super().outer_text, self._expr.outer_text]))
+        if result == "":
+            return None
+        return result
 
     def set_expr(self, expr: Expression) -> None:
         expr.validate()
         self._expr = expr
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        self._expr = self._expr.substitute(const_vars)
+        return self
 
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
@@ -576,8 +824,8 @@ class OpStmt(Statement):
 
     @property
     def _inner_text(self) -> str:
-        front_text: str = self._expr.front_text + ";" if self._expr.front_text is not None else ""
-        return front_text
+        results = list(filter(lambda x: x is not None, [self._expr.front_text, self._expr.release_text]))
+        return "\n".join(results)
 
 
 class ReturnStmt(Statement):
@@ -635,6 +883,10 @@ class ReturnStmt(Statement):
     @property
     def new_variables(self) -> set[VariableName]:
         return set()
+
+    def optimize(self) -> "Statement":
+        self._finally_stmt_list = list(map(lambda finally_stmt: finally_stmt.optimize(), self._finally_stmt_list))
+        return self
 
     @property
     def outer_text(self) -> Optional[str]:
@@ -715,17 +967,29 @@ class ThrowStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return set.union(*map(lambda finally_stmt: finally_stmt.new_variables, self._finally_stmt_list))
 
+    def optimize(self) -> "Statement":
+        self._finally_stmt_list = list(map(lambda finally_stmt: finally_stmt.optimize(), self._finally_stmt_list))
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
         if self._to_throw_expr is None:
             raise CompilerException("ThrowStmt is not finished.", self._src_info)
-        return self._to_throw_expr.outer_text
+        result = "\n".join(filter(lambda x: x is not None, [super().outer_text, self._to_throw_expr.outer_text]))
+        if result == "":
+            return None
+        return result
 
-    def set_throw_expr(self, expr: Expression) -> None:
+    def set_expr(self, expr: Expression) -> None:
         expr.validate()
         # noinspection PyTypeChecker
         if not expr.return_type.convertable_to(SYMBOL_TABLE["exception"], SYMBOL_TABLE.symbols):
             raise CompilerException(f"Type {expr.return_type.raw_name} cannot be thrown.", self._src_info)
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        self._to_throw_expr = self._to_throw_expr.substitute(const_vars)
+        self._finally_stmt_list = list(map(lambda finally_stmt: finally_stmt.substitute(const_vars), self._finally_stmt_list))
+        return self
 
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
@@ -749,6 +1013,12 @@ class CStmt(Statement):
     def __init__(self, src_info: SourceInfo) -> None:
         super().__init__(src_info)
         self._text: Optional[str] = None
+
+    def add_text(self, text: str) -> None:
+        if self._text is None:
+            self._text = text
+        else:
+            self._text += "\n" + text
 
     def as_async(self) -> "Statement":
         return super().as_async()
@@ -791,9 +1061,12 @@ class CStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return set()
 
+    def optimize(self) -> "Statement":
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
-        return None
+        return super().outer_text
 
     def set_text(self, text: str) -> None:
         self._text = text
@@ -878,11 +1151,19 @@ class CondStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return self._stmt.new_variables
 
+    def optimize(self) -> "Statement":
+        self._cond_expr = self._cond_expr.optimize()
+        self._stmt = self._stmt.optimize()
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
         if self._cond_expr is None:
             raise CompilerException("CondStmt is not finished.", self._src_info)
-        return self._cond_expr.outer_text
+        result = "\n".join(filter(lambda x: x is not None, [super().outer_text, self._cond_expr.outer_text]))
+        if result == "":
+            return None
+        return result
 
     def set_cond_expr(self, expr: Expression) -> None:
         expr.validate()
@@ -891,6 +1172,11 @@ class CondStmt(Statement):
     def set_stmt(self, stmt: Statement) -> None:
         stmt.indent()
         self._stmt = stmt
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        self._cond_expr = self._cond_expr.substitute(const_vars)
+        self._stmt = self._stmt.substitute(const_vars)
+        return self
 
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
@@ -921,6 +1207,9 @@ class ElseStmt(CondStmt):
 
     def __init__(self, src_info: SourceInfo) -> None:
         super().__init__(_CondKw.ELSE, src_info)
+
+    def set_cond_expr(self, expr: Expression) -> None:
+        raise CompilerException("ElseStmt can't have a condition.", self._src_info)
 
 
 class IfStmt(CondStmt):
@@ -1002,9 +1291,16 @@ class CatchStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return self._stmt.new_variables | {self._except_decl}
 
+    def optimize(self) -> "Statement":
+        self._stmt = self._stmt.optimize()
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
-        return self._stmt.outer_text
+        result = "\n".join(filter(lambda x: x is not None, [super().outer_text, self._stmt.outer_text]))
+        if result == "":
+            return None
+        return result
 
     def set_except_decl(self, except_decl: VariableName) -> None:
         self._except_decl = except_decl
@@ -1013,13 +1309,17 @@ class CatchStmt(Statement):
         stmt.indent()
         self._stmt = stmt
 
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        self._stmt = self._stmt.substitute(const_vars)
+        return self
+
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
         return self._stmt.variables_states
 
     @property
     def _inner_text(self) -> str:
-        result: list[str] = [
+        result: list[Optional[str]] = [
             f"if ({CONVERTIBLE_TO_FUNC}(listener->exc->exception->$$vtable, {EXCEPTION_T})) {{",
             self._stmt.head_text,
             f"\t{self._except_decl.name} = listener->exc->exception;",
@@ -1027,7 +1327,7 @@ class CatchStmt(Statement):
             "\tbreak;",
             "}"
         ]
-        return "\n".join(result)
+        return "\n".join(list(filter(lambda x: x is not None, result)))
 
 
 class FinallyStmt(Statement):
@@ -1082,13 +1382,24 @@ class FinallyStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return self._stmt.new_variables
 
+    def optimize(self) -> "Statement":
+        self._stmt = self._stmt.optimize()
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
-        return self._stmt.outer_text
+        result = "\n".join(filter(lambda x: x is not None, [super().outer_text, self._stmt.outer_text]))
+        if result == "":
+            return None
+        return result
 
     def set_stmt(self, stmt: Statement) -> None:
         stmt.indent()
         self._stmt = stmt
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "FinallyStmt":
+        self._stmt = self._stmt.substitute(const_vars)
+        return self
 
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
@@ -1197,11 +1508,18 @@ class TryStmt(Statement):
         return self._try_stmt.new_variables | set.union(
             *map(lambda except_stmt: except_stmt.new_variables, self._except_stmt))
 
+    def optimize(self) -> "Statement":
+        self._try_stmt = self._try_stmt.optimize()
+        self._except_stmt = list(map(lambda except_stmt: except_stmt.optimize(), self._except_stmt))
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
-        return "\n".join(filter(lambda x: x is not None, [self._try_stmt.outer_text,
-                                                          *map(lambda except_stmt: except_stmt.outer_text,
-                                                               self._except_stmt)]))
+        return "\n".join(filter(lambda x: x is not None, [
+            super().outer_text,
+            self._try_stmt.outer_text,
+            *map(lambda except_stmt: except_stmt.outer_text, self._except_stmt)
+        ]))
 
     def set_finally_stmt(self, finally_stmt: "Statement") -> None:
         if not isinstance(finally_stmt, FinallyStmt):
@@ -1211,6 +1529,12 @@ class TryStmt(Statement):
     def set_try_stmt(self, stmt: Statement) -> None:
         stmt.indent()
         self._try_stmt = stmt
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        self._try_stmt = self._try_stmt.substitute(const_vars)
+        self._except_stmt = list(map(lambda except_stmt: except_stmt.substitute(const_vars), self._except_stmt))
+        self._finally_stmt = self._finally_stmt.substitute(const_vars)
+        return self
 
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
@@ -1227,7 +1551,7 @@ class TryStmt(Statement):
         finally_text_indent2: list[str] = [
             *map(lambda x: "\t" + x, finally_text)
         ]
-        result: str = "\n".join([
+        result: str = "\n".join(list(filter(lambda x: x is not None, [
             f"memcpy(&{self._jump_buf_name}, listener->exc->jmpBuf, sizeof(jmp_buf));",
             f"if (!setjmp(listener->exc->jmpBuf)) {{",
             f"\tmemcpy(listener->exc->jmpBuf, &{self._jump_buf_name}, sizeof(jmp_buf));",
@@ -1236,13 +1560,86 @@ class TryStmt(Statement):
             f"\tmemcpy(listener->exc->jmpBuf, &{self._jump_buf_name}, sizeof(jmp_buf));",
             "\tdo {",
             *map(lambda except_stmt: except_stmt.text, self._except_stmt),
-            finally_text_indent2,
+            *finally_text_indent2,
             "\t\tlongjmp(listener->exc->jmpBuf, 1);",
-            "\t}",
-            "} while (0);",
+            "\t} while (0);",
+            "}",
             *finally_text
-        ])
+        ])))
         return result
+
+
+class TypeDefStmt(Statement):
+
+    def __init__(self, src_info: SourceInfo, dst_type_name: str) -> None:
+        super().__init__(src_info)
+        # noinspection PyTypeChecker
+        self._src_type_decl: Optional[TypeName] = None
+        self._dst_type_name: str = dst_type_name
+
+    def as_async(self) -> "Statement":
+        return self
+
+    def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
+        return self
+
+    def check_tail_recursive(self, func_name: str) -> "Statement":
+        return self
+
+    @property
+    def global_init_text(self) -> str:
+        return super().global_init_text
+
+    @property
+    def head_text(self) -> Optional[str]:
+        return None
+
+    @property
+    def input_variables(self) -> set[VariableName]:
+        return set()
+
+    def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
+        pass
+
+    def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
+        if self._src_type_decl is None:
+            raise CompilerException("TypeDefStmt must have a type.", self._src_info)
+        result = deepcopy(self)
+        result._src_type_decl = self._src_type_decl.instantiation(type_args)
+        return result
+
+    @property
+    def is_finished(self) -> bool:
+        return self._src_type_decl is not None
+
+    @property
+    def new_listeners(self) -> dict[VariableName, str]:
+        return {}
+
+    @property
+    def new_variables(self) -> set[VariableName]:
+        return set()
+
+    def optimize(self) -> "Statement":
+        return self
+
+    @property
+    def outer_text(self) -> Optional[str]:
+        return None
+
+    def set_type(self, t: TypeRef) -> None:
+        self._src_type_decl = t.return_type
+        SYMBOL_TABLE.add(t.return_type, self._dst_type_name, None)
+
+    @property
+    def variables_states(self) -> dict[VariableName, VariableState]:
+        return {}
+
+    @property
+    def _inner_text(self) -> str:
+        if self._src_type_decl is None:
+            raise CompilerException("TypeDefStmt must have a type.", self._src_info)
+        return f"typedef {self._src_type_decl.name} {self._dst_type_name};"
 
 
 class _ProcessingMode(Enum):
@@ -1271,6 +1668,9 @@ class BlockStmt(Statement):
     def add_stmt(self, stmt: Statement) -> None:
         if not stmt.is_finished:
             raise CompilerException("Statement is not finished.", stmt.src_info)
+        if isinstance(stmt, _StmtList):
+            for s in stmt:
+                self.add_stmt(s)
         if isinstance(stmt, CondStmt) and stmt.cond_kw == _CondKw.IF:
             self._processing_mode = _ProcessingMode.CONDITIONAL
         if isinstance(stmt, TryStmt):
@@ -1406,9 +1806,17 @@ class BlockStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return set(self._new_variables)
 
+    def optimize(self) -> "BlockStmt":
+        const_vars: dict[VariableName, Expression] = {}
+        for i, stmt in enumerate(self._stmt):
+            stmt = stmt.substitute(const_vars).optimize()
+            const_vars = stmt.update_const_vars(const_vars)
+            self._stmt[i] = stmt
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
-        result: str = "\n\n".join(list(map(lambda x: x.outer_text, self._stmt)))
+        result: str = "\n\n".join(list(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._stmt))))
         return result if result != "" else None
 
     def set_as_closure(self, closure_name: str, args: list[VariableName]) -> None:
@@ -1436,6 +1844,11 @@ class BlockStmt(Statement):
         used_outer_variables_set: list[str] = list(
             map(lambda x: f"{closure_name}$$capture->{x.name} = {x.name};", self._used_outer_variables))
         self._closure_struct_setting_code = struct_alloc + "\n" + "\n".join(used_outer_variables_set)
+
+    def set_as_const_def(self) -> None:
+        self._is_const_def = True
+        for stmt in self._stmt:
+            stmt.set_as_const_def()
 
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
@@ -1524,7 +1937,7 @@ class FnBlockStmt(BlockStmt):
             self._cond_stmt_buffer.clear()
             self.add_stmt(new_stmt)
         if isinstance(stmt, OpStmt):
-            unable_to_execute_warning(
+            unreachable_warning(
                 "Function call without return will be depreciated in any function defined with keyword \"fn\".",
                 stmt.src_info)
             return
@@ -1589,7 +2002,7 @@ class CastOp(Expression):
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         result = CastOp(self._src_info)
         result.set_expr(self._expr.as_inline(inline_mapping))
-        result.set_type(TypeRef(self._src_info, self._type_name))
+        result.set_type(self._type_name)
         return result
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
@@ -1635,6 +2048,10 @@ class CastOp(Expression):
         new_expr._throw_stmt = self._throw_stmt.instantiation(type_args)
         return new_expr
 
+    def optimize(self) -> "Expression":
+        self._expr = self._expr.optimize()
+        return self
+
     @property
     def outer_text(self) -> Optional[str]:
         return self._expr.outer_text
@@ -1652,10 +2069,14 @@ class CastOp(Expression):
         if self._type_name is not None:
             self._is_dynamic_cast = self.__check_dynamic_cast()
 
-    def set_type(self, type_name: TypeRef) -> None:
-        self._type_name = type_name.return_type
+    def set_type(self, type_name: TypeName) -> None:
+        self._type_name = type_name
         if self._expr is not None:
             self._is_dynamic_cast = self.__check_dynamic_cast()
+
+    def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
+        self._expr = self._expr.substitute(expr)
+        return self
 
     @property
     def tail_recursive_mark(self) -> Optional[str]:
@@ -1682,7 +2103,7 @@ class CastOp(Expression):
             to_throw_expr = CallOp(self._src_info)
             to_throw_expr.set_func(ClassRef(self._src_info, "RuntimeException"))
             to_throw_expr.add_arg(StringLiteral(self._src_info, f"Cannot cast {self._expr.return_type} to {self._type_name}"), None)
-            self._throw_stmt.set_throw_expr(to_throw_expr)
+            self._throw_stmt.set_expr(to_throw_expr)
             self._throw_stmt.indent()
         return result
 
@@ -1694,7 +2115,7 @@ class CastOp(Expression):
             f"{self._temp_var_name} = {self._expr.text};",
             "#ifdef $__VIOLA_debug_type_dynamicCheck",
             f"if (!{CONVERTIBLE_TO_FUNC}({self._temp_var_name}->$$vtable, {self._type_name.vtable_name})) {{",
-            self._throw_stmt.text,
+            "\t" + self._throw_stmt.text,
             "}",
             "#endif"
         ]

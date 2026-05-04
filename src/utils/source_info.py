@@ -65,7 +65,7 @@ class SourceInfo:
             end_col = self._end_col
         location_mark: str = " " * (self._start_col - 1) + "^" * (end_col - self._start_col) + " " * (len(text) - end_col)
         location: str = f"file {self._src_file_name} line {self._start_line}"
-        return f"{text}\n{location_mark}\n\tat {location}"
+        return f"{text}\n{location_mark}\tat {location}"
 
     @property
     def traceback_no_location(self) -> str:
@@ -79,3 +79,6 @@ class SourceInfo:
             end_col = self._end_col
         location_mark: str = " " * (self._start_col - 1) + "^" * (end_col - self._start_col) + " " * (len(text) - end_col)
         return f"{text}\n{location_mark}"
+
+
+VIOLA_INIT = SourceInfo("<viola_init>")
