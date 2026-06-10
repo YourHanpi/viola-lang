@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-from utils import COMPILER_PARAMS
+from utils import COMPILER_PARAMS, SourceInfo
+from utils.file_postfixes import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, GENERIC_TABLE_POSTFIX
 
 from abc import ABC, abstractmethod
+import os
 from typing import Optional
 
 
@@ -67,6 +69,99 @@ class FSM(ABC):
     @abstractmethod
     def _set_states_list(self) -> StateNode:
         pass
+
+
+class ParserGenericTable:
+
+    def __contains__(self, item: str) -> bool:
+        return item in self._table
+
+    def __init__(self) -> None:
+        self._table: dict[str, int] = {}
+
+    def add(self, name: str, params_num: int) -> None:
+        self._table[name] = params_num
+
+    def dump(self) -> str:
+        return "\n".join(f"{name} {params_num}" for name, params_num in self._table.items())
+
+    def get_params_num(self, name: str) -> int:
+        return self._table[name]
+
+    @classmethod
+    def load(cls, data: str) -> "ParserGenericTable":
+        self = cls()
+        for line in data.split("\n"):
+            name, params_num = line.split()
+            self.add(name, int(params_num))
+        return self
+
+
+class ParsingSlice(str):
+
+    def __init__(self, src_info: SourceInfo, token_list: list[Token], slice_type: str) -> None:
+        self._src_info: SourceInfo = src_info.copy()
+        self._tokens: list[Token] = token_list
+        self._slice_type: str = slice_type
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self._src_info}, {self._tokens}, {self._slice_type})"
+
+    def __str__(self) -> str:
+        return f"RAW {self._slice_type}"
+
+    @property
+    def src_info(self) -> SourceInfo:
+        return self._src_info
+
+    @property
+    def tokens(self) -> list[Token]:
+        return self._tokens
+
+
+class ParsingResult:
+
+    def __init__(self, command: list[str], symbol: list[str], generic_table: ParserGenericTable, from_global_parser: bool) -> None:
+        self._command: list[str] = command
+        self._symbol: list[str] = symbol
+        self._generic_table: ParserGenericTable = generic_table
+        self._from_global_parser: bool = from_global_parser
+
+    @property
+    def command(self) -> list[str]:
+        return self._command
+
+    @property
+    def generic_table(self) -> ParserGenericTable:
+        return self._generic_table
+
+    @classmethod
+    def read(cls, path: str) -> "ParsingResult":
+        if os.path.exists(path + COMMAND_POSTFIX):
+            with open(path + COMMAND_POSTFIX, "r") as f:
+                command = f.readlines()
+            from_global_parser = False
+        else:
+            with open(path + GLOBAL_COMMAND_POSTFIX, "r") as f:
+                command = f.readlines()
+            from_global_parser = True
+        with open(path + SYMBOL_TABLE_POSTFIX, "r") as f:
+            symbol = f.readlines()
+        with open(path + GENERIC_TABLE_POSTFIX, "r") as f:
+            generic_table = ParserGenericTable.load(f.read())
+        return cls(command, symbol, generic_table, from_global_parser)
+
+    @property
+    def symbol(self) -> list[str]:
+        return self._symbol
+
+    def write(self, path: str) -> None:
+        with open(path + (GLOBAL_COMMAND_POSTFIX if self._from_global_parser else COMMAND_POSTFIX), "w") as f:
+            f.writelines(self._command)
+        with open(path + SYMBOL_TABLE_POSTFIX, "w") as f:
+            f.writelines(self._symbol)
+        with open(path + GENERIC_TABLE_POSTFIX, "w") as f:
+            f.write(self._generic_table.dump())
 
 
 class TokenStreamIO:

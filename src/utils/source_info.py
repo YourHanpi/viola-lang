@@ -19,6 +19,18 @@ class SourceInfo:
         self._end_line: int = 0
         self._end_col: int = 0
 
+    def copy(self) -> "SourceInfo":
+        """
+        复制源代码信息对象。
+        """
+        result = SourceInfo(self._src_file_name)
+        result._src_text = self._src_text
+        result._start_line = self._start_line
+        result._start_col = self._start_col
+        result._end_line = self._end_line
+        result._end_col = self._end_col
+        return result
+
     @property
     def lineno(self) -> int:
         """

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-from .global_parser import GlobalParser, set_loc_command, ParserGenericTable, ParsingResult
+from .global_parser import GlobalParser, set_loc_command
+from .utils import ParsingResult, ParserGenericTable
 from utils import Token
 
 from enum import Enum
@@ -54,8 +55,8 @@ def _is_substate(state: _ExprState, substate: _ExprState) -> bool:
 
 class ExprParser(GlobalParser):
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, workspace: str) -> None:
+        super().__init__(workspace)
 
     @staticmethod
     def _lex_unary_op(tokens: list[Token]) -> list[Token]:

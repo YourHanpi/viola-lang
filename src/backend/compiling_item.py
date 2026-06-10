@@ -13,7 +13,7 @@ class CompilingItem(ABC):
         初始化编译时对象。
         :param src_info: 源代码信息。
         """
-        self._src_info: SourceInfo = src_info
+        self._src_info: SourceInfo = src_info.copy()
         self._parent_item: Optional[CompilingItem] = None
 
     def bind_parent(self, parent_item: "CompilingItem") -> None:

@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 from .utils import TokenStreamIO
-from utils.fsm import Token, StateNode, FSM
 from utils import SourceInfo, CompilerException, COMPILER_PARAMS, VIOLA_INIT
+from utils.file_postfixes import TOKEN_POSTFIX
+from utils.fsm import Token, StateNode, FSM
 
 from copy import deepcopy
+import os
 
 
 class Lexer(FSM):
@@ -61,7 +63,8 @@ class Lexer(FSM):
         return tokens
 
     def lex_with_writer(self, path: str) -> None:
-        TokenStreamIO.write(path + ".vlatoken", self.lex(path))
+        if not os.path.exists(path + TOKEN_POSTFIX):
+            TokenStreamIO.write(path + TOKEN_POSTFIX, self.lex(path))
 
     @staticmethod
     def _get_char_token(char: str) -> Token:

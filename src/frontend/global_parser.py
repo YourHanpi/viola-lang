@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, CompilerExceptionGroup
+from .utils import ParserGenericTable, ParsingResult, ParsingSlice, TokenStreamIO
+from utils import CompilerException, SourceInfo, VIOLA_INIT, Token
+from utils.file_postfixes import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TYPE_POSTFIX
 
-from copy import deepcopy
+import os
+import time
 from typing import Optional, Callable, Sequence, Mapping, Any
 
 __PARSER_UTILS_WITH_ARGS_TYPE = Callable[["Parser", Sequence[Any], Mapping[Any, Any]], Optional[Any]]
@@ -35,69 +38,14 @@ _EXPR_SPLITTERS: set[str] = {"COMMA", "L_BRACKET", "L_SQUARE_BRACKET", "L_CURLY_
 _BLANK_TOKEN: Token = Token("", ["_BLANK"])
 
 
-class ParserGenericTable:
-
-    def __contains__(self, item: str) -> bool:
-        return item in self._table
-
-    def __init__(self) -> None:
-        self._table: dict[str, int] = {}
-
-    def add(self, name: str, params_num: int) -> None:
-        self._table[name] = params_num
-
-    def get_params_num(self, name: str) -> int:
-        return self._table[name]
-
-
-class ParsingSlice(str):
-
-    def __init__(self, src_info: SourceInfo, token_list: list[Token], slice_type: str) -> None:
-        self._src_info: SourceInfo = deepcopy(src_info)
-        self._tokens: list[Token] = token_list
-        self._slice_type: str = slice_type
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self._src_info}, {self._tokens}, {self._slice_type})"
-
-    def __str__(self) -> str:
-        return f"RAW {self._slice_type}"
-
-    @property
-    def src_info(self) -> SourceInfo:
-        return self._src_info
-
-    @property
-    def tokens(self) -> list[Token]:
-        return self._tokens
-
-
-class ParsingResult:
-
-    def __init__(self, command: list[str], symbol: list[str], generic_table: ParserGenericTable) -> None:
-        self._command: list[str] = command
-        self._symbol: list[str] = symbol
-        self._generic_table: ParserGenericTable = generic_table
-
-    @property
-    def command(self) -> list[str]:
-        return self._command
-
-    @property
-    def generic_table(self) -> ParserGenericTable:
-        return self._generic_table
-
-    @property
-    def symbol(self) -> list[str]:
-        return self._symbol
-
-
 class GlobalParser:
 
-    def __init__(self) -> None:
+    def __init__(self, workspace: str) -> None:
+        self._workspace: str = workspace
         self._tokens: list[Token] = []
         self._tokens_num: int = 0
         self._current: int = 0
+        self._messages: list[str] = []
         self._exceptions: list[CompilerException] = []
         self._start_line: int = 1
         self._start_col: int = 1
@@ -106,8 +54,14 @@ class GlobalParser:
         self._src_info: SourceInfo = VIOLA_INIT
         self._imports: dict[str, str] = {}
         self._parser_generic_table: ParserGenericTable = ParserGenericTable()
+        self._symbol_types: dict[str, tuple[str, int]] = {}
 
-    def parse(self, tokens: list[Token]) -> ParsingResult:
+    def get_errors(self) -> list[str]:
+        result = [str(exception) for exception in self._exceptions]
+        self._exceptions.clear()
+        return result
+
+    def parse(self, tokens: list[Token]) -> Optional[ParsingResult]:
         self._load_tokens(tokens)
         self._move_to_first_token()
         command: list[str] = []
@@ -130,14 +84,22 @@ class GlobalParser:
                 command += result[0]
                 symbol += result[1]
         if is_error:
-            raise CompilerExceptionGroup(self._exceptions)
-        return ParsingResult(command, symbol, self._parser_generic_table)
+            return None
+        return ParsingResult(command, symbol, self._parser_generic_table, True)
+    
+    def parse_from_file(self, file_path: str) -> Optional[ParsingResult]:
+        self._set_file_lock(file_path)
+        tokens: list[Token] = TokenStreamIO.read(file_path + TOKEN_POSTFIX)
+        result = self.parse(tokens)
+        self._dump_symbol_type_list(file_path)
+        self._remove_file_lock(file_path)
+        return result
 
     def _back(self, steps: int = 1) -> None:
         for _ in range(steps):
             self._current -= 1
             self.__back_loc()
-            while self._current >= 0 and self._get_current().type in ["_COMMENT", "_BLANK"]:
+            while self._current >= 0 and self._get_current().type[0] in ["_COMMENT", "_BLANK"]:
                 self._current -= 1
                 self.__back_loc()
 
@@ -156,6 +118,10 @@ class GlobalParser:
     def _change_tokens(self, token: Token, start_pos: int, end_pos: int) -> None:
         self._tokens[start_pos] = token
         self._tokens[start_pos + 1:end_pos] = [_BLANK_TOKEN] * (end_pos - start_pos - 1)
+        
+    @staticmethod
+    def _check_file_lock(path: str) -> bool:
+        return os.path.exists(path + PARSING_LOCK_POSTFIX)
 
     def _collect_until(self, end_token_type: str) -> Optional[list[Token]]:
         tokens: list[Token] = []
@@ -168,9 +134,27 @@ class GlobalParser:
         self._raise("Unexpected EOF")
         return None
 
+    def _dump_symbol_type_list(self, file_path: str) -> None:
+        lines: list[str] = []
+        for name, (t, type_args) in self._symbol_types.items():
+            if "." in name:
+                continue
+            lines.append(f"{name} {t} {type_args}")
+        with open(file_path + SYMBOL_TYPE_POSTFIX, "w") as f:
+            f.write("\n".join(lines))
+
     @staticmethod
     def _filter_blank(tokens: list[Token]) -> list[Token]:
         return [token for token in tokens if "_BLANK" not in token.type and "_COMMENT" not in token.type]
+    
+    def _find_import(self, namespace: str) -> Optional[str]:
+        root_paths: list[str] = [self._workspace] + os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":")
+        for root_path in root_paths:
+            path = os.path.join(root_path, namespace.replace(".", os.sep))
+            if self._check_file_lock(path + ".vla"):
+                return path
+        self._raise(f"Cannot find namespace {namespace}")
+        return None
 
     def _get_current(self) -> Token:
         return self._tokens[self._current]
@@ -184,6 +168,34 @@ class GlobalParser:
         while self._current < self._tokens_num:
             if self._match_types(["FN", "SQ", "CLASS", "ENUM", "IMPORT", "FROM"]):
                 break
+                
+    def _load_symbol_type_list(self, namespace: str, alias: str, to_load: Optional[list[str]] = None) -> None:
+        file_path = self._find_import(namespace)
+        if file_path is None:
+            return
+        symbol_types_path: str = file_path + SYMBOL_TYPE_POSTFIX
+        parsing_lock_path: str = file_path + PARSING_LOCK_POSTFIX
+        if not os.path.exists(symbol_types_path):
+            if os.path.exists(parsing_lock_path):
+                while os.path.exists(parsing_lock_path):
+                    time.sleep(0.1)
+            else:
+                self.parse_from_file(file_path)
+        with open(symbol_types_path, "r") as file:
+            texts: list[str] = file.readlines()
+        for text in texts:
+            text = text.strip()
+            kv_list: list[str] = text.split("%")
+            type_args_count: int = int(kv_list[2])
+            if to_load is None or kv_list[0] in to_load:
+                original_name: str = kv_list[0]
+                if to_load is None:
+                    original_name = namespace + "." + original_name
+                    kv_list[0] = alias + "." + kv_list[0]
+                self._symbol_types[kv_list[0]] = kv_list[1], type_args_count
+                self._imports[kv_list[0]] = original_name
+                if type_args_count > 0:
+                    self._parser_generic_table.add(kv_list[0], type_args_count)
 
     def _load_tokens(self, tokens: list[Token]) -> None:
         self._tokens = tokens + [Token("", ["_EOF"])]
@@ -229,7 +241,7 @@ class GlobalParser:
         return len(set(types) & set(self._get_current().type)) > 0
 
     def _move_to_first_token(self) -> None:
-        while self._current < self._tokens_num and self._get_current().type in ["_COMMENT", "_BLANK"]:
+        while self._current < self._tokens_num and self._get_current().type[0] in ["_COMMENT", "_BLANK"]:
             self._current += 1
             self.__next_loc()
 
@@ -239,7 +251,7 @@ class GlobalParser:
             self._current += 1
             output.append(self._get_current().text)
             self.__next_loc()
-            while self._current < self._tokens_num and self._get_current().type in ["_COMMENT", "_BLANK"]:
+            while self._current < self._tokens_num and self._get_current().type[0] in ["_COMMENT", "_BLANK"]:
                 self._current += 1
                 self.__next_loc()
                 output.append(self._get_current().text)
@@ -397,6 +409,7 @@ class GlobalParser:
                     return None
             self._parser_generic_table.add(class_name, len(generic_args))
             self._next()
+        self._symbol_types[class_name] = "CLASS", len(generic_args)
         parent_name: str = "object"
         if self._match_type("EXTENDS"):
             self._next()
@@ -765,6 +778,7 @@ class GlobalParser:
             else:
                 self._raise("Unexpected token: " + self._get_current().text)
                 return None
+        self._load_symbol_type_list(module_path, module_path, import_symbols)
         command: list[str] = [f"MAKE FROM_IMPORT {module_path} " + " ".join(import_symbols)]
         symbol: list[str] = ["FROM_IMPORT", module_path, " ".join(import_symbols), "---"]
         return command, symbol
@@ -803,9 +817,9 @@ class GlobalParser:
         if not without_name:
             self._next()
         if not is_closure:
+            generic_names: list[str] = []
             if self._match_type("LT"):
                 expect_comma: bool = False
-                generic_names: list[str] = []
                 while True:
                     if self._current >= self._tokens_num:
                         self._raise("Unexpected EOF")
@@ -825,6 +839,7 @@ class GlobalParser:
                 symbol.append(" ".join(generic_names))
                 self._parser_generic_table.add(func_name, len(generic_names))
                 self._next()
+            self._symbol_types[func_name] = "FUNCTION", len(generic_names)
         if not self._match_type("L_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -891,7 +906,7 @@ class GlobalParser:
         if not self._match_type("SEMICOLON"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
-        self._imports[alias] = module_path
+        self._load_symbol_type_list(module_path, alias)
         return ["CALL IMPORT " + module_path], ["IMPORT", module_path, "---"]
 
     @set_loc_command
@@ -1198,6 +1213,15 @@ class GlobalParser:
 
     def _raise(self, message: str) -> None:
         self._exceptions.append(CompilerException(message, self._src_info))
+        
+    @staticmethod
+    def _remove_file_lock(path: str) -> None:
+        os.remove(path + PARSING_LOCK_POSTFIX)
+        
+    @staticmethod
+    def _set_file_lock(path: str) -> None:
+        with open(path + PARSING_LOCK_POSTFIX, "w") as file:
+            file.write("")
 
     def __back_loc(self) -> None:
         token: Token = self._get_current()

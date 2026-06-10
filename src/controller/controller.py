@@ -13,10 +13,6 @@ class Controller(ABC):
     def handle(self, command: list[str]) -> None:
         pass
 
-    @abstractmethod
-    def join(self) -> None:
-        pass
-
     @staticmethod
     def _get_params(command: list[str]) -> dict[str, str]:
         args: list[str] = []
@@ -71,7 +67,3 @@ class GroupController(Controller):
                 controller.handle(command)
                 return
         raise CommandException(f"Command {command[0]} not found, use \"viola help\" to see available commands")
-
-    def join(self) -> None:
-        for controller in self._controllers:
-            controller.join()

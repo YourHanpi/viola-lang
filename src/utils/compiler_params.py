@@ -23,6 +23,7 @@ class CompilerParams:
             "debug-memory-accessViolation": True,
             "debug-type-dynamicCheck": True,
             "encoding": "utf-8",
+            "log-encoding": "utf-8",
             "runtime-argvEncoding": "utf-8",
             "runtime-stringChunkSize": 4096
         }

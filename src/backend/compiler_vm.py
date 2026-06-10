@@ -5,8 +5,9 @@ import backend.expression as expression
 import backend.project as project
 import backend.statement as statement
 import backend.symbol as symbol
-import utils.compiler_params as compiler_params
 from utils import SourceInfo, InternalCompilerException
+import utils.compiler_params as compiler_params
+from utils.file_postfixes import SYMBOL_TABLE_POSTFIX
 
 from enum import Enum
 import os
@@ -32,7 +33,7 @@ class CompilerVM:
         self._exec_mode_stack: list[_ExecMode] = [_ExecMode.SQ]
         self._scope_count_stack: list[_ScopeCount] = [_ScopeCount.HOLD]
         self._src_info: SourceInfo = SourceInfo(src_path)
-        self._symbol_table: symbol.SymbolTable = symbol.SymbolTable.read_from(src_path + ".vlasymtab")
+        self._symbol_table: symbol.SymbolTable = symbol.SymbolTable.read_from(src_path + SYMBOL_TABLE_POSTFIX)
         expression.SYMBOL_TABLE = self._symbol_table
         self._var_state_table: symbol.VariableStateTable = symbol.VariableStateTable(src_path, workspace)
         statement.VariableStateTable = self._var_state_table
