@@ -3,14 +3,15 @@ from .utils import TokenStreamIO
 from utils import SourceInfo, CompilerException, COMPILER_PARAMS, VIOLA_INIT
 from utils.file_postfixes import TOKEN_POSTFIX
 from utils.fsm import Token, StateNode, FSM
+from utils.logger import Logger
 
-from copy import deepcopy
 import os
+from typing import Optional
 
 
 class Lexer(FSM):
     
-    def __init__(self) -> None:
+    def __init__(self, thread_index: int = 0) -> None:
         super().__init__()
         self._src_info: SourceInfo = VIOLA_INIT
         self._start_line: int = 1
@@ -18,12 +19,13 @@ class Lexer(FSM):
         self._end_line: int = 1
         self._end_col: int = 1
         self._exceptions: list[CompilerException] = []
+        self._logger = Logger(f"Lexer[{thread_index}]")
 
     @property
     def exceptions(self) -> list[CompilerException]:
         return self._exceptions
 
-    def lex(self, path: str) -> list[Token]:
+    def lex(self, path: str) -> Optional[list[Token]]:
         self._src_info = SourceInfo(path)
         with open(path, "r", encoding=COMPILER_PARAMS["encoding"]) as f:
             text: str = f.read()
@@ -33,6 +35,7 @@ class Lexer(FSM):
         char_buf: list[str] = []
         current_loc: int = 0
         text_length: int = len(text)
+        error_occurred: bool = False
         while current_loc < text_length:
             char: str = text[current_loc]
             token: Token = Lexer._get_char_token(char)
@@ -46,7 +49,8 @@ class Lexer(FSM):
                 if self._current.output is None:
                     self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
                     self._src_info.set_text("".join(char_buf))
-                    self._exceptions.append(CompilerException(f"Unexpected character {char}", deepcopy(self._src_info)))
+                    self._logger.error(str(CompilerException(f"Unexpected character {char}", self._src_info.copy())))
+                    error_occurred = True
                     while current_loc < text_length and char not in " \n\t":
                         current_loc += 1
                         char = text[current_loc]
@@ -60,11 +64,17 @@ class Lexer(FSM):
                 self.transfer(token)
             char_buf.append(char)
             current_loc += 1
+        if error_occurred:
+            return None
         return tokens
 
     def lex_with_writer(self, path: str) -> None:
+        result = self.lex(path)
+        if result is None:
+            self._logger.error(f"Failed to lex: {path}")
+            return
         if not os.path.exists(path + TOKEN_POSTFIX):
-            TokenStreamIO.write(path + TOKEN_POSTFIX, self.lex(path))
+            TokenStreamIO.write(path + TOKEN_POSTFIX, result)
 
     @staticmethod
     def _get_char_token(char: str) -> Token:

@@ -5,9 +5,10 @@ import backend.expression as expression
 import backend.project as project
 import backend.statement as statement
 import backend.symbol as symbol
-from utils import SourceInfo, InternalCompilerException
-import utils.compiler_params as compiler_params
-from utils.file_postfixes import SYMBOL_TABLE_POSTFIX
+from utils import SourceInfo, InternalCompilerException, VIOLA_INIT, COMPILER_PARAMS
+from utils.file_postfixes import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX
+from utils.logger import Logger
+from utils.task import TASK_STACK
 
 from enum import Enum
 import os
@@ -25,99 +26,99 @@ class _ScopeCount(Enum):
 
 
 class CompilerVM:
+    _ENCODING: str = COMPILER_PARAMS["encoding"]
 
-    def __init__(self, src_path: str, workspace: str, compiler_option_path: str) -> None:
-        compiler_params.COMPILER_PARAMS = compiler_params.CompilerParams(compiler_option_path)
-        src_path = os.path.abspath(src_path)
-        workspace = os.path.abspath(workspace)
+    def __init__(self, proj: project.Project, thread_index: int = 0) -> None:
+        self._project: project.Project = proj
+        workspace = proj.root_path
+        self._workspace: str = workspace
         self._exec_mode_stack: list[_ExecMode] = [_ExecMode.SQ]
         self._scope_count_stack: list[_ScopeCount] = [_ScopeCount.HOLD]
-        self._src_info: SourceInfo = SourceInfo(src_path)
-        self._symbol_table: symbol.SymbolTable = symbol.SymbolTable.read_from(src_path + SYMBOL_TABLE_POSTFIX)
-        expression.SYMBOL_TABLE = self._symbol_table
-        self._var_state_table: symbol.VariableStateTable = symbol.VariableStateTable(src_path, workspace)
-        statement.VariableStateTable = self._var_state_table
-        self._stack: list[CompilingItem] = [project.SourceFile(self._src_info, src_path, self._symbol_table.namespace)]
+        self._src_info: SourceInfo = VIOLA_INIT
+        self._symbol_table: symbol.SymbolTable = symbol.SymbolTable()
+        self._var_state_table: symbol.VariableStateTable = symbol.VariableStateTable()
+        self._stack: list[CompilingItem] = []
         self._current_class: Optional[symbol.ClassName] = None
+        self._logger: Logger = Logger(f"Compiler VM[{thread_index}]")
         # noinspection PyTypeChecker
         self._DEF_MAKER_DICT: dict[str, Callable[[list[str]], definition.Definition]] = {
-            "CONST": lambda cmd: self.__make(definition.ConstDef(self._src_info, self._symbol_table.namespace)),
+            "CONST": lambda cmd: self.__make(definition.ConstDef(self._src_info, self._symbol_table, self._symbol_table.namespace)),
             "SQ": self.__make_def_sq,
             "CONSTRUCTOR": self.__make_def_constructor,
             "DESTRUCTOR": self.__make_def_destructor,
             "FN": self.__make_def_fn,
-            "C_PART_SQ": lambda cmd: self.__make(definition.CPartSqDef(self._src_info, self._symbol_table.namespace,
+            "C_PART_SQ": lambda cmd: self.__make(definition.CPartSqDef(self._src_info, self._symbol_table, self._symbol_table.namespace,
                                                                        self._var_state_table.assigned_variables, cmd[0],
                                                                        " ".join(cmd[1:]).split("%"))),
             "CLASS": lambda cmd: self.__make_class(cmd),
-            "FROM_IMPORT": lambda cmd: self.__make(definition.FromImportDef(self._src_info, workspace, cmd[0], cmd[1:])),
-            "IMPORT": lambda cmd: self.__make(project.ImportDef(self._src_info, workspace, cmd[0])),
-            "ENUM": lambda cmd: self.__make(definition.EnumDef(self._src_info, self._symbol_table.namespace, cmd[0]))
+            "FROM_IMPORT": lambda cmd: self.__make(definition.FromImportDef(self._src_info, self._symbol_table, workspace, cmd[0], cmd[1:])),
+            "IMPORT": lambda cmd: self.__make(project.ImportDef(self._src_info, self._symbol_table, workspace, cmd[0])),
+            "ENUM": lambda cmd: self.__make(definition.EnumDef(self._src_info, self._symbol_table, self._symbol_table.namespace, cmd[0]))
         }
         # noinspection PyTypeChecker
         self._EXPR_MAKER_DICT: dict[str, Callable[[list[str]], expression.Expression]] = {
-            "C": lambda cmd: self.__make(expression.CExpr(self._src_info)),
-            "UNPACK": lambda cmd: self.__make(expression.UnpackExpr(self._src_info)),
+            "C": lambda cmd: self.__make(expression.CExpr(self._src_info, self._symbol_table)),
+            "UNPACK": lambda cmd: self.__make(expression.UnpackExpr(self._src_info, self._symbol_table)),
             "VARIABLE_REF": lambda cmd: self.__make_variable_ref(cmd),
-            "STRING_LITERAL": lambda cmd: self.__make(expression.StringLiteral(self._src_info, " ".join(cmd))),
-            "BOOL_LITERAL": lambda cmd: self.__make(expression.BoolLiteral(self._src_info, cmd[0])),
-            "INTEGER_LITERAL": lambda cmd: self.__make(expression.IntegerLiteral(self._src_info, cmd[0], cmd[1])),
-            "FLOAT_LITERAL": lambda cmd: self.__make(expression.FloatLiteral(self._src_info, cmd[0])),
-            "SLICE_REF": lambda cmd: self.__make(expression.SliceRef(self._src_info)),
-            "ARRAY_REF": lambda cmd: self.__make(expression.ArrayRef(self._src_info)),
-            "TUPLE_REF": lambda cmd: self.__make(expression.TupleRef(self._src_info)),
-            "AUTO_TYPE_REF": lambda cmd: self.__make(expression.AutoTypeRef(self._src_info)),
-            "TYPE_REF": lambda cmd: self.__make(expression.TypeRef.from_name(self._src_info, " ".join(cmd))),
-            "CLASS_REF": lambda cmd: self.__make(expression.ClassRef(self._src_info, " ".join(cmd))),
-            "ATTR_OP": lambda cmd: self.__make(expression.AttrOp(self._src_info)),
-            "CALL_OP": lambda cmd: self.__make(expression.CallOp(self._src_info)),
-            "ADD_OP": lambda cmd: self.__make(expression.AddOp(self._src_info)),
-            "SUB_OP": lambda cmd: self.__make(expression.SubOp(self._src_info)),
-            "MUL_OP": lambda cmd: self.__make(expression.MulOp(self._src_info)),
-            "DIV_OP": lambda cmd: self.__make(expression.DivOp(self._src_info)),
-            "MOD_OP": lambda cmd: self.__make(expression.ModOp(self._src_info)),
-            "MATMUL_OP": lambda cmd: self.__make(expression.MatMulOp(self._src_info)),
-            "POW_OP": lambda cmd: self.__make(expression.PowOp(self._src_info)),
-            "LSHIFT_OP": lambda cmd: self.__make(expression.LeftShiftOp(self._src_info)),
-            "RSHIFT_OP": lambda cmd: self.__make(expression.RightShiftOp(self._src_info)),
-            "BIT_AND_OP": lambda cmd: self.__make(expression.BitAndOp(self._src_info)),
-            "BIT_OR_OP": lambda cmd: self.__make(expression.BitOrOp(self._src_info)),
-            "BIT_XOR_OP": lambda cmd: self.__make(expression.BitXorOp(self._src_info)),
-            "BIT_NOT_OP": lambda cmd: self.__make(expression.BitNotOp(self._src_info)),
-            "EQ_OP": lambda cmd: self.__make(expression.EqualOp(self._src_info)),
-            "NEQ_OP": lambda cmd: self.__make(expression.NotEqualOp(self._src_info)),
-            "LT_OP": lambda cmd: self.__make(expression.LessThanOp(self._src_info)),
-            "LE_OP": lambda cmd: self.__make(expression.LessThanOrEqualOp(self._src_info)),
-            "GT_OP": lambda cmd: self.__make(expression.GreaterThanOp(self._src_info)),
-            "GE_OP": lambda cmd: self.__make(expression.GreaterThanOrEqualOp(self._src_info)),
-            "NOT_OP": lambda cmd: self.__make(expression.LogicalNotOp(self._src_info)),
-            "AND_OP": lambda cmd: self.__make(expression.LogicalAndOp(self._src_info)),
-            "OR_OP": lambda cmd: self.__make(expression.LogicalOrOp(self._src_info)),
-            "POSITIVE_OP": lambda cmd: self.__make(expression.PositiveOp(self._src_info)),
-            "NEGATIVE_OP": lambda cmd: self.__make(expression.NegativeOp(self._src_info)),
-            "ITEM_OP": lambda cmd: self.__make(expression.ItemOp(self._src_info)),
-            "BRACKETS_OP": lambda cmd: self.__make(expression.BracketsOp(self._src_info)),
-            "COND_OP": lambda cmd: self.__make(expression.ConditionalOp(self._src_info)),
-            "UPDATE": lambda cmd: self.__make(expression.UpdateExpr(self._src_info)),
-            "CAST_OP": lambda cmd: self.__make(statement.CastOp(self._src_info)),
-            "CLOSURE": lambda cmd: self.__make(definition.Closure(self._src_info)),
-            "GENERIC_CALL": lambda cmd: self.__make(definition.GenericCall(self._src_info)),
+            "STRING_LITERAL": lambda cmd: self.__make(expression.StringLiteral(self._src_info, self._symbol_table, " ".join(cmd))),
+            "BOOL_LITERAL": lambda cmd: self.__make(expression.BoolLiteral(self._src_info, self._symbol_table, cmd[0])),
+            "INTEGER_LITERAL": lambda cmd: self.__make(expression.IntegerLiteral(self._src_info, self._symbol_table, cmd[0], cmd[1])),
+            "FLOAT_LITERAL": lambda cmd: self.__make(expression.FloatLiteral(self._src_info, self._symbol_table, cmd[0])),
+            "SLICE_REF": lambda cmd: self.__make(expression.SliceRef(self._src_info, self._symbol_table)),
+            "ARRAY_REF": lambda cmd: self.__make(expression.ArrayRef(self._src_info, self._symbol_table)),
+            "TUPLE_REF": lambda cmd: self.__make(expression.TupleRef(self._src_info, self._symbol_table)),
+            "AUTO_TYPE_REF": lambda cmd: self.__make(expression.AutoTypeRef(self._src_info, self._symbol_table)),
+            "TYPE_REF": lambda cmd: self.__make(expression.TypeRef.from_name(self._src_info, self._symbol_table, " ".join(cmd))),
+            "CLASS_REF": lambda cmd: self.__make(expression.ClassRef(self._src_info, self._symbol_table, " ".join(cmd))),
+            "ATTR_OP": lambda cmd: self.__make(expression.AttrOp(self._src_info, self._symbol_table)),
+            "CALL_OP": lambda cmd: self.__make(expression.CallOp(self._src_info, self._symbol_table)),
+            "ADD_OP": lambda cmd: self.__make(expression.AddOp(self._src_info, self._symbol_table)),
+            "SUB_OP": lambda cmd: self.__make(expression.SubOp(self._src_info, self._symbol_table)),
+            "MUL_OP": lambda cmd: self.__make(expression.MulOp(self._src_info, self._symbol_table)),
+            "DIV_OP": lambda cmd: self.__make(expression.DivOp(self._src_info, self._symbol_table)),
+            "MOD_OP": lambda cmd: self.__make(expression.ModOp(self._src_info, self._symbol_table)),
+            "MATMUL_OP": lambda cmd: self.__make(expression.MatMulOp(self._src_info, self._symbol_table)),
+            "POW_OP": lambda cmd: self.__make(expression.PowOp(self._src_info, self._symbol_table)),
+            "LSHIFT_OP": lambda cmd: self.__make(expression.LeftShiftOp(self._src_info, self._symbol_table)),
+            "RSHIFT_OP": lambda cmd: self.__make(expression.RightShiftOp(self._src_info, self._symbol_table)),
+            "BIT_AND_OP": lambda cmd: self.__make(expression.BitAndOp(self._src_info, self._symbol_table)),
+            "BIT_OR_OP": lambda cmd: self.__make(expression.BitOrOp(self._src_info, self._symbol_table)),
+            "BIT_XOR_OP": lambda cmd: self.__make(expression.BitXorOp(self._src_info, self._symbol_table)),
+            "BIT_NOT_OP": lambda cmd: self.__make(expression.BitNotOp(self._src_info, self._symbol_table)),
+            "EQ_OP": lambda cmd: self.__make(expression.EqualOp(self._src_info, self._symbol_table)),
+            "NEQ_OP": lambda cmd: self.__make(expression.NotEqualOp(self._src_info, self._symbol_table)),
+            "LT_OP": lambda cmd: self.__make(expression.LessThanOp(self._src_info, self._symbol_table)),
+            "LE_OP": lambda cmd: self.__make(expression.LessThanOrEqualOp(self._src_info, self._symbol_table)),
+            "GT_OP": lambda cmd: self.__make(expression.GreaterThanOp(self._src_info, self._symbol_table)),
+            "GE_OP": lambda cmd: self.__make(expression.GreaterThanOrEqualOp(self._src_info, self._symbol_table)),
+            "NOT_OP": lambda cmd: self.__make(expression.LogicalNotOp(self._src_info, self._symbol_table)),
+            "AND_OP": lambda cmd: self.__make(expression.LogicalAndOp(self._src_info, self._symbol_table)),
+            "OR_OP": lambda cmd: self.__make(expression.LogicalOrOp(self._src_info, self._symbol_table)),
+            "POSITIVE_OP": lambda cmd: self.__make(expression.PositiveOp(self._src_info, self._symbol_table)),
+            "NEGATIVE_OP": lambda cmd: self.__make(expression.NegativeOp(self._src_info, self._symbol_table)),
+            "ITEM_OP": lambda cmd: self.__make(expression.ItemOp(self._src_info, self._symbol_table)),
+            "BRACKETS_OP": lambda cmd: self.__make(expression.BracketsOp(self._src_info, self._symbol_table)),
+            "COND_OP": lambda cmd: self.__make(expression.ConditionalOp(self._src_info, self._symbol_table)),
+            "UPDATE": lambda cmd: self.__make(expression.UpdateExpr(self._src_info, self._symbol_table)),
+            "CAST_OP": lambda cmd: self.__make(statement.CastOp(self._src_info, self._symbol_table, self._var_state_table)),
+            "CLOSURE": lambda cmd: self.__make(definition.Closure(self._src_info, self._symbol_table)),
+            "GENERIC_CALL": lambda cmd: self.__make(definition.GenericCall(self._src_info, self._symbol_table)),
         }
         # noinspection PyTypeChecker
         self._STMT_MAKER_DICT: dict[str, Callable[[list[str]], statement.Statement]] = {
-            "DECL": lambda cmd: self.__make(statement.DeclStmt(self._src_info, self._symbol_table.namespace)),
-            "ASSIGN": lambda cmd: self.__make(statement.AssignStmt(self._src_info)),
-            "OP": lambda cmd: self.__make(statement.OpStmt(self._src_info)),
-            "RETURN": lambda cmd: self.__make(statement.ReturnStmt(self._src_info)),
-            "THROW": lambda cmd: self.__make(statement.ThrowStmt(self._src_info)),
-            "C": lambda cmd: self.__make(statement.CStmt(self._src_info)),
-            "IF": lambda cmd: self.__make(statement.IfStmt(self._src_info)),
-            "ELIF": lambda cmd: self.__make(statement.ElifStmt(self._src_info)),
-            "ELSE": lambda cmd: self.__make(statement.ElseStmt(self._src_info)),
-            "TRY": lambda cmd: self.__make(statement.TryStmt(self._src_info)),
-            "CATCH": lambda cmd: self.__make(statement.CatchStmt(self._src_info)),
-            "FINALLY": lambda cmd: self.__make(statement.FinallyStmt(self._src_info)),
-            "TYPE_DEF": lambda cmd: self.__make(statement.TypeDefStmt(self._src_info, cmd[0])),
+            "DECL": lambda cmd: self.__make(statement.DeclStmt(self._src_info, self._symbol_table, self._symbol_table.namespace, self._var_state_table)),
+            "ASSIGN": lambda cmd: self.__make(statement.AssignStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "OP": lambda cmd: self.__make(statement.OpStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "RETURN": lambda cmd: self.__make(statement.ReturnStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "THROW": lambda cmd: self.__make(statement.ThrowStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "C": lambda cmd: self.__make(statement.CStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "IF": lambda cmd: self.__make(statement.IfStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "ELIF": lambda cmd: self.__make(statement.ElifStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "ELSE": lambda cmd: self.__make(statement.ElseStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "TRY": lambda cmd: self.__make(statement.TryStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "CATCH": lambda cmd: self.__make(statement.CatchStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "FINALLY": lambda cmd: self.__make(statement.FinallyStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "TYPE_DEF": lambda cmd: self.__make(statement.TypeDefStmt(self._src_info, self._symbol_table, cmd[0], self._var_state_table)),
             "BLOCK": lambda cmd: self.__make_stmt_block()
         }
         self._CALLER_DICT: dict[str, Callable[[list[str]], None]] = {
@@ -159,6 +160,18 @@ class CompilerVM:
             "SET_VAR_NAMES": lambda cmd: self.__call_add_var_name(cmd),
             "SET_VAR_VALUE": lambda cmd: self.__call_set_var_value(),
         }
+
+    def compile(self, src_path: str) -> None:
+        src_path = os.path.abspath(src_path)
+        self._symbol_table = symbol.SymbolTable.read_from(src_path + SYMBOL_TABLE_POSTFIX)
+        self._var_state_table = symbol.VariableStateTable(src_path, self._workspace)
+        self._stack.clear()
+        self._stack.append(project.SourceFile(self._src_info, self._symbol_table, src_path, self._symbol_table.namespace))
+        with open(src_path + COMMAND_POSTFIX, "r", encoding=CompilerVM._ENCODING) as f:
+            commands = f.read()
+        self.exec(commands)
+        src_file = self.get()
+        self._project.add_source_file(src_file)
 
     def exec(self, cmd: str) -> None:
         lines: list[str] = cmd.split("\n")
@@ -362,7 +375,7 @@ class CompilerVM:
         self.__check_type(self._stack[-1], [expression.TypeRef])
         self.__check_type(self._stack[-2], [statement.CatchStmt])
         # noinspection PyUnresolvedReferences
-        self._stack[-2].set_except_decl(symbol.TemporaryVariableName(self._src_info, cmd[0], self._stack[-1].return_type))
+        self._stack[-2].set_except_decl(symbol.LocalVariableName(self._src_info, cmd[0], self._stack[-1].return_type))
         self.__pop()
 
     def __call_set_expr(self) -> None:
@@ -489,8 +502,9 @@ class CompilerVM:
         return obj
 
     def __make_class(self, cmd: list[str]) -> definition.ClassDef:
-        result = definition.ClassDef(self._src_info, self._symbol_table.namespace, cmd[0], self._var_state_table.state)
+        result = definition.ClassDef(self._src_info, self._symbol_table, self._symbol_table.namespace, cmd[0], self._var_state_table)
         self._symbol_table.add_scope()
+        self._var_state_table.add_scope()
         self._exec_mode_stack.append(_ExecMode.SQ)
         self._scope_count_stack.append(_ScopeCount.INC)
         self._current_class = result.decl
@@ -498,50 +512,52 @@ class CompilerVM:
 
     def __make_def_constructor(self, cmd: list[str]) -> definition.ConstructorDef:
         construct_def: definition.ConstructorDef = definition.ConstructorDef(
-            self._src_info,
-            self._symbol_table.namespace,
-            self._var_state_table.assigned_variables,
-            cmd[0], cmd[1:]
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0], cmd[1:]
         )
         self._exec_mode_stack.append(_ExecMode.SQ)
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
+        self._var_state_table.add_scope()
         return construct_def
 
     def __make_def_destructor(self, cmd: list[str]) -> definition.DestructorDef:
-        destructor_def: definition.DestructorDef = definition.DestructorDef(self._src_info,
-                                                                            self._symbol_table.namespace,
-                                                                            self._var_state_table.assigned_variables,
-                                                                            cmd[0])
+        destructor_def: definition.DestructorDef = definition.DestructorDef(
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0]
+        )
         self._exec_mode_stack.append(_ExecMode.SQ)
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
+        self._var_state_table.add_scope()
         return destructor_def
 
     def __make_def_fn(self, cmd: list[str]) -> definition.FnDef:
-        fn_def: definition.FnDef = definition.FnDef(self._src_info, self._symbol_table.namespace,
-                                                    self._var_state_table.assigned_variables, cmd[0], cmd[1:])
+        fn_def: definition.FnDef = definition.FnDef(
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0], cmd[1:]
+        )
         self._exec_mode_stack.append(_ExecMode.FN)
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
+        self._var_state_table.add_scope()
         return fn_def
 
     def __make_def_sq(self, cmd: list[str]) -> definition.SqDef:
-        sq_def: definition.SqDef = definition.SqDef(self._src_info, self._symbol_table.namespace,
-                                                    self._var_state_table.assigned_variables, cmd[0], cmd[1:])
+        sq_def: definition.SqDef = definition.SqDef(
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0], cmd[1:]
+        )
         self._exec_mode_stack.append(_ExecMode.SQ)
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
+        self._var_state_table.add_scope()
         return sq_def
 
     def __make_stmt_block(self) -> statement.BlockStmt:
         self._exec_mode_stack.append(self._exec_mode_stack[-1])
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
+        self._var_state_table.add_scope()
         if self._exec_mode_stack[-1] == _ExecMode.FN:
-            return statement.FnBlockStmt(self._src_info, self._var_state_table.state)
-        else:
-            return statement.BlockStmt(self._src_info, self._var_state_table.state)
+            return statement.FnBlockStmt(self._src_info, self._symbol_table, self._var_state_table)
+        return statement.BlockStmt(self._src_info, self._symbol_table, self._var_state_table)
 
     def __make_variable_ref(self, cmd: list[str]) -> expression.VariableRef:
         # noinspection PyTypeChecker
@@ -551,8 +567,8 @@ class CompilerVM:
         if self.__scope_level == 0:
             var: symbol.VariableName = symbol.GlobalVariableName(self._src_info, self._symbol_table.namespace, var_name, var_type)
         else:
-            var = symbol.TemporaryVariableName(self._src_info, var_name, var_type)
-        expr: expression.VariableRef = expression.VariableRef(self._src_info, var)
+            var = symbol.LocalVariableName(self._src_info, var_name, var_type)
+        expr: expression.VariableRef = expression.VariableRef(self._src_info, self._symbol_table, var)
         self.__make(expr)
         return expr
 
@@ -562,6 +578,7 @@ class CompilerVM:
         scope = self._scope_count_stack.pop()
         if scope == _ScopeCount.INC:
             self._symbol_table.clear_temporaries()
+            self._var_state_table.pop_scope()
         if len(self._scope_count_stack) == 1:
             self._current_class = None
 

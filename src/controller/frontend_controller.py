@@ -49,3 +49,9 @@ class LexerController(SingleController):
                     break
                 path = self._all_paths.pop()
             lexer.lex_with_writer(path)
+
+
+class ParserController(SingleController):
+
+    def __init__(self) -> None:
+        super().__init__("parse")

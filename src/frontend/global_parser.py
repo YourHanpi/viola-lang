@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 from .utils import ParserGenericTable, ParsingResult, ParsingSlice, TokenStreamIO
-from utils import CompilerException, SourceInfo, VIOLA_INIT, Token
-from utils.file_postfixes import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TYPE_POSTFIX
+from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS
+from utils.file_postfixes import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TYPE_POSTFIX, SYMBOL_TABLE_POSTFIX
+from utils.logger import Logger
 
 import os
 import time
@@ -39,8 +40,9 @@ _BLANK_TOKEN: Token = Token("", ["_BLANK"])
 
 
 class GlobalParser:
+    _ENCODING: str = COMPILER_PARAMS["encoding"]
 
-    def __init__(self, workspace: str) -> None:
+    def __init__(self, workspace: str, thread_index: int = 0) -> None:
         self._workspace: str = workspace
         self._tokens: list[Token] = []
         self._tokens_num: int = 0
@@ -55,11 +57,7 @@ class GlobalParser:
         self._imports: dict[str, str] = {}
         self._parser_generic_table: ParserGenericTable = ParserGenericTable()
         self._symbol_types: dict[str, tuple[str, int]] = {}
-
-    def get_errors(self) -> list[str]:
-        result = [str(exception) for exception in self._exceptions]
-        self._exceptions.clear()
-        return result
+        self._logger: Logger = Logger(f"Parser[{thread_index}]")
 
     def parse(self, tokens: list[Token]) -> Optional[ParsingResult]:
         self._load_tokens(tokens)
@@ -89,11 +87,21 @@ class GlobalParser:
     
     def parse_from_file(self, file_path: str) -> Optional[ParsingResult]:
         self._set_file_lock(file_path)
+        self._logger.info(f"Start parsing {file_path}")
         tokens: list[Token] = TokenStreamIO.read(file_path + TOKEN_POSTFIX)
         result = self.parse(tokens)
         self._dump_symbol_type_list(file_path)
         self._remove_file_lock(file_path)
+        if result is None:
+            self._logger.error(f"Failed to parse {file_path}")
+        else:
+            self._logger.info(f"Successfully parsed {file_path}")
         return result
+
+    def parse_to_file(self, file_path: str) -> None:
+        result = self.parse_from_file(file_path)
+        if result is not None:
+            result.write(file_path)
 
     def _back(self, steps: int = 1) -> None:
         for _ in range(steps):
@@ -139,7 +147,7 @@ class GlobalParser:
         for name, (t, type_args) in self._symbol_types.items():
             if "." in name:
                 continue
-            lines.append(f"{name} {t} {type_args}")
+            lines.append(f"{name}%{t}%{type_args}")
         with open(file_path + SYMBOL_TYPE_POSTFIX, "w") as f:
             f.write("\n".join(lines))
 
@@ -168,6 +176,48 @@ class GlobalParser:
         while self._current < self._tokens_num:
             if self._match_types(["FN", "SQ", "CLASS", "ENUM", "IMPORT", "FROM"]):
                 break
+
+    def _load_symbol(self, namespace: str, to_load: Optional[list[str]] = None) -> Optional[list[str]]:
+        file_path = self._find_import(namespace)
+        if file_path is None:
+            return None
+        symbol_table_path: str = file_path + SYMBOL_TABLE_POSTFIX
+        parsing_lock_path: str = file_path + PARSING_LOCK_POSTFIX
+        if not os.path.exists(symbol_table_path):
+            if os.path.exists(parsing_lock_path):
+                while os.path.exists(parsing_lock_path):
+                    time.sleep(0.1)
+            else:
+                self.parse_to_file(file_path)
+        with open(symbol_table_path, "r", encoding=GlobalParser._ENCODING) as file:
+            texts: str = file.read().split("---", 1)[1]
+        text_list = texts.split("\n")
+        if to_load is None:
+            return text_list
+        current_line: int = 0
+        total_lines: int = len(text_list)
+        to_load_locations: list[int] = []
+        while current_line < total_lines:
+            head: str = text_list[current_line].strip()
+            current_line += 1
+            line: str = text_list[current_line].strip()
+            if head in ["BASE", "FUNC", "METHOD"] and line.split(" ", 1)[0] in to_load:
+                to_load_locations.append(current_line - 1)
+            elif head in ["CLASS", "ENUM"] and line.split("%", 1)[0] in to_load:
+                to_load_locations.append(current_line - 1)
+            elif head == "VAR" and line.split("%")[1] in to_load:
+                to_load_locations.append(current_line - 1)
+            else:
+                self._logger.warning(f"Unknown symbol table head: {head}")
+            while current_line < total_lines and text_list[current_line].strip() != "---":
+                current_line += 1
+        symbols: list[str] = []
+        for loc in to_load_locations:
+            while text_list[loc].strip() != "---":
+                symbols.append(text_list[loc])
+                loc += 1
+            symbols.append("---")
+        return symbols
                 
     def _load_symbol_type_list(self, namespace: str, alias: str, to_load: Optional[list[str]] = None) -> None:
         file_path = self._find_import(namespace)
@@ -180,7 +230,7 @@ class GlobalParser:
                 while os.path.exists(parsing_lock_path):
                     time.sleep(0.1)
             else:
-                self.parse_from_file(file_path)
+                self.parse_to_file(file_path)
         with open(symbol_types_path, "r") as file:
             texts: list[str] = file.readlines()
         for text in texts:
@@ -780,7 +830,9 @@ class GlobalParser:
                 return None
         self._load_symbol_type_list(module_path, module_path, import_symbols)
         command: list[str] = [f"MAKE FROM_IMPORT {module_path} " + " ".join(import_symbols)]
-        symbol: list[str] = ["FROM_IMPORT", module_path, " ".join(import_symbols), "---"]
+        symbol = self._load_symbol(module_path, import_symbols)
+        if symbol is None:
+            return None
         return command, symbol
 
     @set_loc_command
@@ -907,7 +959,10 @@ class GlobalParser:
             self._raise("Unexpected token: " + self._get_current().text)
             return None
         self._load_symbol_type_list(module_path, alias)
-        return ["CALL IMPORT " + module_path], ["IMPORT", module_path, "---"]
+        symbol = self._load_symbol(module_path)
+        if symbol is None:
+            return None
+        return ["CALL IMPORT " + module_path], symbol
 
     @set_loc_command
     def _parse_import_line(self) -> Optional[tuple[list[str], list[str]]]:
@@ -1212,7 +1267,7 @@ class GlobalParser:
         return command, symbol
 
     def _raise(self, message: str) -> None:
-        self._exceptions.append(CompilerException(message, self._src_info))
+        self._logger.error(str(CompilerException(message, self._src_info)))
         
     @staticmethod
     def _remove_file_lock(path: str) -> None:

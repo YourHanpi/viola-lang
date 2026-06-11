@@ -205,7 +205,7 @@ class TypeName(NamedSymbol, ABC):
         """
         检查此类型是否可转换为目标类型。
         target: 目标类型。
-        symbol_dict: 符号表（SYMBOL_TABLE.symbols）。
+        symbol_dict: 符号表（self._symbol_table.symbols）。
         """
         pass
 
@@ -605,7 +605,7 @@ class PropertyVariableName(VariableName):
         return self._namespace[-1].name + "$" + self._self_name
 
 
-class TemporaryVariableName(VariableName):
+class LocalVariableName(VariableName):
     """
     临时变量名。
     """
@@ -1408,11 +1408,11 @@ class FunctionName(GlobalVariableName):
         return self._arg_types
 
     @property
-    def args(self) -> list[TemporaryVariableName]:
+    def args(self) -> list[LocalVariableName]:
         """
         获取参数列表。
         """
-        return list(map(lambda t, x: TemporaryVariableName(self._src_info, x, t), self.type.args, self._arg_names))
+        return list(map(lambda t, x: LocalVariableName(self._src_info, x, t), self.type.args, self._arg_names))
 
     def as_async(self) -> "FunctionName":
         """
@@ -2134,6 +2134,12 @@ class SymbolTable:
             return (item[0][len(self._namespace_name + "$"):], item[1]) in self
         return item in self.symbols
 
+    def __delitem__(self, key: tuple[str, Optional[tuple[TypeName, ...]]]) -> None:
+        for i, sym in self._symbols:
+            if key in sym:
+                del self._symbols[i][key]
+                break
+
     def __getitem__(self, items: tuple[str, Optional[tuple[TypeName, ...]]]) -> NamedSymbol:
         """
         获取一个符号。
@@ -2498,9 +2504,9 @@ class SymbolTable:
     def _read_global_var_decl(self, item: list[str]) -> None:
         """
         读取全局变量。记载格式如下：
-        <变量类型> <变量名>
+        <变量类型>%<变量名>
         """
-        item: list[str] = item[0].split(" ")
+        item: list[str] = item[0].split("%")
         item_name: str = item[1]
         item_type: str = item[0]
         # noinspection PyTypeChecker
@@ -2675,7 +2681,7 @@ class VariableStateTable:
         """
         检查表是否包含某个变量。
         """
-        return item in self._state
+        return item in self.state
 
     def __getitem__(self, item: VariableName) -> VariableState:
         """
@@ -2683,9 +2689,9 @@ class VariableStateTable:
         """
         if item not in self:
             raise InternalCompilerException(f"Variable {item.name} not found.", SourceInfo(""))
-        return self._state[item]
+        return self.state[item]
 
-    def __init__(self, path: str, workspace: str) -> None:
+    def __init__(self, path: str = "", workspace: str = "") -> None:
         """
         创建表。
         path: 源代码目录。
@@ -2694,30 +2700,63 @@ class VariableStateTable:
         self._path: str = path
         dir_list: list[str] = os.path.relpath(path, workspace).replace("-", "_").split(os.sep)
         self._namespace: list[NamespaceName] = list(map(lambda x: NamespaceName(x), dir_list))
-        self._state: dict[VariableName, VariableState] = {}
+        self._state: list[dict[VariableName, VariableState]] = [{}]
 
     def __setitem__(self, key: VariableName, value: VariableState) -> None:
         """
         设置变量状态。
         """
-        self._state[key] = value
+        self._state[-1][key] = value
+
+    def add_scope(self) -> None:
+        """
+        添加作用域。
+        """
+        self._state.append({})
 
     @property
     def assigned_variables(self) -> list[VariableName]:
         """
         获取所有已赋值变量。
         """
-        return [k for k, v in self._state.items() if v == VariableState.ASSIGNED]
+        return [k for k, v in self.state.items() if v == VariableState.ASSIGNED]
 
-    def clear(self) -> None:
+    def pop_scope(self) -> None:
         """
-        清空临时变量。
+        弹出作用域。
         """
-        self._state = {k: v for k, v in self._state.items() if k.is_global}
+        self._state.pop()
+
+    def set_assigned(self, variables: list[VariableName]) -> None:
+        for variable in variables:
+            if variable in self and self[variable] == VariableState.ASSIGNED:
+                raise CompilerException(f"Variable {variable.name} is already assigned.", variable.src_info)
+            self[variable] = VariableState.ASSIGNED
+
+    def set_async_assigned(self, variables: list[VariableName]) -> None:
+        for variable in variables:
+            if variable in self and self[variable].value == VariableState.ASYNC_ASSIGNED.value:
+                raise CompilerException(f"Variable {variable.name} is already async assigned.", variable.src_info)
+            self[variable] = VariableState.ASYNC_ASSIGNED
+
+    def set_declared(self, variables: list[VariableName]) -> None:
+        for variable in variables:
+            if variable in self and self[variable].value >= VariableState.DECLARED.value:
+                raise CompilerException(f"Variable {variable.name} is already declared.", variable.src_info)
+            self[variable] = VariableState.DECLARED
 
     @property
     def state(self) -> dict[VariableName, VariableState]:
         """
         获取变量状态字典。
         """
-        return self._state
+        result = {}
+        for state in self._state:
+            result.update(state)
+        return result
+
+    def update(self, other: dict[VariableName, VariableState]) -> None:
+        """
+        更新变量状态。
+        """
+        self._state[-1].update(other)

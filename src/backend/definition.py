@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
 from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp
-from .statement import Statement, BlockStmt, VAR_STATE_TABLE, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, \
+from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, \
     STACK_B_POP_FUNC
-from .symbol import FunctionName, VariableName, TemporaryVariableName, VariableState, TupleTypeName, NamespaceName, \
+from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
     ClassName, MethodName, CLOSURE_T, TypeName, EXCEPTION_T_NAME, EnumName, GlobalVariableName, GenericArgument, \
-    ArrayTypeName, StringTypeName, PropertyVariableName
-import backend.expression as expression
+    ArrayTypeName, StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable
 from utils import CompilerException, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
@@ -20,8 +19,9 @@ PERROR_FUNC_NAME: str = "viola$io$perror"
 
 class Definition(CompilingItem, ABC):
 
-    def __init__(self, src_info: SourceInfo) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
         super().__init__(src_info)
+        self._symbol_table: SymbolTable = symbol_table
 
     @property
     @abstractmethod
@@ -70,8 +70,8 @@ class Definition(CompilingItem, ABC):
 
 class ConstDef(Definition):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName]) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, namespace: list[NamespaceName]) -> None:
+        super().__init__(src_info, symbol_table)
         self._define_stmt: Optional[Statement] = None
         self._namespace: list[NamespaceName] = namespace
         self._module_name: str = "$".join(map(lambda x: x.name, self._namespace))
@@ -126,30 +126,29 @@ class ConstDef(Definition):
 
 class SqDef(Definition):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], outer_variables_list: list[VariableName],
-                 name: str, arg_types: list[str]) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 namespace: list[NamespaceName], name: str, arg_types: list[str]) -> None:
+        super().__init__(src_info, symbol_table)
         arg_types_decl: list[TypeName] = []
         for arg_type in arg_types:
-            if (arg_type, None) not in expression.SYMBOL_TABLE:
+            if (arg_type, None) not in self._symbol_table:
                 raise CompilerException(f"Name {arg_type} is not defined.", src_info)
-            arg_type = expression.SYMBOL_TABLE[arg_type, None]
+            arg_type = self._symbol_table[arg_type, None]
             if not isinstance(arg_type, TypeName):
                 raise CompilerException(f"Argument {arg_type} is not a type.", src_info)
             arg_types_decl.append(arg_type)
-        decl = expression.SYMBOL_TABLE[name, tuple(arg_types_decl)]
+        decl = self._symbol_table[name, tuple(arg_types_decl)]
         if not isinstance(decl, FunctionName):
             raise CompilerException(f"Name {name} is not a function.", src_info)
         self._self_name: str = decl.self_name
         self._decl = decl
-        self._outer_variables: dict[VariableName, VariableState] = dict(
-            map(lambda x: (x, VAR_STATE_TABLE[x]), outer_variables_list)
-        )
-        self._args: list[TemporaryVariableName] = list(
-            map(lambda n, t: TemporaryVariableName(src_info, n, t), self._decl.arg_names, self._decl.arg_types)
+        self._var_states: VariableStateTable = var_states
+        self._outer_variables: dict[VariableName, VariableState] = var_states.state
+        self._args: list[LocalVariableName] = list(
+            map(lambda n, t: LocalVariableName(src_info, n, t), self._decl.arg_names, self._decl.arg_types)
         )
         self._outer_variables.update(dict(map(lambda x: (x, VariableState.ASSIGNED), self._args)))
-        self._body: BlockStmt = BlockStmt(src_info, self._outer_variables)
+        self._body: BlockStmt = BlockStmt(src_info, self._symbol_table, var_states)
         self._namespace: list[NamespaceName] = namespace
         module_name: str = "$".join(map(lambda x: x.name, self._namespace))
         self._import_name: str = module_name + "$" + name
@@ -210,7 +209,7 @@ class SqDef(Definition):
         new_sq = deepcopy(self)
         type_args_tuple: tuple[TypeName, ...] = tuple(map(lambda x: type_args[x], cls_decl.generic_args))
         new_sq._decl = new_sq._decl.as_method(cls_decl).set_cls(
-            expression.SYMBOL_TABLE.get_generic_cls_instance(cls_decl, type_args_tuple), 0
+            self._symbol_table.get_generic_cls_instance(cls_decl, type_args_tuple), 0
         )
         new_sq._body = new_sq._body.instantiation(type_args)
         return new_sq
@@ -220,7 +219,7 @@ class SqDef(Definition):
         return self.instantiation_full_by_dict(type_args_dict)
 
     def instantiation_full_all(self) -> list["SqDef"]:
-        type_args_list: list[tuple[TypeName, ...]] = expression.SYMBOL_TABLE.get_all_to_instantiate_symbols(
+        type_args_list: list[tuple[TypeName, ...]] = self._symbol_table.get_all_to_instantiate_symbols(
             self._src_info, self._decl)
         instances = list(map(lambda t: self.instantiation_full(t), type_args_list))
         return instances
@@ -230,7 +229,7 @@ class SqDef(Definition):
             raise CompilerException("Function is not generic.", self._src_info)
         new_sq = deepcopy(self)
         new_sq._decl = new_sq._decl.instantiation(
-            expression.SYMBOL_TABLE.get_generic_func_instance(new_sq._decl, tuple(type_args)).name, type_args
+            self._symbol_table.get_generic_func_instance(new_sq._decl, tuple(type_args)).name, type_args
         )
         new_sq._body = new_sq._body.instantiation(type_args)
         return new_sq
@@ -298,19 +297,19 @@ class SqDef(Definition):
         ]
         arg_tuple_name: TupleTypeName = TupleTypeName(self._src_info, self._decl.arg_types)
         ret_tuple_name: TupleTypeName = TupleTypeName(self._src_info, self._decl.ret_types)
-        arg_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, VariableRef(self._src_info, TemporaryVariableName(
+        arg_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, self._symbol_table, VariableRef(self._src_info, self._symbol_table, LocalVariableName(
             self._src_info, "params", arg_tuple_name
         )))
-        arg_unpack_stmt: DeclStmt = DeclStmt(self._src_info, self._namespace)
+        arg_unpack_stmt: DeclStmt = DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)
         arg_unpack_stmt.set_var_value(arg_unpack_expr)
         arg_unpack_stmt.set_vars_with_known_type(self._decl.arg_names, self._decl.arg_types,
                                                  [False] * len(self._decl.arg_names))
         arg_unpack_stmt.finish()
         arg_unpack_stmt.indent()
-        ret_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, VariableRef(self._src_info, TemporaryVariableName(
+        ret_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, self._symbol_table, VariableRef(self._src_info, self._symbol_table, LocalVariableName(
             self._src_info, "returns", ret_tuple_name
         )))
-        ret_unpack_stmt: DeclStmt = DeclStmt(self._src_info, self._namespace)
+        ret_unpack_stmt: DeclStmt = DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)
         ret_unpack_stmt.set_var_value(ret_unpack_expr)
         ret_unpack_stmt.set_vars_with_known_type(self._decl.ret_names, self._decl.ret_types,
                                                  [False] * len(self._decl.ret_names))
@@ -327,8 +326,8 @@ class SqDef(Definition):
         else:
             sync_call_params_text: str = "listener->exc"
         sync_call_text: str = f"\t{self._decl.name}({sync_call_params_text});"
-        try_stmt: TryStmt = TryStmt(self._src_info)
-        try_inner: CStmt = CStmt(self._src_info)
+        try_stmt: TryStmt = TryStmt(self._src_info, self._symbol_table, self._var_states)
+        try_inner: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
         try_inner.set_text("\n".join([
             arg_unpack_stmt.text,
             ret_unpack_stmt.text,
@@ -336,27 +335,27 @@ class SqDef(Definition):
             f"{STACK_B_POP_FUNC}(listener->currentThreadId);"
         ]))
         try_stmt.set_try_stmt(try_inner)
-        catch_stmt: CatchStmt = CatchStmt(self._src_info)
+        catch_stmt: CatchStmt = CatchStmt(self._src_info, self._symbol_table, self._var_states)
         # noinspection PyTypeChecker
-        catch_var: VariableName = TemporaryVariableName(self._src_info, "exc",
-                                                        expression.SYMBOL_TABLE[EXCEPTION_T_NAME, None])
+        catch_var: VariableName = LocalVariableName(self._src_info, "exc",
+                                                    self._symbol_table[EXCEPTION_T_NAME, None])
         catch_stmt.set_except_decl(catch_var)
-        catch_inner: BlockStmt = BlockStmt(self._src_info, self._outer_variables | {catch_var: VariableState.ASSIGNED})
-        catch_inner_print: OpStmt = OpStmt(self._src_info)
-        catch_inner_print_call: CallOp = CallOp(self._src_info)
-        catch_inner_what_attr: AttrOp = AttrOp(self._src_info)
+        catch_inner: BlockStmt = BlockStmt(self._src_info, self._symbol_table, self._var_states)
+        catch_inner_print: OpStmt = OpStmt(self._src_info, self._symbol_table, self._var_states)
+        catch_inner_print_call: CallOp = CallOp(self._src_info, self._symbol_table)
+        catch_inner_what_attr: AttrOp = AttrOp(self._src_info, self._symbol_table)
         catch_inner_what_attr.set_attr("what")
-        catch_inner_what_attr.set_caller(VariableRef(self._src_info, catch_var))
-        catch_inner_what_call: CallOp = CallOp(self._src_info)
+        catch_inner_what_attr.set_caller(VariableRef(self._src_info, self._symbol_table, catch_var))
+        catch_inner_what_call: CallOp = CallOp(self._src_info, self._symbol_table)
         catch_inner_what_call.set_func(catch_inner_what_attr)
         catch_inner_print_call.add_arg(catch_inner_what_call, None)
         # noinspection PyTypeChecker
-        catch_inner_print_func: VariableRef = VariableRef(self._src_info, expression.SYMBOL_TABLE[
+        catch_inner_print_func: VariableRef = VariableRef(self._src_info, self._symbol_table, self._symbol_table[
             PERROR_FUNC_NAME, (ArrayTypeName(self._src_info, StringTypeName),)])
         catch_inner_print_call.set_func(catch_inner_print_func)
         catch_inner_print.set_expr(catch_inner_print_call)
         catch_inner.add_stmt(catch_inner_print)
-        catch_inner_assign: CStmt = CStmt(self._src_info)
+        catch_inner_assign: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
         catch_inner_assign.set_text("listener->exc = exc;")
         catch_inner.add_stmt(catch_inner_assign)
         catch_inner.finish()
@@ -375,10 +374,10 @@ class SqDef(Definition):
 
 class ConstructorDef(SqDef):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], outer_variables_list: list[VariableName],
-                 cls_name: str, arg_types: list[str]) -> None:
-        super().__init__(src_info, namespace, outer_variables_list, f"{cls_name}.__new__", arg_types)
-        cls = expression.SYMBOL_TABLE[cls_name, None]
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 namespace: list[NamespaceName], cls_name: str, arg_types: list[str]) -> None:
+        super().__init__(src_info, symbol_table, var_states, namespace, f"{cls_name}.__new__", arg_types)
+        cls = self._symbol_table[cls_name, None]
         if not isinstance(cls, ClassName):
             raise CompilerException(f"Name {cls_name} is not a class.", src_info)
         if len(self._decl.ret_names) != 1:
@@ -387,8 +386,8 @@ class ConstructorDef(SqDef):
             raise CompilerException("Constructor must return a value of the same type as the class.", self._src_info)
         this_name: str = "_this"
         this_type: ClassName = cls
-        self._this_var: TemporaryVariableName = TemporaryVariableName(self._src_info, this_name, this_type)
-        this_alloc_stmt: CStmt = CStmt(src_info)
+        self._this_var: LocalVariableName = LocalVariableName(self._src_info, this_name, this_type)
+        this_alloc_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
         this_alloc_stmt.set_text(
             f"{self._this_var.type_name_pair_calling} = ({cls.c_calling_name})malloc(sizeof({cls.c_alloc_name}));")
         self.add_stmt(this_alloc_stmt)
@@ -401,30 +400,30 @@ class ConstructorDef(SqDef):
         super().add_stmt(stmt)
 
     @property
-    def this_var(self) -> TemporaryVariableName:
+    def this_var(self) -> LocalVariableName:
         return self._this_var
 
 
 class DestructorDef(SqDef):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], outer_variables_list: list[VariableName],
-                 cls_name: str) -> None:
-        super().__init__(src_info, namespace, outer_variables_list, f"{cls_name}.__del__", [])
-        cls = expression.SYMBOL_TABLE[cls_name]
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 namespace: list[NamespaceName], cls_name: str) -> None:
+        super().__init__(src_info, symbol_table, var_states, namespace, f"{cls_name}.__del__", [])
+        cls = self._symbol_table[cls_name]
         if not isinstance(cls, ClassName):
             raise CompilerException(f"Name {cls_name} is not a class.", src_info)
-        self._this_var: TemporaryVariableName = TemporaryVariableName(self._src_info, self._decl.arg_names[0],
-                                                                      self._decl.arg_types[0])
+        self._this_var: LocalVariableName = LocalVariableName(self._src_info, self._decl.arg_names[0],
+                                                              self._decl.arg_types[0])
         if cls.is_c_part:
             return
-        this_free_stmt: CStmt = CStmt(src_info)
+        this_free_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
         properties_to_free: list[VariableName] = list(filter(lambda y: y.is_object, cls.properties.values()))
         free_texts: list[str] = []
         for x in properties_to_free:
-            attr_op: AttrOp = AttrOp(src_info)
+            attr_op: AttrOp = AttrOp(src_info, self._symbol_table)
             attr_op.set_attr("__del__")
-            attr_op.set_caller(VariableRef(src_info, x))
-            call_op: CallOp = CallOp(src_info)
+            attr_op.set_caller(VariableRef(src_info, self._symbol_table, x))
+            call_op: CallOp = CallOp(src_info, self._symbol_table)
             call_op.set_func(attr_op)
             call_op.set_returns([])
             free_call_text = call_op.front_text.split("\n")
@@ -455,32 +454,40 @@ class DestructorDef(SqDef):
 
 class FnDef(SqDef):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], outer_variables_list: list[VariableName],
-                 name: str, arg_types: list[str]) -> None:
-        super().__init__(src_info, namespace, outer_variables_list, name, arg_types)
-        self._body: FnBlockStmt = FnBlockStmt(self._src_info, self._outer_variables)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 namespace: list[NamespaceName], name: str, arg_types: list[str]) -> None:
+        super().__init__(src_info, symbol_table, var_states, namespace, name, arg_types)
+        self._body: FnBlockStmt = FnBlockStmt(self._src_info, self._symbol_table, var_states)
 
 
 class CPartSqDef(SqDef):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], outer_variables_list: list[VariableName],
-                 name: str, arg_types: list[str]) -> None:
-        super().__init__(src_info, namespace, outer_variables_list, name, arg_types)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 namespace: list[NamespaceName], name: str, arg_types: list[str]) -> None:
+        super().__init__(src_info, symbol_table, var_states, namespace, name, arg_types)
 
     def add_stmt(self, stmt: CStmt) -> None:
         self._body.add_stmt(stmt)
 
     @property
     def source(self) -> str:
-        outer_text: str = self._body.outer_text if self._body.outer_text is not None else ""
         rename_define: str = f"#define {self._decl.self_name} {self._decl.name}"
-        return "\n".join([outer_text, self._source(False), rename_define])
+        return "\n".join([
+            "#ifdef __cplusplus",
+            "extern \"C\" {",
+            "#endif",
+            self._source(False),
+            rename_define,
+            "#ifdef __cplusplus",
+            "}",
+            "#endif"
+        ])
 
 
 class GlobalDef(CPartSqDef):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName]) -> None:
-        super().__init__(src_info, namespace, [], "__global__", [])
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, namespace: list[NamespaceName]) -> None:
+        super().__init__(src_info, symbol_table, var_states, namespace, "__global__", [])
 
     def add_stmt(self, stmt: CStmt) -> None:
         stmt.remove_mark()
@@ -521,24 +528,24 @@ class GlobalDef(CPartSqDef):
 
 class ClassDef(Definition):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], name: str,
-                 global_variables: dict[VariableName, VariableState]) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, namespace: list[NamespaceName], name: str,
+                 var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._self_name: str = name
         self._namespace: list[NamespaceName] = namespace
         # noinspection PyTypeChecker
-        self._decl: ClassName = expression.SYMBOL_TABLE[name]
+        self._decl: ClassName = self._symbol_table[name]
         if not isinstance(self._decl, ClassName):
             raise CompilerException(f"{name} is not a class.", src_info)
-        self._global_vars: dict[VariableName, VariableState] = global_variables
-        self._this_var: VariableName = TemporaryVariableName(self._src_info, "_this", self._decl)
+        self._global_vars: dict[VariableName, VariableState] = var_states.state
+        self._this_var: VariableName = LocalVariableName(self._src_info, "_this", self._decl)
         self._methods: dict[str, SqDef] = {}
         self._static_properties: dict[PropertyVariableName, Expression] = {}
         module_name: str = "$".join(map(lambda x: x.name, self._namespace))
         self._import_name: str = module_name + "$" + name
         self._import_all: str = module_name + "$__all__"
         self._import_module: str = module_name + "$__module__"
-        self.add_method(DestructorDef(self._src_info, self._namespace, list(self._global_vars.keys()), name))
+        self.add_method(DestructorDef(self._src_info, self._symbol_table, var_states, self._namespace, name))
         self._vtable_name: str = self._decl.vtable_name
         self._parent_vtable_name: str = f"{self._decl.parent}$$vtable" if self._decl.parent != "object" else "NULL"
         self._is_finished: bool = False
@@ -667,7 +674,7 @@ class ClassDef(Definition):
         if not self._decl.is_generic:
             raise CompilerException("ClassDef.instantiation called on non-generic class", self._src_info)
         new_cls = deepcopy(self)
-        new_cls._decl = expression.SYMBOL_TABLE.get_generic_cls_instance(new_cls._decl, tuple(type_args))
+        new_cls._decl = self._symbol_table.get_generic_cls_instance(new_cls._decl, tuple(type_args))
         type_args_dict: dict[GenericArgument, TypeName] = dict(zip(self._decl.generic_args, type_args))
         new_cls._methods = dict(
             map(lambda x: (x.self_name, x.instantiation(self._decl, type_args_dict)), self._methods.values())
@@ -676,7 +683,7 @@ class ClassDef(Definition):
         return new_cls
 
     def instantiation_full_all(self) -> list["ClassDef"]:
-        type_args_list: list[tuple[TypeName, ...]] = expression.SYMBOL_TABLE.get_all_to_instantiate_symbols(
+        type_args_list: list[tuple[TypeName, ...]] = self._symbol_table.get_all_to_instantiate_symbols(
             self._src_info, self._decl)
         instances = list(map(lambda t: self.instantiation(t), type_args_list))
         return instances
@@ -726,10 +733,48 @@ class ClassDef(Definition):
         return struct_def
 
 
+class CPartImportDef(Definition):
+
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, include_path: str) -> None:
+        super().__init__(src_info, symbol_table)
+        self._include_path: str = include_path
+
+    @property
+    def global_init_text(self) -> Optional[str]:
+        return None
+
+    @property
+    def header(self) -> str:
+        return "\n".join([
+            "#ifdef __cplusplus",
+            "extern \"C\" {",
+            "#endif",
+            f"#include {self._include_path}",
+            "#ifdef __cplusplus",
+            "}",
+            "#endif"
+        ])
+
+    @property
+    def is_finished(self) -> bool:
+        return True
+
+    def optimize(self) -> "Definition":
+        return self
+
+    @property
+    def outer_text(self) -> Optional[str]:
+        return None
+
+    @property
+    def source(self) -> str:
+        return f"// #include {self._include_path}"
+
+
 class FromImportDef(Definition):
 
-    def __init__(self, src_info: SourceInfo, root_path: str, module_path: str, def_name: list[str]) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, root_path: str, module_path: str, def_name: list[str]) -> None:
+        super().__init__(src_info, symbol_table)
         self._root_path: str = root_path
         self._module_path: str = module_path
         if len(def_name) == 1 and def_name[0] == "*":
@@ -791,9 +836,9 @@ class FromImportDef(Definition):
 
 class Closure(Expression):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
-        self._var_name: str = expression.SYMBOL_TABLE.get_counter()
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
+        self._var_name: str = self._symbol_table.get_counter()
         self._sq_def: Optional[SqDef] = None
         self._inline_mapping: dict[str, str] = {}
 
@@ -803,7 +848,7 @@ class Closure(Expression):
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         new_expr = deepcopy(self)
         new_expr._inline_mapping = inline_mapping
-        new_expr._inline_mapping[self._var_name] = expression.SYMBOL_TABLE.get_counter()
+        new_expr._inline_mapping[self._var_name] = self._symbol_table.get_counter()
         new_expr._var_name = new_expr.inline_mapping[self._var_name]
         return new_expr
 
@@ -889,8 +934,8 @@ class Closure(Expression):
 
 class GenericCall(Expression):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._generic_symbol: Optional[FunctionName | ClassName | MethodName] = None
         self._type_args: list[TypeName] = []
         self._instance: Optional[FunctionName | ClassName | MethodName] = None
@@ -914,7 +959,7 @@ class GenericCall(Expression):
         if len(self._type_args) == 0:
             raise CompilerException("Type arguments should not be empty", self._src_info)
         # noinspection PyTypeChecker
-        self._instance = expression.SYMBOL_TABLE.get_generic_instance(self._generic_symbol, tuple(self._type_args))
+        self._instance = self._symbol_table.get_generic_instance(self._generic_symbol, tuple(self._type_args))
         self._is_finished = True
 
     @property
@@ -981,11 +1026,11 @@ class GenericCall(Expression):
 
 class EnumDef(Definition):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], name: str) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, namespace: list[NamespaceName], name: str) -> None:
+        super().__init__(src_info, symbol_table)
         self._namespace: list[NamespaceName] = namespace
         self._name: str = name
-        self._decl = expression.SYMBOL_TABLE[name, None]
+        self._decl = self._symbol_table[name, None]
         if not isinstance(self._decl, EnumName):
             raise CompilerException(f"{name} is not an enum.", src_info)
         self._based_type: TypeName = self._decl.based_type
@@ -996,7 +1041,7 @@ class EnumDef(Definition):
         self._is_finished: bool = False
 
     def add_enum(self, name: str, expr: Expression) -> None:
-        if not expr.return_type.convertable_to(self._based_type, expression.SYMBOL_TABLE.symbols):
+        if not expr.return_type.convertable_to(self._based_type, self._symbol_table.symbols):
             raise CompilerException(f"{expr.return_type} is not convertable to {self._based_type}.", self._src_info)
         var: GlobalVariableName = GlobalVariableName(self._src_info, self._decl.as_namespace(), name, self._based_type)
         self._enum.append((var, expr))

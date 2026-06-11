@@ -2,7 +2,7 @@
 from .compiling_item import CompilingItem
 from .symbol import (
     TypeName, GenericArgument, VariableName, SymbolTable, ArrayTypeName, ClassName, TupleTypeName,
-    TemporaryVariableName, BaseTypeName, FunctionTypeName, BOOL, INT8, INT16, UINT8, UINT16, INT32, UINT32, INT64,
+    LocalVariableName, BaseTypeName, FunctionTypeName, BOOL, INT8, INT16, UINT8, UINT16, INT32, UINT32, INT64,
     UINT64, FLOAT, DOUBLE, GlobalVariableName, FunctionName, MethodName, LISTENER_T, LISTENER_INIT_FUNC,
     EmptyArrayTypeName, base_type_degrade, SliceTypeName, INT_TYPES, StringTypeName, AnyTypeName, AutoTypeName
 )
@@ -11,8 +11,6 @@ from utils import CompilerException, InternalCompilerException, COMPILER_PARAMS,
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from typing import Optional, Callable
-
-SYMBOL_TABLE: SymbolTable = SymbolTable()
 
 CONVERTIBLE_TO_FUNC = "viola$lang$convertibleTo"
 FUNC_CALL_T: str = "viola$lang$thread$FuncCall"
@@ -26,14 +24,16 @@ class Expression(CompilingItem, ABC):
     定义了编译器生成 C 代码所需的核心接口。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
         """初始化表达式。
 
         Args:
             src_info: 源代码位置信息，用于错误报告。
+            symbol_table: 符号表。
         """
         super().__init__(src_info)
         self._returns: list[VariableName] = []
+        self._symbol_table: SymbolTable = symbol_table
 
     @abstractmethod
     def as_async(self) -> "Expression":
@@ -243,11 +243,11 @@ class CExpr(Expression):
     主要用于实现内建函数、运行时支持代码等需要直接操作底层 C 代码的场景。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._text: list[str] = []
         self._inline_mapping: dict[str, str] = {}
-        self._var: Optional[TemporaryVariableName] = None
+        self._var: Optional[LocalVariableName] = None
 
     def add_text(self, text: str) -> None:
         """添加一行 C 代码文本到表达式中。
@@ -327,12 +327,12 @@ class UnpackExpr(Expression):
     例如：a, b = (1, 2) 中的解包操作。
     """
 
-    def __init__(self, src_info: SourceInfo, to_unpack: Optional[Expression] = None) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, to_unpack: Optional[Expression] = None) -> None:
+        super().__init__(src_info, symbol_table)
         if to_unpack is not None and not isinstance(to_unpack.return_type, TupleTypeName):
             raise CompilerException("Cannot unpack non-tuple.", src_info)
         self._to_unpack: Optional[Expression] = to_unpack
-        self._var: Optional[TemporaryVariableName] = None
+        self._var: Optional[LocalVariableName] = None
         self._returns: list[VariableName] = []
         self._inline_mapping: dict[str, str] = {}
 
@@ -344,9 +344,9 @@ class UnpackExpr(Expression):
         new_expr._to_unpack = self._to_unpack.as_inline(inline_mapping)
         new_expr._inline_mapping = new_expr._to_unpack.inline_mapping
         for i, ret in enumerate(self._returns):
-            new_expr._inline_mapping[ret.name] = SYMBOL_TABLE.get_counter()
+            new_expr._inline_mapping[ret.name] = self._symbol_table.get_counter()
             new_expr._returns[i].rename(new_expr._inline_mapping[ret.name])
-        new_expr._inline_mapping[new_expr._var.name] = SYMBOL_TABLE.get_counter()
+        new_expr._inline_mapping[new_expr._var.name] = self._symbol_table.get_counter()
         new_expr._var.rename(new_expr._inline_mapping[new_expr._var.name])
         return new_expr
 
@@ -437,21 +437,21 @@ class UnpackExpr(Expression):
                 self._src_info
             )
         for ret, expected_type in zip(returns[:-1], expr_type.types[:len(returns) - 1]):
-            if not ret.type.convertable_to(expected_type, SYMBOL_TABLE.symbols):
+            if not ret.type.convertable_to(expected_type, self._symbol_table.symbols):
                 raise CompilerException(
                     f"Type mismatch: {ret.type.raw_name} can not convert to {expected_type.raw_name}.",
                     self._src_info
                 )
         last_expected_type: TupleTypeName = TupleTypeName(self._src_info, expr_type.types[-1:])
-        if not returns[-1].type.convertable_to(last_expected_type, SYMBOL_TABLE.symbols):
+        if not returns[-1].type.convertable_to(last_expected_type, self._symbol_table.symbols):
             raise CompilerException(
                 f"Type mismatch: {returns[-1].type.raw_name} can not convert to {last_expected_type.raw_name}.",
                 self._src_info
             )
         self._returns = returns
-        self._var = TemporaryVariableName(
+        self._var = LocalVariableName(
             self._src_info,
-            SYMBOL_TABLE.get_counter(),
+            self._symbol_table.get_counter(),
             self._to_unpack.return_type
         )
         return True
@@ -500,8 +500,8 @@ class ValueRef(Expression, ABC):
     不直接定义 as_async，由子类决定是否支持异步。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._returns: Optional[list[VariableName]] = None
         self._unpack_expr: Optional[UnpackExpr] = None
         self._inline_mapping: dict[str, str] = {}
@@ -533,7 +533,7 @@ class ValueRef(Expression, ABC):
     def set_returns(self, returns: list[VariableName]) -> bool:
         self._returns = returns
         if len(returns) > 1:
-            self._unpack_expr = UnpackExpr(self._src_info, self)
+            self._unpack_expr = UnpackExpr(self._src_info, self._symbol_table, self)
             self._unpack_expr.set_returns(returns)
         return True
 
@@ -549,8 +549,8 @@ class VariableRef(ValueRef):
     在优化阶段可以通过 bind_value 绑定编译时已知的值，从而进行常量传播优化。
     """
 
-    def __init__(self, src_info: SourceInfo, var: VariableName) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var: VariableName) -> None:
+        super().__init__(src_info, symbol_table)
         self._var: VariableName = var
         self._value: Optional[Expression] = None
 
@@ -564,7 +564,7 @@ class VariableRef(ValueRef):
             if self._var.is_global:
                 inline_mapping[self._var.name] = self._var.name
             else:
-                inline_mapping[self._var.name] = SYMBOL_TABLE.get_counter()
+                inline_mapping[self._var.name] = self._symbol_table.get_counter()
         new_expr._var.rename(inline_mapping[self._var.name])
         return new_expr
 
@@ -578,7 +578,7 @@ class VariableRef(ValueRef):
 
     @classmethod
     def from_function(cls, src_info: SourceInfo, name: str, arg_types: list[str],
-                      kwarg_types: dict[str, str]) -> "VariableRef":
+                      kwarg_types: dict[str, str], symbol_table: SymbolTable) -> "VariableRef":
         """通过函数名和参数类型查找函数，创建对应的变量引用。
 
         根据函数名、位置参数类型列表和关键字参数类型字典，在符号表中查找匹配的函数。
@@ -589,6 +589,7 @@ class VariableRef(ValueRef):
             name: 函数名称。
             arg_types: 位置参数的类型名列表。
             kwarg_types: 关键字参数名到类型名的映射。
+            symbol_table: 符号表。
 
         Returns:
             匹配函数的 VariableRef 实例。
@@ -596,12 +597,12 @@ class VariableRef(ValueRef):
         Raises:
             CompilerException: 找不到函数或找到多个重载时抛出。
         """
-        func = SYMBOL_TABLE.find_functions(name, arg_types, kwarg_types)
+        func = symbol_table.find_functions(name, arg_types, kwarg_types)
         if len(func) == 0:
             raise CompilerException(f"Function {name} not found.", src_info)
         if len(func) > 1:
             raise CompilerException(f"Function {name} overloads with same arguments.", src_info)
-        return cls(src_info, func[0])
+        return cls(src_info, symbol_table, func[0])
 
     @property
     def global_init_text(self) -> Optional[str]:
@@ -673,8 +674,8 @@ class Literal(ValueRef, ABC):
     所有字面量都被视为常量（is_const 返回 True），在优化阶段可用于常量折叠。
     """
 
-    def __init__(self, src_info: SourceInfo, value: str, t: TypeName) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, value: str, t: TypeName) -> None:
+        super().__init__(src_info, symbol_table)
         self._value: str = value
         self._type: TypeName = t
 
@@ -749,15 +750,15 @@ class StringLiteral(Literal):
     ]
     _STRING_CHUNK_SIZE: int = COMPILER_PARAMS["runtime-stringChunkSize"]
 
-    def __init__(self, src_info: SourceInfo, value: str) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, value: str) -> None:
         # noinspection PyTypeChecker
-        super().__init__(src_info, value, StringTypeName)
-        self._var_name: str = SYMBOL_TABLE.get_counter()
+        super().__init__(src_info, symbol_table, value, StringTypeName)
+        self._var_name: str = self._symbol_table.get_counter()
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         # noinspection PyTypeChecker
         new_expr: StringLiteral = super().as_inline(inline_mapping)
-        inline_mapping[self._var_name] = SYMBOL_TABLE.get_counter()
+        inline_mapping[self._var_name] = self._symbol_table.get_counter()
         new_expr._var_name = inline_mapping[self._var_name]
         return new_expr
 
@@ -785,7 +786,7 @@ class StringLiteral(Literal):
 
     @property
     def head_text(self) -> Optional[str]:
-        return f"{TemporaryVariableName(self._src_info, self._var_name, self._type).type_name_pair_calling};"
+        return f"{LocalVariableName(self._src_info, self._var_name, self._type).type_name_pair_calling};"
 
     @property
     def is_const(self) -> bool:
@@ -813,7 +814,7 @@ class StringLiteral(Literal):
 
     @property
     def used_variables(self) -> set[VariableName]:
-        return {TemporaryVariableName(self._src_info, self._var_name, self._type)}
+        return {LocalVariableName(self._src_info, self._var_name, self._type)}
 
     def _as_unicode(self) -> list[list[int]]:
         """将字符串转换为分块后的 Unicode 码点列表。
@@ -841,9 +842,9 @@ class BoolLiteral(Literal):
     表示 true 或 false，编译为 C 代码中的 BOOL 类型值。
     """
 
-    def __init__(self, src_info: SourceInfo, value: str) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, value: str) -> None:
         # noinspection PyTypeChecker
-        super().__init__(src_info, value, BOOL)
+        super().__init__(src_info, symbol_table, value, BOOL)
 
     def validate(self) -> None:
         pass
@@ -860,7 +861,7 @@ class IntegerLiteral(Literal):
     位宽通过后缀语法指定，例如 42i8 表示 INT8，42u16 表示 UINT16。
     """
 
-    def __init__(self, src_info: SourceInfo, value: str, lexing_type: str = "INT32") -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, value: str, lexing_type: str = "INT32") -> None:
         match lexing_type:
             case "INT32":
                 t = INT32
@@ -900,7 +901,7 @@ class IntegerLiteral(Literal):
                         raise CompilerException(f"Invalid bits number: {bits_num}", src_info)
             case _:
                 raise CompilerException(f"Invalid lexing type: {lexing_type}", src_info)
-        super().__init__(src_info, value, t)
+        super().__init__(src_info, symbol_table, value, t)
 
     def validate(self) -> None:
         pass
@@ -916,13 +917,13 @@ class FloatLiteral(Literal):
     以 'f' 结尾的为 FLOAT（单精度），否则为 DOUBLE（双精度）。
     """
 
-    def __init__(self, src_info: SourceInfo, value: str) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, value: str) -> None:
         if value.endswith("f"):
             t = FLOAT
         else:
             t = DOUBLE
         # noinspection PyTypeChecker
-        super().__init__(src_info, value, t)
+        super().__init__(src_info, symbol_table, value, t)
 
     def validate(self) -> None:
         pass
@@ -939,14 +940,14 @@ class SliceRef(ValueRef):
     默认值为 start=0、end=0、step=1。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._is_finished: bool = False
-        self._start: Expression = IntegerLiteral(src_info, "0")
-        self._end: Expression = IntegerLiteral(src_info, "0")
-        self._step: Expression = IntegerLiteral(src_info, "1")
-        self._temp_var: TemporaryVariableName = TemporaryVariableName(src_info, SYMBOL_TABLE.get_counter(),
-                                                                      SliceTypeName)
+        self._start: Expression = IntegerLiteral(src_info, symbol_table, "0")
+        self._end: Expression = IntegerLiteral(src_info, symbol_table, "0")
+        self._step: Expression = IntegerLiteral(src_info, symbol_table, "1")
+        self._temp_var: LocalVariableName = LocalVariableName(src_info, self._symbol_table.get_counter(),
+                                                              SliceTypeName)
 
     def as_async(self) -> "Expression":
         return self
@@ -1078,13 +1079,13 @@ class ArrayRef(ValueRef):
     通过 add_value 逐步填充元素，最后调用 finish 完成构建。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._is_finished: bool = False
         self._values: list[Expression] = []
         self._type: Optional[ArrayTypeName] = None
         self._element_type: Optional[TypeName] = None
-        self._temp_var: Optional[TemporaryVariableName] = None
+        self._temp_var: Optional[LocalVariableName] = None
 
     def add_value(self, value: Expression) -> None:
         """向数组中添加一个元素表达式。
@@ -1107,7 +1108,7 @@ class ArrayRef(ValueRef):
             if not isinstance(value.return_type, ClassName):
                 raise InternalCompilerException("ArrayRef element type mismatch", self._src_info)
             if self._element_type != value.return_type:
-                self._element_type = self._element_type.shared_parent(value.return_type, SYMBOL_TABLE)
+                self._element_type = self._element_type.shared_parent(value.return_type, self._symbol_table)
         elif isinstance(self._element_type, BaseTypeName):
             if not isinstance(value.return_type, BaseTypeName):
                 raise InternalCompilerException("ArrayRef element type mismatch", self._src_info)
@@ -1123,7 +1124,7 @@ class ArrayRef(ValueRef):
         for i, value in enumerate(self._values):
             new_expr._values[i] = value.as_inline(new_expr._inline_mapping)
             new_expr._inline_mapping.update(new_expr._values[i].inline_mapping)
-        new_expr._inline_mapping[self._temp_var.name] = SYMBOL_TABLE.get_counter()
+        new_expr._inline_mapping[self._temp_var.name] = self._symbol_table.get_counter()
         new_expr._temp_var.rename(new_expr._inline_mapping[self._temp_var.name])
         return new_expr
 
@@ -1142,8 +1143,8 @@ class ArrayRef(ValueRef):
             self._type = EmptyArrayTypeName(self._src_info)
         else:
             self._type = ArrayTypeName(self._src_info, self._element_type)
-        var_name: str = SYMBOL_TABLE.get_counter()
-        self._temp_var = TemporaryVariableName(self._src_info, var_name, self._type)
+        var_name: str = self._symbol_table.get_counter()
+        self._temp_var = LocalVariableName(self._src_info, var_name, self._type)
         self._is_finished = True
 
     @property
@@ -1257,14 +1258,14 @@ class TupleRef(ValueRef):
         """
         if isinstance(item, int):
             return self._values[item]
-        result = TupleRef(self._src_info)
+        result = TupleRef(self._src_info, self._symbol_table)
         for v in self._values[item]:
             result.add_value(v)
         result.finish()
         return result
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._is_finished: bool = False
         self._values: list[Expression] = []
         self._type: Optional[TypeName] = None
@@ -1304,7 +1305,7 @@ class TupleRef(ValueRef):
         for i, value in enumerate(self._values):
             new_expr._values[i] = value.as_inline(new_expr._inline_mapping)
             new_expr._inline_mapping.update(new_expr._values[i].inline_mapping)
-        new_expr._inline_mapping[self._temp_var.name] = SYMBOL_TABLE.get_counter()
+        new_expr._inline_mapping[self._temp_var.name] = self._symbol_table.get_counter()
         new_expr._temp_var.rename(new_expr._inline_mapping[self._temp_var.name])
         return new_expr
 
@@ -1326,8 +1327,8 @@ class TupleRef(ValueRef):
             raise InternalCompilerException("TupleRef is already finished", self._src_info)
         self._is_finished = True
         self._type = TupleTypeName(self._src_info, list(map(lambda x: x.return_type, self._values)))
-        var_name: str = SYMBOL_TABLE.get_counter()
-        self._temp_var = TemporaryVariableName(self._src_info, var_name, self._type)
+        var_name: str = self._symbol_table.get_counter()
+        self._temp_var = LocalVariableName(self._src_info, var_name, self._type)
 
     @property
     def front_text(self) -> Optional[str]:
@@ -1425,20 +1426,21 @@ class TypeRef(ValueRef):
     例如：Array<Int> 中的 Int。
     """
 
-    def __init__(self, src_info: SourceInfo, type_symbol: TypeName) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, type_symbol: TypeName) -> None:
+        super().__init__(src_info, symbol_table)
         self._type: TypeName = type_symbol
 
     def as_async(self) -> "Expression":
         return self
 
     @classmethod
-    def from_name(cls, src_info: SourceInfo, type_name: str) -> "TypeRef":
+    def from_name(cls, src_info: SourceInfo, type_name: str, symbol_table: SymbolTable) -> "TypeRef":
         """通过类型名从符号表中查找类型，创建 TypeRef。
 
         Args:
             src_info: 源代码位置信息。
             type_name: 类型名称字符串。
+            symbol_table: 符号表。
 
         Returns:
             查找到类型的 TypeRef 实例。
@@ -1447,10 +1449,10 @@ class TypeRef(ValueRef):
             CompilerException: 名称在符号表中不是类型时抛出。
         """
         # noinspection PyTypeChecker
-        t: TypeName = SYMBOL_TABLE[type_name, None]
+        t: TypeName = symbol_table[type_name, None]
         if not isinstance(t, TypeName):
             raise CompilerException("TypeRef is not a type", src_info)
-        return cls(src_info, t)
+        return cls(src_info, symbol_table, t)
 
     @property
     def front_text(self) -> Optional[str]:
@@ -1502,12 +1504,12 @@ class ClassRef(TypeRef):
     与 TypeRef 的区别在于它专门用于类类型，会在构造时验证名称必须是 ClassName。
     """
 
-    def __init__(self, src_info: SourceInfo, cls_name: str) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, cls_name: str) -> None:
         # noinspection PyTypeChecker
-        t: ClassName = SYMBOL_TABLE[cls_name, None]
+        t: ClassName = self._symbol_table[cls_name, None]
         if not isinstance(t, ClassName):
             raise CompilerException("ClassRef is not a class type", src_info)
-        super().__init__(src_info, t)
+        super().__init__(src_info, symbol_table, t)
 
 
 class ArrayTypeRef(TypeRef):
@@ -1517,8 +1519,8 @@ class ArrayTypeRef(TypeRef):
     通过 set_type 设置元素类型后变为对应的 ArrayTypeName。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, EmptyArrayTypeName(src_info))
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, EmptyArrayTypeName(src_info))
 
     def set_type(self, type_ref: TypeRef) -> None:
         """设置数组的元素类型。
@@ -1536,8 +1538,8 @@ class TupleTypeRef(TypeRef):
     最后调用 finish 构建最终的 TupleTypeName。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, TupleTypeName(src_info, []))
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, TupleTypeName(src_info, []))
         self._types: list[TypeName] = []
 
     def add_type(self, type_ref: TypeRef) -> None:
@@ -1563,8 +1565,8 @@ class AutoTypeRef(TypeRef):
     对应 AutoTypeName。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, AutoTypeName(src_info))
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, AutoTypeName(src_info))
 
 
 class Operator(Expression, ABC):
@@ -1574,8 +1576,8 @@ class Operator(Expression, ABC):
     派生出 BinaryOperator（二元运算符）和 UnaryOperator（一元运算符）。
     """
 
-    def __init__(self, src_info: SourceInfo, expr_num: int) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, expr_num: int) -> None:
+        super().__init__(src_info, symbol_table)
         self._expr_list: list[Optional[Expression]] = [None] * expr_num
         self._inline_mapping: dict[str, str] = {}
 
@@ -1660,8 +1662,8 @@ class BinaryOperator(Operator, ABC):
     以及 front_text 的默认实现。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, 2)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, 2)
 
     @property
     def front_text(self) -> Optional[str]:
@@ -1696,8 +1698,8 @@ class AttrOp(Expression):
     如果父节点是 CallOp，会自动推断方法的参数类型信息。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._attr: Optional[str] = None
         self._caller: Optional[Expression] = None
         self._arg_types: Optional[list[str]] = None
@@ -1730,7 +1732,7 @@ class AttrOp(Expression):
         caller_type: ClassName = self._caller.return_type
         if self._arg_types is None:
             raise CompilerException("Unknown method types.", self._src_info)
-        return SYMBOL_TABLE.find_method(
+        return self._symbol_table.find_method(
             self._src_info,
             caller_type.name,
             self._attr,
@@ -1776,10 +1778,10 @@ class AttrOp(Expression):
             CompilerException: 找不到方法或存在歧义时抛出。
         """
         dynamic_arg_type_list: list[str] = [self._caller.return_type.name] + arg_type_list
-        dynamic_methods: list[MethodName] = SYMBOL_TABLE.find_methods(
+        dynamic_methods: list[MethodName] = self._symbol_table.find_methods(
             self._caller.return_type.name, self._attr, dynamic_arg_type_list, kwarg_type_dict
         )
-        static_methods: list[MethodName] = SYMBOL_TABLE.find_methods(
+        static_methods: list[MethodName] = self._symbol_table.find_methods(
             self._caller.return_type.name, self._attr, arg_type_list, kwarg_type_dict
         )
         if len(dynamic_methods) == 1:
@@ -1888,7 +1890,7 @@ class AttrOp(Expression):
             if caller_type.properties[self._attr].is_static:
                 return self._caller.text + "$" + self._attr
             return f"{self._caller.text}->{self._attr}"
-        return SYMBOL_TABLE.find_method(
+        return self._symbol_table.find_method(
             self._src_info,
             caller_type.raw_name,
             self._attr,
@@ -1908,7 +1910,7 @@ class AttrOp(Expression):
         caller_type: ClassName = self._caller.return_type
         if self._arg_types is None:
             raise CompilerException("Unknown method types.", self._src_info)
-        if self._attr not in caller_type.properties and not SYMBOL_TABLE.contains_method(
+        if self._attr not in caller_type.properties and not self._symbol_table.contains_method(
                 caller_type.raw_name, self._attr, self._arg_types, self._kwarg_types
         ):
             raise CompilerException("Unknown attribute", self._src_info)
@@ -1936,8 +1938,8 @@ class CallOp(Expression):
     - 尾递归优化
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._is_async: bool = False
         self._call_dynamic: bool = False
         self._listener_name: Optional[str] = None
@@ -1985,9 +1987,9 @@ class CallOp(Expression):
     def as_async(self) -> "Expression":
         result: CallOp = deepcopy(self)
         result._is_async = True
-        result._listener_name = SYMBOL_TABLE.get_counter()
+        result._listener_name = self._symbol_table.get_counter()
         result._call_name = result._listener_name + "$$_call"
-        result._args_tuple = TupleRef(self._src_info)
+        result._args_tuple = TupleRef(self._src_info, self._symbol_table)
         for arg in self._arg_list:
             result._args_tuple.append(arg, self._src_info)
         return result
@@ -2147,9 +2149,9 @@ class CallOp(Expression):
         Raises:
             CompilerException: 缺少参数且无默认值时抛出。
         """
-        if isinstance(expr, VariableRef) and (expr.var.name, None) in SYMBOL_TABLE:
-            expr = ClassRef(self._src_info, expr.var.name)
-            attr_op = AttrOp(self._src_info)
+        if isinstance(expr, VariableRef) and (expr.var.name, None) in self._symbol_table:
+            expr = ClassRef(self._src_info, self._symbol_table, expr.var.name)
+            attr_op = AttrOp(self._src_info, self._symbol_table)
             attr_op.set_caller(expr)
             attr_op.set_attr("__new__")
             self._func = attr_op.find_method(
@@ -2158,7 +2160,7 @@ class CallOp(Expression):
             ).as_function()
             self._func_expr = attr_op
         elif isinstance(expr.return_type, ClassName):
-            attr_op = AttrOp(self._src_info)
+            attr_op = AttrOp(self._src_info, self._symbol_table)
             attr_op.set_caller(expr)
             attr_op.set_attr("__call__")
             self._func = attr_op.find_method(
@@ -2194,15 +2196,15 @@ class CallOp(Expression):
                     default_value: Optional[GlobalVariableName] = self._func.default_params[n]
                     if default_value is None:
                         raise CompilerException(f"Missing argument: {n}", self._src_info)
-                    self._arg_list.append(VariableRef(self._src_info, default_value))
+                    self._arg_list.append(VariableRef(self._src_info, self._symbol_table, default_value))
 
     def set_returns(self, returns: Optional[list[VariableName]]) -> bool:
         self._returns_list = returns
-        self._returns_tuple = TupleRef(self._src_info)
+        self._returns_tuple = TupleRef(self._src_info, self._symbol_table)
         for ret in self._returns_list:
-            self._returns_tuple.add_value(VariableRef(self._src_info, ret))
+            self._returns_tuple.add_value(VariableRef(self._src_info, self._symbol_table, ret))
         if len(returns) > 1:
-            self._unpack_expr = UnpackExpr(self._src_info, self)
+            self._unpack_expr = UnpackExpr(self._src_info, self._symbol_table, self)
             self._unpack_expr.set_returns(returns)
         return True
 
@@ -2266,8 +2268,8 @@ class TailRecursiveCall(CallOp):
     通过 from_call_op 工厂方法从普通 CallOp 转换而来。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._mark_name: Optional[str] = None
         self._decl: Optional[FunctionName] = None
 
@@ -2286,7 +2288,7 @@ class TailRecursiveCall(CallOp):
         Raises:
             InternalCompilerException: 被调用者不是 VariableRef 时抛出。
         """
-        result = cls(call_op._src_info)
+        result = cls(call_op._src_info, call_op._symbol_table)
         if not isinstance(call_op._func_expr, VariableRef):
             raise InternalCompilerException("Tail recursive call is not allowed on this expression", call_op._src_info)
         result.set_func(call_op._func_expr)
@@ -2303,9 +2305,9 @@ class TailRecursiveCall(CallOp):
         arg_free: list[str] = []
 
         def free_arg(arg_expr: VariableName) -> None:
-            del_var: VariableRef = VariableRef(self._src_info, arg_expr)
-            del_call: CallOp = CallOp(self._src_info)
-            del_method: AttrOp = AttrOp(self._src_info)
+            del_var: VariableRef = VariableRef(self._src_info, self._symbol_table, arg_expr)
+            del_call: CallOp = CallOp(self._src_info, self._symbol_table)
+            del_method: AttrOp = AttrOp(self._src_info, self._symbol_table)
             del_method.set_caller(del_var)
             del_method.set_attr("__del__")
             del_call.set_func(del_method)
@@ -2343,10 +2345,10 @@ class BinaryMathOp(BinaryOperator):
     支持常量折叠优化（通过 optimizer lambda）。
     """
 
-    def __init__(self, src_info: SourceInfo, op: Optional[str], left_magic_method: Optional[str],
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, op: Optional[str], left_magic_method: Optional[str],
                  right_magic_method: Optional[str], default_return_type: Optional[TypeName],
                  optimizer: Optional[Callable[[int | float, int | float], int | float]] = None) -> None:
-        super().__init__(src_info)
+        super().__init__(src_info, symbol_table)
         self._op: Optional[str] = op
         self._left_magic_method: Optional[str] = left_magic_method
         self._right_magic_method: Optional[str] = right_magic_method
@@ -2417,8 +2419,8 @@ class BinaryMathOp(BinaryOperator):
         if all(isinstance(expr, Literal) and expr.value is not None for expr in optimized._expr_list):
             new_value: int | float = self._optimizer(self._expr_list[0].value, self._expr_list[1].value)
             if isinstance(new_value, int):
-                return IntegerLiteral(self._src_info, str(new_value))
-            return FloatLiteral(self._src_info, str(new_value))
+                return IntegerLiteral(self._src_info, self._symbol_table, str(new_value))
+            return FloatLiteral(self._src_info, self._symbol_table, str(new_value))
         return optimized
 
     @property
@@ -2502,9 +2504,9 @@ class BinaryMathOp(BinaryOperator):
         """
         expr_left: Expression = self._expr_list[0]
         expr_right: Expression = self._expr_list[1]
-        if expr_left.return_type not in SYMBOL_TABLE:
+        if expr_left.return_type not in self._symbol_table:
             raise CompilerException(f"Type {expr_left.return_type} is not defined", self._src_info)
-        if expr_right.return_type not in SYMBOL_TABLE:
+        if expr_right.return_type not in self._symbol_table:
             raise CompilerException(f"Type {expr_right.return_type} is not defined", self._src_info)
         if isinstance(expr_left.return_type, BaseTypeName) and isinstance(expr_right.return_type, BaseTypeName):
             if self._op is None:
@@ -2514,7 +2516,7 @@ class BinaryMathOp(BinaryOperator):
             raise CompilerException("This operator is not defined for two class types.", self._src_info)
         # noinspection PyUnresolvedReferences
         if isinstance(expr_left.return_type, ClassName) and self._left_magic_method in expr_left.return_type.methods:
-            self._call_op = CallOp(self._src_info)
+            self._call_op = CallOp(self._src_info, self._symbol_table)
             self._call_op.add_arg(expr_left, None)
             self._call_op.add_arg(expr_right, None)
             self._call_op.set_func(self._expr_list[0])
@@ -2522,7 +2524,7 @@ class BinaryMathOp(BinaryOperator):
             return
         # noinspection PyUnresolvedReferences
         if isinstance(expr_right.return_type, ClassName) and self._right_magic_method in expr_right.return_type.methods:
-            self._call_op = CallOp(self._src_info)
+            self._call_op = CallOp(self._src_info, self._symbol_table)
             self._call_op.add_arg(expr_left, None)
             self._call_op.add_arg(expr_right, None)
             self._call_op.set_func(self._expr_list[1])
@@ -2537,43 +2539,43 @@ class BinaryMathOp(BinaryOperator):
 class AddOp(BinaryMathOp):
     """加法运算符 `+`，魔术方法 `__add__` / `__radd__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "+", "__add__", "__radd__", None, lambda x, y: x + y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "+", "__add__", "__radd__", None, lambda x, y: x + y)
 
 
 class SubOp(BinaryMathOp):
     """减法运算符 `-`，魔术方法 `__sub__` / `__rsub__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "-", "__sub__", "__rsub__", None, lambda x, y: x - y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "-", "__sub__", "__rsub__", None, lambda x, y: x - y)
 
 
 class MulOp(BinaryMathOp):
     """乘法运算符 `*`，魔术方法 `__mul__` / `__rmul__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "*", "__mul__", "__rmul__", None, lambda x, y: x * y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "*", "__mul__", "__rmul__", None, lambda x, y: x * y)
 
 
 class DivOp(BinaryMathOp):
     """除法运算符 `/`，魔术方法 `__div__` / `__rdiv__`（C 中为整数除法 `//`）。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "/", "__div__", "__rdiv__", None, lambda x, y: x // y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "/", "__div__", "__rdiv__", None, lambda x, y: x // y)
 
 
 class ModOp(BinaryMathOp):
     """取模运算符 `%`，魔术方法 `__mod__` / `__rmod__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "%", "__mod__", "__rmod__", None, lambda x, y: x % y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "%", "__mod__", "__rmod__", None, lambda x, y: x % y)
 
 
 class MatMulOp(BinaryMathOp):
     """矩阵乘法运算符 `@`，魔术方法 `__matmul__` / `__rmatmul__`（无 C 运算符，只能类重载）。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, None, "__matmul__", "__rmatmul__", None)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, None, "__matmul__", "__rmatmul__", None)
 
 
 class PowOp(BinaryMathOp):
@@ -2582,8 +2584,8 @@ class PowOp(BinaryMathOp):
     基本类型编译为 C 的 pow() 函数调用而非中缀运算符。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, None, "__pow__", "__rpow__", None, lambda x, y: x ** y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, None, "__pow__", "__rpow__", None, lambda x, y: x ** y)
 
     @property
     def text(self) -> str:
@@ -2599,92 +2601,92 @@ class PowOp(BinaryMathOp):
 class LeftShiftOp(BinaryMathOp):
     """左移运算符 `<<`，魔术方法 `__lshift__` / `__rlshift__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "<<", "__lshift__", "__rlshift__", None, lambda x, y: x << y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "<<", "__lshift__", "__rlshift__", None, lambda x, y: x << y)
 
 
 class RightShiftOp(BinaryMathOp):
     """右移运算符 `>>`，魔术方法 `__rshift__` / `__rrshift__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, ">>", "__rshift__", "__rrshift__", None, lambda x, y: x >> y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, ">>", "__rshift__", "__rrshift__", None, lambda x, y: x >> y)
 
 
 class BitAndOp(BinaryMathOp):
     """按位与运算符 `&`，魔术方法 `__and__` / `__rand__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "&", "__and__", "__rand__", None, lambda x, y: x & y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "&", "__and__", "__rand__", None, lambda x, y: x & y)
 
 
 class BitOrOp(BinaryMathOp):
     """按位或运算符 `|`，魔术方法 `__or__` / `__ror__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "|", "__or__", "__ror__", None, lambda x, y: x | y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "|", "__or__", "__ror__", None, lambda x, y: x | y)
 
 
 class BitXorOp(BinaryMathOp):
     """按位异或运算符 `^`，魔术方法 `__xor__` / `__rxor__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "^", "__xor__", "__rxor__", None, lambda x, y: x ^ y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "^", "__xor__", "__rxor__", None, lambda x, y: x ^ y)
 
 
 class LogicalAndOp(BinaryMathOp):
     """逻辑与运算符 `&&`，返回 BOOL，仅支持基本类型（无魔术方法）。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "&&", None, None, BOOL, lambda x, y: x and y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "&&", None, None, BOOL, lambda x, y: x and y)
 
 
 class LogicalOrOp(BinaryMathOp):
     """逻辑或运算符 `||`，返回 BOOL，仅支持基本类型（无魔术方法）。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "||", None, None, BOOL, lambda x, y: x or y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "||", None, None, BOOL, lambda x, y: x or y)
 
 
 class GreaterThanOp(BinaryMathOp):
     """大于运算符 `>`，魔术方法 `__gt__` / `__lt__`，返回 BOOL。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, ">", "__gt__", "__lt__", BOOL, lambda x, y: x > y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, ">", "__gt__", "__lt__", BOOL, lambda x, y: x > y)
 
 
 class LessThanOp(BinaryMathOp):
     """小于运算符 `<`，魔术方法 `__lt__` / `__gt__`，返回 BOOL。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "<", "__lt__", "__gt__", BOOL, lambda x, y: x < y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "<", "__lt__", "__gt__", BOOL, lambda x, y: x < y)
 
 
 class GreaterThanOrEqualOp(BinaryMathOp):
     """大于等于运算符 `>=`，魔术方法 `__ge__` / `__le__`，返回 BOOL。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, ">=", "__ge__", "__le__", BOOL, lambda x, y: x >= y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, ">=", "__ge__", "__le__", BOOL, lambda x, y: x >= y)
 
 
 class LessThanOrEqualOp(BinaryMathOp):
     """小于等于运算符 `<=`，魔术方法 `__le__` / `__ge__`，返回 BOOL。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "<=", "__le__", "__ge__", BOOL, lambda x, y: x <= y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "<=", "__le__", "__ge__", BOOL, lambda x, y: x <= y)
 
 
 class EqualOp(BinaryMathOp):
     """等于运算符 `==`，魔术方法 `__eq__`（两侧相同），返回 BOOL。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "==", "__eq__", "__eq__", BOOL, lambda x, y: x == y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "==", "__eq__", "__eq__", BOOL, lambda x, y: x == y)
 
 
 class NotEqualOp(BinaryMathOp):
     """不等于运算符 `!=`，魔术方法 `__ne__`（两侧相同），返回 BOOL。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "!=", "__ne__", "__ne__", BOOL, lambda x, y: x != y)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "!=", "__ne__", "__ne__", BOOL, lambda x, y: x != y)
 
 
 class ItemOp(CallOp):
@@ -2694,8 +2696,8 @@ class ItemOp(CallOp):
     通过 set_expr_left 设置被索引的容器对象并自动绑定 `__getitem__` 方法。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
 
     def set_expr_left(self, expr: Expression) -> None:
         """设置被索引的容器对象，并自动绑定 `__getitem__` 方法。
@@ -2717,7 +2719,7 @@ class ItemOp(CallOp):
             raise CompilerException(
                 f"Method {expr.return_type}.__getitem__(...) is not defined.", self._src_info
             )
-        new_expr: AttrOp = AttrOp(self._src_info)
+        new_expr: AttrOp = AttrOp(self._src_info, self._symbol_table)
         new_expr.set_caller(expr)
         new_expr.set_attr("__getitem__")
         super().set_func(new_expr)
@@ -2729,8 +2731,8 @@ class UnaryOperator(Operator, ABC):
     固定有一个操作数，提供 set_expr 方法设置操作数。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, 1)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, 1)
 
     def set_expr(self, expr: Expression) -> None:
         """设置一元运算符的操作数。
@@ -2748,13 +2750,13 @@ class BracketsOp(UnaryOperator):
     直接透传内部表达式的所有属性和行为。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
 
     def as_async(self) -> "Expression":
         if not self.is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
-        new_op: BracketsOp = BracketsOp(self._src_info)
+        new_op: BracketsOp = BracketsOp(self._src_info, self._symbol_table)
         new_op.set_expr(self._expr_list[0].as_async())
         return new_op
 
@@ -2817,9 +2819,9 @@ class UnaryMathOp(UnaryOperator):
     支持常量折叠优化（通过 optimizer lambda）。
     """
 
-    def __init__(self, src_info: SourceInfo, op: str, magic_method: Optional[str],
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, op: str, magic_method: Optional[str],
                  optimizer: Optional[Callable[[int | float], int | float]] = None) -> None:
-        super().__init__(src_info)
+        super().__init__(src_info, symbol_table)
         self._op: str = op
         self._magic_method: Optional[str] = magic_method
         self._returns_list: list[VariableName] = []
@@ -2830,7 +2832,7 @@ class UnaryMathOp(UnaryOperator):
         if not self.is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
         expr: Expression = self._expr_list[0]
-        if expr.return_type not in SYMBOL_TABLE:
+        if expr.return_type not in self._symbol_table:
             raise CompilerException(f"Type {expr.return_type} is not defined", self._src_info)
         if isinstance(expr.return_type, ClassName):
             if self._magic_method is None:
@@ -2840,8 +2842,8 @@ class UnaryMathOp(UnaryOperator):
                 )
             # noinspection PyUnresolvedReferences
             if self._magic_method in expr.return_type.methods:
-                result = CallOp(self._src_info)
-                caller_op: AttrOp = AttrOp(self._src_info)
+                result = CallOp(self._src_info, self._symbol_table)
+                caller_op: AttrOp = AttrOp(self._src_info, self._symbol_table)
                 caller_op.set_caller(expr)
                 caller_op.set_attr(self._magic_method)
                 result.set_func(caller_op)
@@ -2902,9 +2904,10 @@ class UnaryMathOp(UnaryOperator):
         optimized = super().optimize()
         if self._call_op is not None:
             return optimized._call_op.optimize()
-        if isinstance(optimized._expr_list[0],
-                      Literal) and optimized._expr_list is not None and self._optimizer is not None:
-            return Literal(self._src_info, self._optimizer(optimized._expr_list[0].value))
+        if isinstance(optimized._expr_list[0], Literal) and optimized._expr_list is not None and self._optimizer is not None:
+            if isinstance(optimized._expr_list[0], IntegerLiteral):
+                return IntegerLiteral(self._src_info, self._symbol_table, str(self._optimizer(optimized._expr_list[0].value)))
+            return FloatLiteral(self._src_info, self._symbol_table, str(self._optimizer(optimized._expr_list[0].value)))
         return optimized
 
     @property
@@ -2934,8 +2937,8 @@ class UnaryMathOp(UnaryOperator):
         # noinspection PyUnresolvedReferences
         if (isinstance(self._expr_list[0].return_type, ClassName)
                 and self._magic_method in self._expr_list[0].return_type.methods):
-            self._call_op = CallOp(self._src_info)
-            caller_op: AttrOp = AttrOp(self._src_info)
+            self._call_op = CallOp(self._src_info, self._symbol_table)
+            caller_op: AttrOp = AttrOp(self._src_info, self._symbol_table)
             caller_op.set_caller(self._expr_list[0])
             caller_op.set_attr(self._magic_method)
             self._call_op.set_func(caller_op)
@@ -2986,29 +2989,29 @@ class UnaryMathOp(UnaryOperator):
 class PositiveOp(UnaryMathOp):
     """正号运算符 `+`，魔术方法 `__pos__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "+", "__pos__", lambda x: x)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "+", "__pos__", lambda x: x)
 
 
 class NegativeOp(UnaryMathOp):
     """负号运算符 `-`，魔术方法 `__neg__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "-", "__neg__", lambda x: -x)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "-", "__neg__", lambda x: -x)
 
 
 class BitNotOp(UnaryMathOp):
     """按位取反运算符 `~`，魔术方法 `__invert__`。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "~", "__invert__", lambda x: ~x)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "~", "__invert__", lambda x: ~x)
 
 
 class LogicalNotOp(UnaryMathOp):
     """逻辑非运算符 `!`，仅支持基本类型（无魔术方法）。"""
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, "!", None, lambda x: not x)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, "!", None, lambda x: not x)
 
 
 def _indent(text: Optional[str]) -> Optional[str]:
@@ -3033,9 +3036,9 @@ class ConditionalOp(Operator):
     基本类型取降级类型，类类型取公共父类。支持常量条件优化。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info, 3)
-        self._temp_name: str = SYMBOL_TABLE.get_counter()
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, 3)
+        self._temp_name: str = self._symbol_table.get_counter()
         self._type_name: Optional[TypeName] = None
 
     def as_async(self) -> "Expression":
@@ -3046,7 +3049,7 @@ class ConditionalOp(Operator):
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         # noinspection PyTypeChecker
         new_expr: ConditionalOp = super().as_inline(inline_mapping)
-        new_expr._inline_mapping[self._temp_name] = SYMBOL_TABLE.get_counter()
+        new_expr._inline_mapping[self._temp_name] = self._symbol_table.get_counter()
         new_expr._temp_name = new_expr._inline_mapping[self._temp_name]
         return new_expr
 
@@ -3085,7 +3088,7 @@ class ConditionalOp(Operator):
 
     @property
     def head_text(self) -> Optional[str]:
-        temp_name_decl = TemporaryVariableName(self._src_info, self._temp_name, self._type_name).type_name_pair_calling
+        temp_name_decl = LocalVariableName(self._src_info, self._temp_name, self._type_name).type_name_pair_calling
         return "\n".join(filter(lambda x: x is not None, [temp_name_decl, self._expr_list[0].head_text]))
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
@@ -3173,7 +3176,7 @@ class ConditionalOp(Operator):
             self._expr_list[0].used_variables,
             self._expr_list[1].used_variables,
             self._expr_list[2].used_variables,
-            {TemporaryVariableName(self._src_info, self._temp_name, self._type_name)}
+            {LocalVariableName(self._src_info, self._temp_name, self._type_name)}
         )
 
     def validate(self) -> None:
@@ -3182,11 +3185,11 @@ class ConditionalOp(Operator):
             raise CompilerException(
                 f"Type {self._expr_list[0].return_type.raw_name} (expression: {self._expr_list[0].text}) "
                 f"is not a base type.", self._src_info)
-        if not self._expr_list[1].return_type.convertable_to(self._type_name, SYMBOL_TABLE.symbols):
+        if not self._expr_list[1].return_type.convertable_to(self._type_name, self._symbol_table.symbols):
             raise CompilerException(
                 f"Type {self._expr_list[1].return_type.raw_name} (expression: {self._expr_list[1].text}) "
                 f"can not convert to {self._type_name.raw_name}.", self._src_info)
-        if not self._expr_list[2].return_type.convertable_to(self._type_name, SYMBOL_TABLE.symbols):
+        if not self._expr_list[2].return_type.convertable_to(self._type_name, self._symbol_table.symbols):
             raise CompilerException(
                 f"Type {self._expr_list[2].return_type.raw_name} (expression: {self._expr_list[2].text}) "
                 f"can not convert to {self._type_name.raw_name}.", self._src_info)
@@ -3208,8 +3211,8 @@ class ConditionalOp(Operator):
             return base_type_degrade(self._expr_list[1].return_type, self._expr_list[2].return_type)
         if isinstance(self._expr_list[1].return_type, ClassName) and \
                 isinstance(self._expr_list[2].return_type, ClassName):
-            return self._expr_list[1].return_type.shared_parent(self._expr_list[2].return_type, SYMBOL_TABLE)
-        raise CompilerException("The branches of conditinal operator have not shared parent type.", self._src_info)
+            return self._expr_list[1].return_type.shared_parent(self._expr_list[2].return_type, self._symbol_table)
+        raise CompilerException("The branches of conditional operator have not shared parent type.", self._src_info)
 
 
 class UpdateExpr(Expression):
@@ -3220,13 +3223,13 @@ class UpdateExpr(Expression):
     语法：`=>` 左侧为源对象，`{}` 内为一条或多条更新项。
     """
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._is_finished: bool = False
         self._src_expr: Optional[Expression] = None
         self._expr_list: list[tuple[Optional[Expression], Expression]] = []
         self._expr_loc: list[SourceInfo] = []
-        self._temp_name: str = SYMBOL_TABLE.get_counter()
+        self._temp_name: str = self._symbol_table.get_counter()
         self._is_async: bool = False
         self._inline_mapping: dict[str, str] = {}
 
@@ -3248,10 +3251,10 @@ class UpdateExpr(Expression):
             raise CompilerException(
                 f"Type {self._src_expr.return_type.raw_name} (expression: {self._src_expr.text}) "
                 f"is not a class.", self._src_info)
-        attr_expr = AttrOp(self._src_info)
+        attr_expr = AttrOp(self._src_info, self._symbol_table)
         attr_expr.set_caller(self._src_expr)
         attr_expr.set_attr("__setitem__")
-        call_op = CallOp(self._src_info)
+        call_op = CallOp(self._src_info, self._symbol_table)
         for i in index:
             call_op.add_arg(i, None)
         call_op.add_arg(value, None)
@@ -3281,7 +3284,7 @@ class UpdateExpr(Expression):
             raise CompilerException(
                 f"Property {property_name} is not defined in class {self._src_expr.return_type.raw_name}.",
                 expr.src_info)
-        attr_op = AttrOp(self._src_info)
+        attr_op = AttrOp(self._src_info, self._symbol_table)
         attr_op.set_caller(self._src_expr)
         attr_op.set_attr(property_name)
         self._expr_list.append((attr_op, expr))
@@ -3340,7 +3343,7 @@ class UpdateExpr(Expression):
     @property
     def head_text(self) -> Optional[str]:
         results: list[str] = [
-            f"{TemporaryVariableName(self._src_info, self._temp_name, self._src_expr.return_type).type_name_pair_calling};",
+            f"{LocalVariableName(self._src_info, self._temp_name, self._src_expr.return_type).type_name_pair_calling};",
             *list(filter(lambda x: x is not None,
                          map(lambda x: x[0].head_text if x[0] is not None else None, self._expr_list))),
             *list(filter(lambda x: x is not None, map(lambda x: x[1].head_text, self._expr_list)))
@@ -3436,7 +3439,7 @@ class UpdateExpr(Expression):
         return set.union(
             *map(lambda x: x[0].used_variables, filter(lambda x: x[0] is not None, self._expr_list)),
             *map(lambda x: x[1].used_variables, self._expr_list),
-            {TemporaryVariableName(self._src_info, self._temp_name, self._src_expr.return_type)}
+            {LocalVariableName(self._src_info, self._temp_name, self._src_expr.return_type)}
         )
 
     def validate(self) -> None:
