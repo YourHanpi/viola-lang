@@ -2,7 +2,8 @@
 import tomllib
 
 
-ItemType = str | int | float | bool
+_SingleItemType = str | int | float | bool
+ItemType = _SingleItemType | list[_SingleItemType] | dict[str, _SingleItemType]
 
 
 class CompilerParams:
@@ -20,6 +21,9 @@ class CompilerParams:
     @staticmethod
     def _get_default() -> dict[str, ItemType]:
         return {
+            "cCompile-exec": "gcc",
+            "cCompile-flags": ["-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O2"],
+            "cCompile-output": "a.out",
             "debug-memory-accessViolation": True,
             "debug-type-dynamicCheck": True,
             "encoding": "utf-8",

@@ -290,8 +290,8 @@ class SqDef(Definition):
             define_name: str = self._decl.as_define_name_raw()
         sync_text: list[str] = [
             define_name + " {",
-            self._body.head_text + (
-                    "\n\r" + self._body.tail_recursive_mark) if self._body.tail_recursive_mark is not None else "",
+            self._body.head_text + ("\n\r" + self._body.tail_recursive_mark) if self._body.tail_recursive_mark is not None else "",
+            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
             self._body.text,
             "}"
         ]
@@ -481,6 +481,24 @@ class CPartSqDef(SqDef):
             "#ifdef __cplusplus",
             "}",
             "#endif"
+        ])
+
+
+class CppSqDef(CPartSqDef):
+
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 namespace: list[NamespaceName], name: str, arg_types: list[str]) -> None:
+        super().__init__(src_info, symbol_table, var_states, namespace, name, arg_types)
+
+    def add_stmt(self, stmt: CStmt) -> None:
+        self._body.add_stmt(stmt)
+
+    @property
+    def source(self) -> str:
+        rename_define: str = f"#define {self._decl.self_name} {self._decl.name}"
+        return "\n".join([
+            self._source(True),
+            rename_define
         ])
 
 

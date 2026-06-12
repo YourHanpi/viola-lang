@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 from .utils import TokenStreamIO
 from utils import SourceInfo, CompilerException, COMPILER_PARAMS, VIOLA_INIT
-from utils.file_postfixes import TOKEN_POSTFIX
+from utils.file_marks import TOKEN_POSTFIX, CACHE_DIR
 from utils.fsm import Token, StateNode, FSM
 from utils.logger import Logger
+from utils.task import TaskResult, TaskResultState
 
 import os
 from typing import Optional
@@ -11,8 +12,9 @@ from typing import Optional
 
 class Lexer(FSM):
     
-    def __init__(self, thread_index: int = 0) -> None:
+    def __init__(self, workspace: str, thread_index: int = 0) -> None:
         super().__init__()
+        self._workspace: str = workspace
         self._src_info: SourceInfo = VIOLA_INIT
         self._start_line: int = 1
         self._start_col: int = 1
@@ -68,13 +70,17 @@ class Lexer(FSM):
             return None
         return tokens
 
-    def lex_with_writer(self, path: str) -> None:
-        result = self.lex(path)
+    def lex_with_writer(self, file_path: str) -> TaskResult:
+        file_path = os.path.abspath(file_path)
+        result = self.lex(file_path)
         if result is None:
-            self._logger.error(f"Failed to lex: {path}")
-            return
-        if not os.path.exists(path + TOKEN_POSTFIX):
-            TokenStreamIO.write(path + TOKEN_POSTFIX, result)
+            self._logger.error(f"Failed to lex: {file_path}")
+            return TaskResult(TaskResultState.FAILURE)
+        file_relpath = os.path.relpath(file_path, self._workspace)
+        file_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
+        if not os.path.exists(file_path + TOKEN_POSTFIX):
+            TokenStreamIO.write(file_path + TOKEN_POSTFIX, result)
+        return TaskResult(TaskResultState.SUCCESS)
 
     @staticmethod
     def _get_char_token(char: str) -> Token:

@@ -2611,12 +2611,13 @@ class SymbolTable:
             if item_loc == len(item) - 1:
                 raise CompilerException(f"Unexpected end of class {cls_name}", self._src_info)
             item_loc += 1
-        if cls_name + ".__del__" not in self:
-            if is_c_part:
-                raise CompilerException(f"C part class {cls_name} must have a destructor.", self._src_info)
-            cls.add_method("__del__",
-                           MethodName(self._src_info, cls, "__del__", FunctionTypeName(self._src_info, [], []), False,
-                                      False, [], [], Modifier.PUBLIC, False))
+        if cls_name + ".__del__" not in self and not cls.is_c_part:
+            cls.add_method(
+                "__del__", MethodName(
+                    self._src_info, cls, "__del__", FunctionTypeName(self._src_info, [], []),
+                    False, False, [], [], Modifier.PUBLIC, False
+                )
+            )
         self.add(cls, cls_name, None)
 
     def _read_enum_decl(self, item: list[str]) -> None:

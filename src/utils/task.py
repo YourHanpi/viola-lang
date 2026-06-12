@@ -3,12 +3,28 @@ from .compiler_exceptions import CommandException
 
 from enum import Enum
 from threading import Lock
+from typing import Optional
 
 
-class TaskResult(Enum):
+class TaskResultState(Enum):
     SUCCESS = 0
     FAILURE = 1
     DELAYED = 2
+
+
+class TaskResult:
+
+    def __init__(self, state: TaskResultState, data: Optional[list[str]] = None) -> None:
+        self._state: TaskResultState = state
+        self._data: list[str] = data if data is not None else []
+
+    @property
+    def data(self) -> list[str]:
+        return self._data
+
+    @property
+    def state(self) -> TaskResultState:
+        return self._state
 
 
 class TaskStack:

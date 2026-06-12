@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 from .utils import ParserGenericTable, ParsingResult, ParsingSlice, TokenStreamIO
 from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS
-from utils.file_postfixes import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TYPE_POSTFIX, SYMBOL_TABLE_POSTFIX
+from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TYPE_POSTFIX, SYMBOL_TABLE_POSTFIX, CACHE_DIR
 from utils.logger import Logger
+from utils.task import TaskResult, TaskResultState
 
 import os
 import time
@@ -58,8 +59,10 @@ class GlobalParser:
         self._parser_generic_table: ParserGenericTable = ParserGenericTable()
         self._symbol_types: dict[str, tuple[str, int]] = {}
         self._logger: Logger = Logger(f"Parser[{thread_index}]")
+        self._tasks: list[str] = []
 
     def parse(self, tokens: list[Token]) -> Optional[ParsingResult]:
+        self._tasks.clear()
         self._load_tokens(tokens)
         self._move_to_first_token()
         command: list[str] = []
@@ -67,12 +70,14 @@ class GlobalParser:
         is_error: bool = False
         while self._match_type("IMPORT") or self._match_type("FROM"):
             result = self._parse_import_line()
-            if result is None:
+            if result is None and len(self._tasks) == 0:
                 is_error = True
                 self._handle_error_from_import()
             else:
                 command += result[0]
                 symbol += result[1]
+        if len(self._tasks) > 0:
+            return None
         while not self._match_type("_EOF"):
             result = self._parse_def()
             if result is None:
@@ -93,15 +98,27 @@ class GlobalParser:
         self._dump_symbol_type_list(file_path)
         self._remove_file_lock(file_path)
         if result is None:
-            self._logger.error(f"Failed to parse {file_path}")
+            if len(self._tasks) == 0:
+                self._logger.error(f"Failed to parse {file_path}")
+            else:
+                self._logger.debug("Required some other modules")
         else:
             self._logger.info(f"Successfully parsed {file_path}")
         return result
 
-    def parse_to_file(self, file_path: str) -> None:
-        result = self.parse_from_file(file_path)
+    def parse_to_file(self, file_path: str) -> TaskResult:
+        file_relpath = os.path.relpath(os.path.abspath(file_path), self._workspace)
+        cache_file_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
+        result = self.parse_from_file(cache_file_path)
         if result is not None:
-            result.write(file_path)
+            result.write(cache_file_path)
+            return TaskResult(TaskResultState.SUCCESS, [f"viola parse-expr \"{file_path}\""])
+        elif len(self._tasks) > 0:
+            return TaskResult(TaskResultState.DELAYED, self._tasks)
+        return TaskResult(TaskResultState.FAILURE)
+
+    def _add_task(self, task_command: str) -> None:
+        self._tasks.append(task_command)
 
     def _back(self, steps: int = 1) -> None:
         for _ in range(steps):
@@ -155,13 +172,25 @@ class GlobalParser:
     def _filter_blank(tokens: list[Token]) -> list[Token]:
         return [token for token in tokens if "_BLANK" not in token.type and "_COMMENT" not in token.type]
     
-    def _find_import(self, namespace: str) -> Optional[str]:
+    def _find_import(self, namespace: str) -> Optional[tuple[str, str, str, str]]:
+        """
+        根据命名空间寻找需要导入的模块位置。
+
+        Args:
+            namespace: 导入的命名空间。
+
+        Returns:
+            依次为目标的符号表路径、符号类型表路径、语法分析锁路径和源代码路径。
+        """
         root_paths: list[str] = [self._workspace] + os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":")
         for root_path in root_paths:
-            path = os.path.join(root_path, namespace.replace(".", os.sep))
-            if self._check_file_lock(path + ".vla"):
+            header_path = os.path.join(root_path, namespace.replace(".", os.sep) + ".vlah")
+            if os.path.exists(header_path):
+                return header_path
+            path = os.path.join(root_path, namespace.replace(".", os.sep) + ".vla")
+            if os.path.exists(path):
                 return path
-        self._raise(f"Cannot find namespace {namespace}")
+        self._raise(f"Cannot find module {namespace}")
         return None
 
     def _get_current(self) -> Token:
@@ -181,14 +210,16 @@ class GlobalParser:
         file_path = self._find_import(namespace)
         if file_path is None:
             return None
-        symbol_table_path: str = file_path + SYMBOL_TABLE_POSTFIX
-        parsing_lock_path: str = file_path + PARSING_LOCK_POSTFIX
+        workspace, symbol_table_path, _, parsing_lock_path, token_path = file_path
         if not os.path.exists(symbol_table_path):
             if os.path.exists(parsing_lock_path):
                 while os.path.exists(parsing_lock_path):
                     time.sleep(0.1)
             else:
-                self.parse_to_file(file_path)
+                self._add_task(f"viola set-workspace \"{workspace}\"")
+                self._add_task(f"viola parse \"{token_path}\"")
+                self._add_task(f"viola set-workspace \"{self._workspace}\"")
+                return None
         with open(symbol_table_path, "r", encoding=GlobalParser._ENCODING) as file:
             texts: str = file.read().split("---", 1)[1]
         text_list = texts.split("\n")
@@ -223,14 +254,16 @@ class GlobalParser:
         file_path = self._find_import(namespace)
         if file_path is None:
             return
-        symbol_types_path: str = file_path + SYMBOL_TYPE_POSTFIX
-        parsing_lock_path: str = file_path + PARSING_LOCK_POSTFIX
+        workspace, _, symbol_types_path, parsing_lock_path, token_path = file_path
         if not os.path.exists(symbol_types_path):
             if os.path.exists(parsing_lock_path):
                 while os.path.exists(parsing_lock_path):
                     time.sleep(0.1)
             else:
-                self.parse_to_file(file_path)
+                self._add_task(f"viola set-workspace \"{workspace}\"")
+                self._add_task(f"viola parse \"{token_path}\"")
+                self._add_task(f"viola set-workspace \"{self._workspace}\"")
+                return
         with open(symbol_types_path, "r") as file:
             texts: list[str] = file.readlines()
         for text in texts:
@@ -829,6 +862,8 @@ class GlobalParser:
                 self._raise("Unexpected token: " + self._get_current().text)
                 return None
         self._load_symbol_type_list(module_path, module_path, import_symbols)
+        if len(self._tasks) > 0:
+            return None
         command: list[str] = [f"MAKE FROM_IMPORT {module_path} " + " ".join(import_symbols)]
         symbol = self._load_symbol(module_path, import_symbols)
         if symbol is None:
@@ -959,6 +994,8 @@ class GlobalParser:
             self._raise("Unexpected token: " + self._get_current().text)
             return None
         self._load_symbol_type_list(module_path, alias)
+        if len(self._tasks) > 0:
+            return None
         symbol = self._load_symbol(module_path)
         if symbol is None:
             return None

@@ -2,7 +2,7 @@
 from .compiling_item import CompilingItem
 from .definition import Definition, GlobalDef, FromImportDef
 from .statement import CStmt
-from .symbol import NamespaceName, TypeName, ArrayTypeName, SymbolTable, StringTypeName
+from .symbol import NamespaceName, TypeName, ArrayTypeName, SymbolTable, StringTypeName, VariableStateTable
 from utils import SourceInfo, InternalCompilerException, COMPILER_PARAMS, VIOLA_INIT
 
 import os
@@ -11,22 +11,24 @@ from typing import Optional
 
 class SourceFile(CompilingItem):
 
-    def __init__(self, source_info: SourceInfo, symbol_table: SymbolTable, src_path: str, namespace: list[NamespaceName]) -> None:
+    def __init__(self, source_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 src_path: str, dst_path: str, namespace: list[NamespaceName]) -> None:
         super().__init__(source_info)
         self._src_path = src_path
-        self._dst_code_path = src_path + ".c"
-        self._dst_header_path = src_path + ".h"
+        self._dst_code_path = dst_path + ".c"
+        self._dst_header_path = dst_path + ".h"
         self._definitions: list[Definition] = []
         self._instances: list[Definition] = []
         self._global_stmt: list[CStmt] = []
         self._namespace: list[NamespaceName] = namespace
         self._is_finished: bool = False
         self._symbol_table: SymbolTable = symbol_table
+        self._var_states: VariableStateTable = var_states
 
     def add_def(self, definition: Definition) -> None:
         self._definitions.append(definition)
         if definition.global_init_text is not None:
-            global_stmt = CStmt(VIOLA_INIT, self._symbol_table)
+            global_stmt = CStmt(VIOLA_INIT, self._symbol_table, self._var_states)
             global_stmt.add_text(definition.global_init_text)
             self._global_stmt.append(global_stmt)
 
@@ -141,8 +143,9 @@ class _MainFile:
 
 class Project:
 
-    def __init__(self, root_path: str, entry_path: str) -> None:
+    def __init__(self, root_path: str, entry_path: str, output_path: str) -> None:
         self._root_path: str = os.path.abspath(root_path)
+        self._output_path: str = os.path.abspath(output_path)
         self._source_files: dict[str, SourceFile] = {}
         self._src_info: SourceInfo = VIOLA_INIT
         self._entry_path: str = os.path.abspath(entry_path)
@@ -160,6 +163,10 @@ class Project:
         for k in self._source_files:
             self._source_files[k].finish()
         self._main_file.finish()
+
+    @property
+    def output_path(self) -> str:
+        return self._output_path
 
     @property
     def root_path(self) -> str:

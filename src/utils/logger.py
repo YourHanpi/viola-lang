@@ -50,7 +50,7 @@ class FileHandler:
     def log(self, message: str) -> None:
         if self._handler is None:
             raise InternalCompilerException("Log file handler is not opened.", VIOLA_INIT)
-        self._handler.write(message)
+        self._handler.write(message + "\n")
 
     def open(self) -> None:
         if self._workspace == "":

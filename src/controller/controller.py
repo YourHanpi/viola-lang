@@ -1,7 +1,29 @@
 # -*- coding: utf-8 -*-
-from utils import CommandException
+from utils.task import TaskResult
 
 from abc import ABC, abstractmethod
+from threading import Thread
+from typing import Optional, Callable
+
+
+class ThreadWithResult:
+
+    def __init__(self, target: Callable[[...], TaskResult]) -> None:
+        self._result: Optional[TaskResult] = None
+        self._thread: Thread = Thread(target=self.__target_wrapper(target))
+
+    def join(self) -> TaskResult:
+        self._thread.join()
+        # noinspection PyTypeChecker
+        return self._result
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def __target_wrapper(self, target: Callable[[...], TaskResult]) -> Callable[[...], None]:
+        def wrapper(*args, **kwargs):
+            self._result = target(*args, **kwargs)
+        return wrapper
 
 
 class Controller(ABC):
@@ -10,7 +32,7 @@ class Controller(ABC):
         self._matching_command = matching_command
 
     @abstractmethod
-    def handle(self, command: list[str]) -> None:
+    def handle(self, command: list[str]) -> Optional[ThreadWithResult]:
         pass
 
     @staticmethod
@@ -46,12 +68,13 @@ class SingleController(Controller, ABC):
     def __init__(self, matching_command: str) -> None:
         super().__init__([matching_command])
 
-    def handle(self, command: list[str]) -> None:
+    def handle(self, command: list[str]) -> Optional[ThreadWithResult]:
         if command[0] in self._matching_command:
-            self._handle(*self._get_params(command[1:]))
+            return self._handle(*self._get_params(command[1:]))
+        return None
 
     @abstractmethod
-    def _handle(self, args: list[str], kwargs: dict[str, str]) -> None:
+    def _handle(self, args: list[str], kwargs: dict[str, str]) -> ThreadWithResult:
         pass
 
 
@@ -61,9 +84,8 @@ class GroupController(Controller):
         super().__init__(sum([controller._matching_command for controller in controllers], []))
         self._controllers: list[Controller] = controllers
 
-    def handle(self, command: list[str]) -> None:
+    def handle(self, command: list[str]) -> Optional[ThreadWithResult]:
         for controller in self._controllers:
             if command[0] in controller._matching_command:
-                controller.handle(command)
-                return
-        raise CommandException(f"Command {command[0]} not found, use \"viola help\" to see available commands")
+                return controller.handle(command)
+        return None

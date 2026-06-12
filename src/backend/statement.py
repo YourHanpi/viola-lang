@@ -88,8 +88,10 @@ class Statement(CompilingItem, ABC):
         self._inline_mapping: dict[str, str] = {}
         if single_stmt:
             self._mark: Optional[_Mark] = _Mark(src_info, symbol_table)
+            self._jump_mark: str = "$$cleanup"
         else:
             self._mark = None
+            self._jump_mark = ""
         self._tail_recursive_mark: Optional[str] = None
         self._is_const_def: bool = False
         self._symbol_table: SymbolTable = symbol_table
@@ -177,6 +179,9 @@ class Statement(CompilingItem, ABC):
         if self._mark is not None:
             self._mark.set_as_const_def()
 
+    def set_jump_mark(self, jump_mark: str) -> None:
+        self._jump_mark = jump_mark
+
     @property
     def src_info(self) -> SourceInfo:
         return self._src_info
@@ -195,6 +200,7 @@ class Statement(CompilingItem, ABC):
         result: list[str] = [
             self._mark.mark_insert,
             self._inner_text,
+            f"if ($$exc) goto {self._jump_mark};" if self._jump_mark is not None else "// jump passed",
             self._mark.mark_pop
         ]
         return self._indent_text("\n".join(result))
@@ -991,8 +997,7 @@ class ThrowStmt(Statement):
             finally_text += "\n"
         result: list[str] = list(filter(lambda x: x is not None, [
             self._to_throw_expr.front_text,
-            f"listener->exc->exception = {self._to_throw_expr.text};",
-            "longjmp(listener->exc->jmpBuf, 1);"
+            f"listener->exc = {self._to_throw_expr.text};"
         ]))
         return finally_text + "\n".join(result)
 
@@ -1228,6 +1233,8 @@ class CatchStmt(Statement):
         super().__init__(src_info, symbol_table, var_states)
         self._except_decl: Optional[VariableName] = None
         self._stmt: Optional[Statement] = None
+        self._success_jump_to: str = ""
+        self._jump_mark = ""
 
     def as_async(self) -> "Statement":
         new_stmt = super().as_async()
@@ -1300,6 +1307,9 @@ class CatchStmt(Statement):
         stmt.indent()
         self._stmt = stmt
 
+    def set_success_jump_to(self, jump_to: str) -> None:
+        self._success_jump_to = jump_to
+
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
         self._stmt = self._stmt.substitute(const_vars)
         return self
@@ -1311,11 +1321,11 @@ class CatchStmt(Statement):
     @property
     def _inner_text(self) -> str:
         result: list[Optional[str]] = [
-            f"if ({CONVERTIBLE_TO_FUNC}(listener->exc->exception->$$vtable, {EXCEPTION_T})) {{",
+            f"if ({CONVERTIBLE_TO_FUNC}($$exc->$$vtable, {EXCEPTION_T})) {{",
             self._stmt.head_text,
-            f"\t{self._except_decl.name} = listener->exc->exception;",
+            f"\t{self._except_decl.name} = $$exc;",
             self._stmt.text,
-            "\tbreak;",
+            f"\tgoto {self._success_jump_to};",
             "}"
         ]
         return "\n".join(list(filter(lambda x: x is not None, result)))
@@ -1413,7 +1423,8 @@ class TryStmt(Statement):
         self._try_stmt: Optional[Statement] = None
         self._except_stmt: list[CatchStmt] = []
         self._finally_stmt: Optional[FinallyStmt] = None
-        self._jump_buf_name: str = self._symbol_table.get_counter()
+        self._exc_mark_name: str = self._symbol_table.get_counter()
+        self._finally_mark_name: str = self._symbol_table.get_counter()
         self._is_finished: bool = False
 
     def add_except_stmt(self, except_stmt: CatchStmt) -> None:
@@ -1462,13 +1473,15 @@ class TryStmt(Statement):
             raise CompilerException("TryStmt is already finished.", self._src_info)
         if len(self._except_stmt) == 0:
             raise CompilerException("TryStmt must have at least one except clause.", self._src_info)
-        if self._finally_stmt is not None:
-            self.insert_finally_stmt(self._finally_stmt.as_inline({var.name: var.name for var in self.input_variables}))
+        self._try_stmt.set_jump_mark(self._exc_mark_name)
+        for except_stmt in self._except_stmt:
+            except_stmt.set_success_jump_to(self._finally_mark_name)
+            except_stmt.set_jump_mark(self._finally_mark_name)
         self._is_finished = True
 
     @property
     def head_text(self) -> Optional[str]:
-        return f"jmp_buf {self._jump_buf_name};"
+        return None
 
     @property
     def input_variables(self) -> set[VariableName]:
@@ -1539,22 +1552,14 @@ class TryStmt(Statement):
         finally_text: list[str] = [
             *map(lambda x: "\t" + x, self._finally_stmt.text.split("\n"))
         ] if self._finally_stmt is not None else []
-        finally_text_indent2: list[str] = [
-            *map(lambda x: "\t" + x, finally_text)
-        ]
         result: str = "\n".join(list(filter(lambda x: x is not None, [
-            f"memcpy(&{self._jump_buf_name}, listener->exc->jmpBuf, sizeof(jmp_buf));",
-            f"if (!setjmp(listener->exc->jmpBuf)) {{",
-            f"\tmemcpy(listener->exc->jmpBuf, &{self._jump_buf_name}, sizeof(jmp_buf));",
+            "do {",
             self._try_stmt.text,
-            "} else {",
-            f"\tmemcpy(listener->exc->jmpBuf, &{self._jump_buf_name}, sizeof(jmp_buf));",
-            "\tdo {",
+            f"goto {self._finally_mark_name};",
+            "} while (0);",
+            f"{self._exc_mark_name}:",
             *map(lambda except_stmt: except_stmt.text, self._except_stmt),
-            *finally_text_indent2,
-            "\t\tlongjmp(listener->exc->jmpBuf, 1);",
-            "\t} while (0);",
-            "}",
+            f"{self._finally_mark_name}:",
             *finally_text
         ])))
         return result
@@ -1655,6 +1660,7 @@ class BlockStmt(Statement):
         self._is_closure: bool = False
         self._closure_struct_setting_code: str = ""
         self._processing_mode: _ProcessingMode = _ProcessingMode.NORMAL
+        self._cleanup_mark_name: str = self._symbol_table.get_counter()
 
     def add_stmt(self, stmt: Statement) -> None:
         if not stmt.is_finished:
@@ -1753,6 +1759,7 @@ class BlockStmt(Statement):
                         new_stmt_list.append(release_stmt)
                 elif var in self._outer_variables and var not in self._used_outer_variables and not var.is_global:
                     self._used_outer_variables.append(var)
+            stmt.set_jump_mark(self._cleanup_mark_name)
             new_stmt_list.append(stmt)
         self._is_finished = True
         new_stmt_list.reverse()

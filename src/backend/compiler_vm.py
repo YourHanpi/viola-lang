@@ -5,10 +5,10 @@ import backend.expression as expression
 import backend.project as project
 import backend.statement as statement
 import backend.symbol as symbol
-from utils import SourceInfo, InternalCompilerException, VIOLA_INIT, COMPILER_PARAMS
-from utils.file_postfixes import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX
+from utils import SourceInfo, InternalCompilerException, VIOLA_INIT, COMPILER_PARAMS, CompilerException
+from utils.file_marks import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX
 from utils.logger import Logger
-from utils.task import TASK_STACK
+from utils.task import TaskResult, TaskResultState
 
 from enum import Enum
 import os
@@ -30,6 +30,7 @@ class CompilerVM:
 
     def __init__(self, proj: project.Project, thread_index: int = 0) -> None:
         self._project: project.Project = proj
+        self._output_path = proj.output_path
         workspace = proj.root_path
         self._workspace: str = workspace
         self._exec_mode_stack: list[_ExecMode] = [_ExecMode.SQ]
@@ -161,17 +162,40 @@ class CompilerVM:
             "SET_VAR_VALUE": lambda cmd: self.__call_set_var_value(),
         }
 
-    def compile(self, src_path: str) -> None:
+    def compile(self, src_path: str) -> TaskResult:
         src_path = os.path.abspath(src_path)
+        src_relpath = os.path.relpath(src_path, self._workspace)
+        output_path = os.path.join(self._output_path, src_relpath)
+        output_relpath = os.path.relpath(output_path, self._workspace)
+        if not os.path.exists(src_path):
+            self._logger.error(f"Source file not found: {src_path}")
+            return TaskResult(TaskResultState.FAILURE)
+        self._logger.debug(f"Found compiling target: {src_path}")
+        if CompilerVM._check_skip(src_path, output_path):
+            self._logger.debug(f"Skipped: {src_path}")
+            return TaskResult(TaskResultState.SUCCESS, [f"viola add-make {output_relpath}"])
+        if not os.path.exists(src_path + SYMBOL_TABLE_POSTFIX) or not os.path.exists(src_path + COMMAND_POSTFIX):
+            self._logger.debug(f"Required: {src_path + SYMBOL_TABLE_POSTFIX}")
+            self._logger.debug(f"Required: {src_path + COMMAND_POSTFIX}")
+            return TaskResult(TaskResultState.DELAYED, [f"viola parse \"{src_path}\""])
         self._symbol_table = symbol.SymbolTable.read_from(src_path + SYMBOL_TABLE_POSTFIX)
         self._var_state_table = symbol.VariableStateTable(src_path, self._workspace)
         self._stack.clear()
-        self._stack.append(project.SourceFile(self._src_info, self._symbol_table, src_path, self._symbol_table.namespace))
+        self._stack.append(project.SourceFile(
+            self._src_info, self._symbol_table, self._var_state_table, src_path, output_path,
+            self._symbol_table.namespace
+        ))
         with open(src_path + COMMAND_POSTFIX, "r", encoding=CompilerVM._ENCODING) as f:
             commands = f.read()
-        self.exec(commands)
+        try:
+            self.exec(commands)
+        except CompilerException as e:
+            self._logger.error(str(e))
+            return TaskResult(TaskResultState.FAILURE)
         src_file = self.get()
         self._project.add_source_file(src_file)
+        self._logger.info(f"Successfully compiled: {src_path}")
+        return TaskResult(TaskResultState.SUCCESS, [f"viola add-make \"{output_relpath}\""])
 
     def exec(self, cmd: str) -> None:
         lines: list[str] = cmd.split("\n")
@@ -187,6 +211,13 @@ class CompilerVM:
 
     def _call(self, cmd: list[str]) -> None:
         self._CALLER_DICT[cmd[1]](cmd[2:])
+
+    @staticmethod
+    def _check_skip(src_path: str, dst_path: str) -> bool:
+        header_output_exists = os.path.exists(dst_path + ".h")
+        if header_output_exists:
+            return os.path.getmtime(dst_path + ".h") >= os.path.getmtime(src_path)
+        return False
 
     def _exec_line(self, cmd: str) -> None:
         cmd: list[str] = cmd.split(" ")

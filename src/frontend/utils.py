@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from utils import COMPILER_PARAMS, SourceInfo
-from utils.file_postfixes import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, GENERIC_TABLE_POSTFIX
+from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, GENERIC_TABLE_POSTFIX
 
 from abc import ABC, abstractmethod
 import os
