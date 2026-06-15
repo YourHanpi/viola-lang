@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .utils import ParserGenericTable, ParsingResult, ParsingSlice, TokenStreamIO
 from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS
-from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TYPE_POSTFIX, SYMBOL_TABLE_POSTFIX, CACHE_DIR
+from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TYPE_POSTFIX, CACHE_DIR
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -9,13 +9,13 @@ import os
 import time
 from typing import Optional, Callable, Sequence, Mapping, Any
 
-__PARSER_UTILS_WITH_ARGS_TYPE = Callable[["Parser", Sequence[Any], Mapping[Any, Any]], Optional[Any]]
-__PARSER_UTILS_WITHOUT_ARGS_TYPE = Callable[["Parser"], Optional[Any]]
+__PARSER_UTILS_WITH_ARGS_TYPE = Callable[["GlobalParser", Sequence[Any], Mapping[Any, Any]], Optional[tuple[list[str], list[str]]]]
+__PARSER_UTILS_WITHOUT_ARGS_TYPE = Callable[["GlobalParser"], Optional[tuple[list[str], list[str]]]]
 __PARSER_UTILS_TYPE = __PARSER_UTILS_WITH_ARGS_TYPE | __PARSER_UTILS_WITHOUT_ARGS_TYPE
 
 
-def set_loc_command(parse_func: __PARSER_UTILS_TYPE) -> __PARSER_UTILS_TYPE:
-    def wrapper(self: "GlobalParser", *args, **kwargs) -> Optional[Any]:
+def _set_loc_command(parse_func: __PARSER_UTILS_TYPE) -> __PARSER_UTILS_TYPE:
+    def wrapper(self: "GlobalParser", *args, **kwargs) -> Optional[tuple[list[str], list[str]]]:
         start_line, start_col, _, _ = self._src_info.location_tuple
         start_token_count: int = self._current
         result = parse_func(self, *args, **kwargs)
@@ -60,6 +60,8 @@ class GlobalParser:
         self._symbol_types: dict[str, tuple[str, int]] = {}
         self._logger: Logger = Logger(f"Parser[{thread_index}]")
         self._tasks: list[str] = []
+        self._static_libs_to_link: list[str] = []
+        self._dynamic_libs_to_link: list[str] = []
 
     def parse(self, tokens: list[Token]) -> Optional[ParsingResult]:
         self._tasks.clear()
@@ -69,11 +71,12 @@ class GlobalParser:
         symbol: list[str] = []
         is_error: bool = False
         while self._match_type("IMPORT") or self._match_type("FROM"):
+            last_task_count: int = len(self._tasks)
             result = self._parse_import_line()
-            if result is None and len(self._tasks) == 0:
+            if result is None and len(self._tasks) - last_task_count == 0:
                 is_error = True
                 self._handle_error_from_import()
-            else:
+            elif result is not None:
                 command += result[0]
                 symbol += result[1]
         if len(self._tasks) > 0:
@@ -184,12 +187,14 @@ class GlobalParser:
         """
         root_paths: list[str] = [self._workspace] + os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":")
         for root_path in root_paths:
-            header_path = os.path.join(root_path, namespace.replace(".", os.sep) + ".vlah")
-            if os.path.exists(header_path):
-                return header_path
+            # TODO: 增加对Viola元数据（viola.metadata）的格式与解析
+            # header_path = os.path.join(root_path, namespace.replace(".", os.sep) + ".vlah")
+            # if os.path.exists(header_path):
+            #     return header_path
             path = os.path.join(root_path, namespace.replace(".", os.sep) + ".vla")
+            cache_path = os.path.join(root_path, CACHE_DIR, namespace.replace(".", os.sep) + ".vla")
             if os.path.exists(path):
-                return path
+                return cache_path + SYMBOL_TYPE_POSTFIX, cache_path + SYMBOL_TYPE_POSTFIX, cache_path + PARSING_LOCK_POSTFIX, path
         self._raise(f"Cannot find module {namespace}")
         return None
 
@@ -210,15 +215,13 @@ class GlobalParser:
         file_path = self._find_import(namespace)
         if file_path is None:
             return None
-        workspace, symbol_table_path, _, parsing_lock_path, token_path = file_path
+        symbol_table_path, _, parsing_lock_path, token_path = file_path
         if not os.path.exists(symbol_table_path):
             if os.path.exists(parsing_lock_path):
                 while os.path.exists(parsing_lock_path):
                     time.sleep(0.1)
             else:
-                self._add_task(f"viola set-workspace \"{workspace}\"")
-                self._add_task(f"viola parse \"{token_path}\"")
-                self._add_task(f"viola set-workspace \"{self._workspace}\"")
+                self._add_task(f"violac parse \"{token_path}\"")
                 return None
         with open(symbol_table_path, "r", encoding=GlobalParser._ENCODING) as file:
             texts: str = file.read().split("---", 1)[1]
@@ -254,15 +257,13 @@ class GlobalParser:
         file_path = self._find_import(namespace)
         if file_path is None:
             return
-        workspace, _, symbol_types_path, parsing_lock_path, token_path = file_path
+        _, symbol_types_path, parsing_lock_path, token_path = file_path
         if not os.path.exists(symbol_types_path):
             if os.path.exists(parsing_lock_path):
                 while os.path.exists(parsing_lock_path):
                     time.sleep(0.1)
             else:
-                self._add_task(f"viola set-workspace \"{workspace}\"")
-                self._add_task(f"viola parse \"{token_path}\"")
-                self._add_task(f"viola set-workspace \"{self._workspace}\"")
+                self._add_task(f"violac parse \"{token_path}\"")
                 return
         with open(symbol_types_path, "r") as file:
             texts: list[str] = file.readlines()
@@ -286,7 +287,6 @@ class GlobalParser:
         self._current = 0
         self._exceptions.clear()
 
-    @set_loc_command
     def _match_import(self, end_pos: int) -> Optional[list[Token]]:
         expect_dot: bool = False
         str_buffer: list[str] = []
@@ -348,7 +348,12 @@ class GlobalParser:
             self.__next_loc()
         return "".join(output)
 
-    @set_loc_command
+    def _next_to(self, pos: int) -> None:
+        while self._current < pos:
+            self._current += 1
+            self.__next_loc()
+
+    @_set_loc_command
     def _parse_assign_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         if not self._match_type("IDENTIFIER"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -371,7 +376,7 @@ class GlobalParser:
         self._next()
         return ["MAKE STMT ASSIGN", expr_commands, "CALL SET_VAR_VALUE"] + name_commands + ["CALL FINISH"], []
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_block_stmt(self, new_scope: bool) -> Optional[tuple[list[str], list[str]]]:
         command: list[str] = ["MAKE STMT BLOCK"]
         symbol: list[str] = []
@@ -395,7 +400,7 @@ class GlobalParser:
         command.append("CALL FINISH")
         return command, symbol
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_c_part_sq(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
         if len(prefixes) > 1:
             self._raise(f"Unexpected prefix for C part sq: {' '.join(prefixes)}")
@@ -415,7 +420,7 @@ class GlobalParser:
         command.append("CALL FINISH")
         return command, symbol
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_c_part_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         self._next()
         if not self._match_type("L_CURLY_BRACKET"):
@@ -435,7 +440,7 @@ class GlobalParser:
         codes = "".join(codes).split("\n")
         return [f"CALL ADD_TEXT {code}" for code in codes], []
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_catch_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         if not self._match_type("CATCH"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -455,7 +460,7 @@ class GlobalParser:
             return None
         return ["MAKE STMT CATCH", f"MAKE EXPR TYPE_REF {type_result}", f"CALL SET_EXCEPT_DECL {exc_name}"] + block_result[0] + ["CALL SET_STMT"], []
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_class(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
         if "static" in prefixes:
             self._raise("Unexpected prefix for class: static")
@@ -515,7 +520,7 @@ class GlobalParser:
         self._next()
         return commands, symbol
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_class_body(self, class_name: str) -> Optional[tuple[list[str], list[str]]]:
         prop_command: list[str] = []
         prop_symbol: list[str] = []
@@ -550,7 +555,7 @@ class GlobalParser:
         self._raise("Unexpected EOF")
         return None
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_closure_stmt(self, token_buffer: list[Token]) -> Optional[tuple[list[str], list[str]]]:
         if len(token_buffer) == 1:
             self._next()
@@ -588,7 +593,6 @@ class GlobalParser:
             "CALL FINISH"
         ], []
 
-    @set_loc_command
     def _parse_cond_expr(self) -> Optional[ParsingSlice]:
         tokens: list[Token] = []
         if not self._match_type("L_BRACKET"):
@@ -608,7 +612,7 @@ class GlobalParser:
         self._raise("Unexpected EOF")
         return None
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_cond_stmt(self, keyword: str) -> Optional[tuple[list[str], list[str]]]:
         if keyword not in ["IF", "ELIF", "ELSE"]:
             self._raise(f"Expected \"IF\", \"ELIF\", or \"ELSE\". Unexpected keyword: {keyword}")
@@ -634,7 +638,7 @@ class GlobalParser:
         self._next()
         return command, []
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_const_def(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
         if len(prefixes) > 0:
             self._raise(f"Unexpected prefix: {' '.join(prefixes)}")
@@ -647,7 +651,7 @@ class GlobalParser:
         command += ["CALL FINISH", "CALL ADD_DEF"]
         return command, symbol
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_decl_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         name_results = self._parse_type_name_list(["ASSIGN", "SEMICOLON"])
         if name_results is None:
@@ -665,7 +669,7 @@ class GlobalParser:
         expr_commands = ParsingSlice(self._src_info, expr_results, "EXPR")
         return ["MAKE STMT DECL", expr_commands, "CALL SET_VAR_VALUE"] + name_command + ["CALL FINISH"], symbol
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_decl_assign_op_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         """
         pure_decl_stmt = type_name_list SEMICOLON; -- 纯声明语句
@@ -701,7 +705,7 @@ class GlobalParser:
             return self._parse_decl_stmt()
         return self._parse_op_stmt()
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_def(self) -> Optional[tuple[list[str], list[str]]]:
         prefixes = self._parse_prefixes(["ABSTRACT", "CPART", "EXPORT", "STATIC"])
         if prefixes is None:
@@ -730,7 +734,7 @@ class GlobalParser:
     def _parse_else_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         return self._parse_cond_stmt("ELSE")
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_enum(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
         if len(prefixes) > 0:
             self._raise(f"Unexpected prefix: {' '.join(prefixes)}")
@@ -762,7 +766,7 @@ class GlobalParser:
         self._next()
         return command, symbol
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_enum_body(self) -> Optional[tuple[list[str], list[str]]]:
         command: list[str] = []
         expect_semicolon: bool = False
@@ -787,7 +791,7 @@ class GlobalParser:
                 return None
         return command, []
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_enum_item(self) -> Optional[tuple[list[str], list[str]]]:
         self._next()
         if not self._match_type("IDENTIFIER"):
@@ -813,7 +817,7 @@ class GlobalParser:
             return None
         return [ParsingSlice(self._src_info, result_tokens, "EXPR")]
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_finally_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         if not self._match_type("FINALLY"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -831,7 +835,7 @@ class GlobalParser:
             return None
         return self._parse_func(prefixes, "FN")
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_from_import(self) -> Optional[tuple[list[str], list[str]]]:
         module_path: Optional[str] = self._parse_name()
         if module_path is None:
@@ -870,7 +874,7 @@ class GlobalParser:
             return None
         return command, symbol
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_func(self, prefixes: list[str], func_type: str, is_closure: bool = False, without_name: bool = False) -> \
             Optional[tuple[list[str], list[str]]]:
         decl_result = self._parse_func_decl(func_type, prefixes, is_closure, without_name)
@@ -888,7 +892,7 @@ class GlobalParser:
         symbol.append("---")
         return command, symbol
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_func_decl(self, func_type: str, prefixes: list[str], is_closure: bool = False,
                          without_name: bool = False) -> Optional[tuple[list[str], list[str]]]:
         if func_type not in ["FN", "SQ"]:
@@ -956,7 +960,6 @@ class GlobalParser:
         self._next()
         return command, symbol
 
-    @set_loc_command
     def _parse_id_list(self) -> Optional[list[str]]:
         id_list: list[str] = []
         expect_comma: bool = False
@@ -982,7 +985,7 @@ class GlobalParser:
     def _parse_if_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         return self._parse_cond_stmt("IF")
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_import(self) -> Optional[tuple[list[str], list[str]]]:
         module_path: Optional[str] = self._parse_name()
         if module_path is None:
@@ -1001,7 +1004,7 @@ class GlobalParser:
             return None
         return ["CALL IMPORT " + module_path], symbol
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_import_line(self) -> Optional[tuple[list[str], list[str]]]:
         if self._match_type("IMPORT"):
             result: Optional[tuple[list[str], list[str]]] = self._parse_import()
@@ -1014,7 +1017,7 @@ class GlobalParser:
             return None
         return result
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_method(self, class_name: str, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
         self._next()
         if sum(modifier in prefixes for modifier in ["PUBLIC", "PROTECTED", "PRIVATE"]) > 1:
@@ -1039,7 +1042,6 @@ class GlobalParser:
         self._raise("Unexpected token: " + self._get_current().text)
         return None
 
-    @set_loc_command
     def _parse_name(self) -> Optional[str]:
         names: list[str] = []
         expect_dot: bool = False
@@ -1058,7 +1060,7 @@ class GlobalParser:
                 break
         return ".".join(names)
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_op_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         expr_result = self._collect_until("SEMICOLON")
         if expr_result is None:
@@ -1069,7 +1071,6 @@ class GlobalParser:
         self._next()
         return ["MAKE STMT OP", ParsingSlice(self._src_info, expr_result, "EXPR"), "CALL SET_EXPR"], []
 
-    @set_loc_command
     def _parse_prefixes(self, matches: list[str]) -> Optional[list[str]]:
         prefixes: list[str] = []
         while (token := self._get_current()).type in matches:
@@ -1081,7 +1082,7 @@ class GlobalParser:
         self._back()
         return prefixes
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_property(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
         if sum(modifier in prefixes for modifier in ["PUBLIC", "PROTECTED", "PRIVATE"]) > 1:
             self._raise("Unexpected modifiers: " + " ".join(prefixes))
@@ -1124,7 +1125,7 @@ class GlobalParser:
         symbol = f"{start_line}:{start_col}:{end_line}:{end_col} " + " ".join([symbol] + prefixes)
         return command, [symbol]
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_return_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         if not self._match_type("RETURN"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -1135,11 +1136,11 @@ class GlobalParser:
             return None
         return ["MAKE STMT RETURN"], []
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_sq(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
         return self._parse_func(prefixes, "SQ")
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         if self._match_type("ASYNC"):
             self._next()
@@ -1151,7 +1152,7 @@ class GlobalParser:
             return command, symbol
         return self._parse_stmt_no_async()
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_stmt_no_async(self) -> Optional[tuple[list[str], list[str]]]:
         if self._match_type("RETURN"):
             return self._parse_return_stmt()
@@ -1177,7 +1178,7 @@ class GlobalParser:
             return self._parse_block_stmt(True)
         return self._parse_decl_assign_op_stmt()
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_throw_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         if not self._match_type("THROW"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -1193,7 +1194,7 @@ class GlobalParser:
         self._next()
         return ["MAKE STMT THROW", *to_throw_expr_result, "CALL SET_EXPR"], []
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_try_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         if not self._match_type("TRY"):
             self._raise("Expected try. Unexpected token: " + self._get_current().text)
@@ -1208,7 +1209,6 @@ class GlobalParser:
         self._next()
         return ["MAKE STMT TRY"] + block_result[0] + ["CALL SET_STMT"], []
 
-    @set_loc_command
     def _parse_type(self) -> Optional[str]:
         l_bracket_count: int = 0
         l_angle_bracket_count: int = 0
@@ -1222,10 +1222,12 @@ class GlobalParser:
                 is_tuple = True
             elif "R_BRACKET" in token.type:
                 l_bracket_count -= 1
-            elif "LT" in token.type:
+            elif "GENERIC_START" in token.type:
                 l_angle_bracket_count += 1
             elif "GT" in token.type:
                 l_angle_bracket_count -= 1
+            elif "R_SHIFT" in token.type:
+                l_angle_bracket_count -= 2
             if l_bracket_count == 0 and l_angle_bracket_count == 0:
                 self._next()
                 if self._match_type("ARROW"):
@@ -1255,7 +1257,7 @@ class GlobalParser:
         self._raise("Unexpected EOF")
         return None
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_typedef_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         if not self._match_type("USING"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -1275,7 +1277,7 @@ class GlobalParser:
         dst_type = self._get_current().text
         return [f"MAKE STMT TYPEDEF {dst_type}", f"MAKE EXPR TYPE_REF {src_type}", "CALL SET_TYPE"], []
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_type_name_list(self, end_symbols: list[str]) -> Optional[tuple[list[str], list[str]]]:
         expect_comma: bool = False
         command: list[str] = []

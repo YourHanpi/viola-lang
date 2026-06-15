@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
-from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp
+from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp, ClassRef, TypeRef
 from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, \
     STACK_B_POP_FUNC
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
@@ -950,96 +950,59 @@ class Closure(Expression):
             raise CompilerException("Closure is not finished.", self._sq_def.src_info)
 
 
-class GenericCall(Expression):
+class GenericCall(CompilingItem):
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
-        super().__init__(src_info, symbol_table)
-        self._generic_symbol: Optional[FunctionName | ClassName | MethodName] = None
+        super().__init__(src_info)
+        self._symbol_table = symbol_table
+        self._generic_symbol: Optional[Expression] = None
         self._type_args: list[TypeName] = []
-        self._instance: Optional[FunctionName | ClassName | MethodName] = None
+        self._instance: Optional[Expression] = None
         self._is_finished: bool = False
 
-    def add_type_arg(self, t: TypeName) -> None:
-        self._type_args.append(t)
-
-    def as_async(self) -> "Expression":
-        return self
-
-    def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        return self
-
-    def check_tail_recursive(self, func_name: str) -> "Expression":
-        return self
+    def add_type_arg(self, t: TypeRef) -> None:
+        self._type_args.append(t.return_type)
 
     def finish(self) -> None:
         if self._generic_symbol is None:
             raise InternalCompilerException("The generic type is not specified", self._src_info)
         if len(self._type_args) == 0:
             raise CompilerException("Type arguments should not be empty", self._src_info)
-        # noinspection PyTypeChecker
-        self._instance = self._symbol_table.get_generic_instance(self._generic_symbol, tuple(self._type_args))
+        if isinstance(self._generic_symbol, VariableRef):
+            func = self._generic_symbol.var
+            if not isinstance(func, FunctionName):
+                raise CompilerException(f"{func} is not a function.", self._src_info)
+            func = self._symbol_table.get_generic_func_instance(func, tuple(self._type_args))
+            self._instance = VariableRef(self._src_info, self._symbol_table, func)
+        elif isinstance(self._generic_symbol, AttrOp):
+            method = self._generic_symbol.as_method()
+            if not isinstance(method, MethodName):
+                raise CompilerException(f"{method} is not a method.", self._src_info)
+            method = self._symbol_table.get_generic_method_instance(method, tuple(self._type_args))
+            self._instance: AttrOp = AttrOp(self._src_info, self._symbol_table)
+            self._instance.set_caller(self._generic_symbol.caller)
+            self._instance.set_attr(method.self_name)
+        elif isinstance(self._generic_symbol, ClassRef):
+            cls = self._generic_symbol.return_type
+            # noinspection PyTypeChecker
+            cls = self._symbol_table.get_generic_cls_instance(cls, tuple(self._type_args))
+            self._instance = ClassRef(self._src_info, self._symbol_table, cls)
+        else:
+            raise CompilerException(f"{self._generic_symbol} is not a function or method or class.", self._src_info)
         self._is_finished = True
 
     @property
-    def front_text(self) -> Optional[str]:
-        return None
-
-    @property
-    def global_init_text(self) -> Optional[str]:
-        return None
-
-    @property
-    def head_text(self) -> Optional[str]:
-        return None
-
-    @property
-    def inline_mapping(self) -> dict[str, str]:
-        return {}
-
-    def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr = deepcopy(self)
-        # noinspection PyTypeChecker
-        new_expr._type_args = list(map(lambda t: type_args[t] if t in type_args else t, self._type_args))
-        return new_expr
-
-    def optimize(self) -> "Expression":
-        return self
-
-    @property
-    def outer_text(self) -> Optional[str]:
-        return None
-
-    @property
-    def release_text(self) -> Optional[str]:
-        return None
-
-    @property
-    def return_type(self) -> TypeName:
-        if isinstance(self._generic_symbol, ClassName):
-            return self._generic_symbol
-        return self._generic_symbol.type
-
-    def set_generic_symbol(self, symbol: FunctionName | ClassName | MethodName) -> None:
-        self._generic_symbol = symbol
-
-    def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        return self
-
-    @property
-    def tail_recursive_mark(self) -> Optional[str]:
-        return None
-
-    @property
-    def text(self) -> str:
-        return self._instance.name
-
-    @property
-    def used_variables(self) -> set[VariableName]:
-        return set()
-
-    def validate(self) -> None:
+    def instance(self) -> Expression:
         if not self._is_finished:
-            raise CompilerException("Generic call is not finished", self._src_info)
+            raise InternalCompilerException("GenericCall is not finished.", self._src_info)
+        # noinspection PyTypeChecker
+        return self._instance
+
+    def optimize(self) -> CompilingItem:
+        return self
+
+    def set_generic_expr(self, expr: Expression) -> None:
+        self._generic_symbol = expr
 
 
 class EnumDef(Definition):

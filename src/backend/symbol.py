@@ -1970,13 +1970,17 @@ class _TypeNameLexer(FSM):
         array_symbol: StateNode = StateNode()
         l_bracket: StateNode = StateNode()
         r_bracket: StateNode = StateNode()
-        l_angle_bracket: StateNode = StateNode()
+        colon: StateNode = StateNode()
+        double_colon: StateNode = StateNode()
+        generic_start: StateNode = StateNode()
         r_angle_bracket: StateNode = StateNode()
         first.add_transfer("-", sub)
         first.add_transfer("[", l_square_bracket)
         first.add_transfer("(", l_bracket)
         first.add_transfer(")", r_bracket)
-        first.add_transfer("<", l_angle_bracket)
+        first.add_transfer(":", colon)
+        colon.add_transfer(":", double_colon)
+        double_colon.add_transfer("<", generic_start)
         first.add_transfer(">", r_angle_bracket)
         sub.add_transfer(">", arrow)
         l_square_bracket.add_transfer("]", array_symbol)
@@ -1984,7 +1988,7 @@ class _TypeNameLexer(FSM):
         array_symbol.set_output("[]")
         l_bracket.set_output("(")
         r_bracket.set_output(")")
-        l_angle_bracket.set_output("<")
+        generic_start.set_output("::<")
         r_angle_bracket.set_output(">")
         return first
 
@@ -2096,7 +2100,7 @@ class _TypeNameParser:
             if self._current >= self._tokens_num - 1:
                 return result
             self._next()
-            if self._match_type("<"):
+            if self._match_type("::<"):
                 if not isinstance(result, ClassName):
                     raise CompilerException(f"Expected class type, but got {result.raw_name}", self._src_info)
                 type_args: list[TypeName] = self._parse_type_list(">")
@@ -2197,9 +2201,10 @@ class SymbolTable:
         name: 查找符号时使用的名称。
         types: 符号的参数类型列表（如果不是函数则为None）。
         """
-        if symbol.name in self.symbols:
-            raise CompilerException(f"Symbol {name} already exists.", self._src_info)
-        if symbol.kw_type == SymbolType.FUNCTION and types is None:
+        if types is not None:
+            if (symbol.name, tuple(types)) in self.symbols:
+                raise CompilerException(f"Symbol {name} already exists.", self._src_info)
+        if (symbol.kw_type == SymbolType.FUNCTION or symbol.kw_type == SymbolType.METHOD) and types is None:
             raise InternalCompilerException("Function must have types.", self._src_info)
         elif symbol.kw_type != SymbolType.FUNCTION and symbol.kw_type != SymbolType.METHOD and types is not None:
             raise InternalCompilerException("Symbol must not have types.", self._src_info)
@@ -2284,8 +2289,8 @@ class SymbolTable:
         ))
         return list(matches.values())
 
-    def find_method(self, src_info: SourceInfo, cls_name: str, name: str, args: list[str],
-                    kwargs: dict[str, str]) -> MethodName:
+    def find_method(self, src_info: SourceInfo, cls_name: str, name: str, args: Optional[list[str]],
+                    kwargs: Optional[dict[str, str]]) -> MethodName:
         """
         搜索一个方法，如果找到多个则会报错。
         src_info: 源代码信息。
@@ -2294,6 +2299,11 @@ class SymbolTable:
         args: 参数类型名称列表。
         kwargs: 关键字参数类型名称列表。
         """
+        if args is None or kwargs is None:
+            result = self.symbols[cls_name + "." + name, None]
+            if not isinstance(result, MethodName):
+                raise CompilerException("Method not found", src_info)
+            return result
         results = self.find_methods(cls_name, name, args, kwargs)
         if len(results) > 1:
             raise CompilerException("Ambiguous method symbol", src_info)

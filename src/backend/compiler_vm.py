@@ -69,8 +69,9 @@ class CompilerVM:
             "ARRAY_REF": lambda cmd: self.__make(expression.ArrayRef(self._src_info, self._symbol_table)),
             "TUPLE_REF": lambda cmd: self.__make(expression.TupleRef(self._src_info, self._symbol_table)),
             "AUTO_TYPE_REF": lambda cmd: self.__make(expression.AutoTypeRef(self._src_info, self._symbol_table)),
+            "FUNCTION_TYPE_REF": lambda cmd: self.__make(expression.FunctionTypeRef(self._src_info, self._symbol_table)),
             "TYPE_REF": lambda cmd: self.__make(expression.TypeRef.from_name(self._src_info, self._symbol_table, " ".join(cmd))),
-            "CLASS_REF": lambda cmd: self.__make(expression.ClassRef(self._src_info, self._symbol_table, " ".join(cmd))),
+            "CLASS_REF": lambda cmd: self.__make(expression.ClassRef.from_name(self._src_info, self._symbol_table, " ".join(cmd))),
             "ATTR_OP": lambda cmd: self.__make(expression.AttrOp(self._src_info, self._symbol_table)),
             "CALL_OP": lambda cmd: self.__make(expression.CallOp(self._src_info, self._symbol_table)),
             "ADD_OP": lambda cmd: self.__make(expression.AddOp(self._src_info, self._symbol_table)),
@@ -133,12 +134,14 @@ class CompilerVM:
             "ADD_STMT": lambda cmd: self.__call_add_stmt(),
             "ADD_TEXT": lambda cmd: self.__call_add_text(cmd),
             "ADD_TYPE": lambda cmd: self.__call_add_type(),
-            "ADD_TYPE_ARG": lambda cmd: self.__call_add_type_arg(cmd),
+            "ADD_TYPE_ARG": lambda cmd: self.__call_add_type_arg(),
             "ADD_VALUE": lambda cmd: self.__call_add_value(),
             "ADD_VAR": lambda cmd: self.__call_add_var(cmd),
             "AS_ASYNC": lambda cmd: self.__call_as_async(),
             "FINISH": lambda cmd: self.__call_finish(),
+            "FINISH_GENERIC": lambda cmd: self.__call_finish_generic(),
             "SET_ATTR": lambda cmd: self.__call_set_attr(cmd),
+            "SET_ARG_TYPES": lambda cmd: self.__call_set_arg_types(),
             "SET_CALLER": lambda cmd: self.__call_set_caller(),
             "SET_COND_EXPR": lambda cmd: self.__call_set_cond_expr(),
             "SET_DEF": lambda cmd: self.__call_set_def(),
@@ -151,11 +154,11 @@ class CompilerVM:
             "SET_EXPR_RIGHT": lambda cmd: self.__call_set_expr_right(),
             "SET_EXPR_THEN": lambda cmd: self.__call_set_expr_then(),
             "SET_FUNC": lambda cmd: self.__call_set_func(),
-            "SET_GENERIC_SYMBOL": lambda cmd: self.__call_set_generic_symbol(cmd),
+            "SET_GENERIC_EXPR": lambda cmd: self.__call_set_generic_expr(),
+            "SET_RETURN_TYPES": lambda cmd: self.__call_set_return_types(),
             "SET_START": lambda cmd: self.__call_set_start(),
             "SET_STEP": lambda cmd: self.__call_set_step(),
             "SET_STMT": lambda cmd: self.__call_set_stmt(),
-            "SET_TO_UNPACK": lambda cmd: self.__call_set_to_unpack(),
             "SET_TYPE": lambda cmd: self.__call_set_type(),
             "SET_VARS": lambda cmd: self.__call_set_vars(cmd),
             "SET_VAR_NAMES": lambda cmd: self.__call_add_var_name(cmd),
@@ -173,11 +176,11 @@ class CompilerVM:
         self._logger.debug(f"Found compiling target: {src_path}")
         if CompilerVM._check_skip(src_path, output_path):
             self._logger.debug(f"Skipped: {src_path}")
-            return TaskResult(TaskResultState.SUCCESS, [f"viola add-make {output_relpath}"])
+            return TaskResult(TaskResultState.SUCCESS, [f"violac add-make {output_relpath}"])
         if not os.path.exists(src_path + SYMBOL_TABLE_POSTFIX) or not os.path.exists(src_path + COMMAND_POSTFIX):
             self._logger.debug(f"Required: {src_path + SYMBOL_TABLE_POSTFIX}")
             self._logger.debug(f"Required: {src_path + COMMAND_POSTFIX}")
-            return TaskResult(TaskResultState.DELAYED, [f"viola parse \"{src_path}\""])
+            return TaskResult(TaskResultState.DELAYED, [f"violac parse \"{src_path}\""])
         self._symbol_table = symbol.SymbolTable.read_from(src_path + SYMBOL_TABLE_POSTFIX)
         self._var_state_table = symbol.VariableStateTable(src_path, self._workspace)
         self._stack.clear()
@@ -329,12 +332,12 @@ class CompilerVM:
         self._stack[-2].add_type(self._stack[-1])
         self.__pop()
 
-    def __call_add_type_arg(self, cmd: list[str]) -> None:
-        self.__check_type(self._stack[-1], [definition.GenericCall])
-        # noinspection PyTypeChecker
-        t: symbol.TypeName = self._symbol_table[" ".join(cmd)]
+    def __call_add_type_arg(self) -> None:
+        self.__check_type(self._stack[-2], [definition.GenericCall])
+        self.__check_type(self._stack[-1], [expression.TypeRef])
         # noinspection PyUnresolvedReferences
-        self._stack[-1].add_type_arg(t)
+        self._stack[-2].add_type_arg(self._stack[-1])
+        self.__pop()
 
     def __call_add_value(self) -> None:
         self.__check_type(self._stack[-1], [expression.Expression])
@@ -362,17 +365,33 @@ class CompilerVM:
 
     def __call_finish(self) -> None:
         self.__check_type(self._stack[-1], [
-            definition.SqDef, definition.ClassDef, definition.GenericCall, definition.EnumDef, statement.DeclStmt,
-            statement.AssignStmt, statement.TryStmt, statement.BlockStmt, expression.ArrayRef, expression.TupleRef,
+            definition.SqDef, definition.ClassDef, definition.EnumDef, statement.DeclStmt, statement.AssignStmt,
+            statement.TryStmt, statement.BlockStmt, expression.ArrayRef, expression.TupleRef,
             expression.TupleTypeRef, expression.UpdateExpr
         ])
         # noinspection PyUnresolvedReferences
         self._stack[-1].finish()
 
+    def __call_finish_generic(self) -> None:
+        self.__check_type(self._stack[-1], [definition.GenericCall])
+        # noinspection PyUnresolvedReferences
+        self._stack[-1].finish()
+        # noinspection PyUnresolvedReferences
+        instance = self._stack[-1].instance
+        self.__pop()
+        self.__make(instance)
+
     def __call_set_attr(self, cmd: list[str]) -> None:
         self.__check_type(self._stack[-1], [expression.AttrOp])
         # noinspection PyUnresolvedReferences
         self._stack[-1].set_attr(cmd[0])
+
+    def __call_set_arg_types(self) -> None:
+        self.__check_type(self._stack[-1], [expression.TupleTypeRef])
+        self.__check_type(self._stack[-2], [expression.FunctionTypeRef])
+        # noinspection PyUnresolvedReferences
+        self._stack[-2].set_arg_types(self._stack[-1])
+        self.__pop()
 
     def __call_set_caller(self) -> None:
         self.__check_type(self._stack[-1], [expression.Expression])
@@ -412,7 +431,7 @@ class CompilerVM:
     def __call_set_expr(self) -> None:
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [
-            statement.OpStmt, statement.ThrowStmt, statement.CastOp, expression.UnaryOperator
+            statement.OpStmt, statement.ThrowStmt, statement.CastOp, expression.UnaryOperator, expression.UnpackExpr
         ])
         # noinspection PyUnresolvedReferences
         self._stack[-2].set_expr(self._stack[-1])
@@ -460,12 +479,19 @@ class CompilerVM:
         self._stack[-2].set_func(self._stack[-1])
         self.__pop()
 
-    def __call_set_generic_symbol(self, cmd: list[str]) -> None:
-        self.__check_type(self._stack[-1], [definition.GenericCall])
-        # noinspection PyTypeChecker
-        sym: symbol.ClassName | symbol.FunctionName | symbol.MethodName = self._symbol_table[cmd[0]]
+    def __call_set_generic_expr(self) -> None:
+        self.__check_type(self._stack[-1], [expression.VariableRef, expression.AttrOp, expression.ClassRef])
+        self.__check_type(self._stack[-2], [definition.GenericCall])
         # noinspection PyUnresolvedReferences
-        self._stack[-1].set_generic_symbol(sym)
+        self._stack[-2].set_generic_expr(self._stack[-1])
+        self.__pop()
+
+    def __call_set_return_types(self) -> None:
+        self.__check_type(self._stack[-1], [expression.TupleTypeRef])
+        self.__check_type(self._stack[-2], [expression.FunctionTypeRef])
+        # noinspection PyUnresolvedReferences
+        self._stack[-2].set_return_types(self._stack[-1])
+        self.__pop()
 
     def __call_set_start(self) -> None:
         self.__check_type(self._stack[-1], [expression.Expression])
@@ -488,13 +514,6 @@ class CompilerVM:
         self.__check_type(self._stack[-1], [statement.Statement])
         # noinspection PyUnresolvedReferences
         self._stack[-2].set_stmt(self._stack[-1])
-        self.__pop()
-        
-    def __call_set_to_unpack(self) -> None:
-        self.__check_type(self._stack[-1], [expression.Expression])
-        self.__check_type(self._stack[-2], [expression.UnpackExpr])
-        # noinspection PyUnresolvedReferences
-        self._stack[-2].set_to_unpack(self._stack[-1])
         self.__pop()
 
     def __call_set_type(self) -> None:

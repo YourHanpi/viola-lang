@@ -7,6 +7,9 @@ from typing import Optional
 
 class CompilingItem(ABC):
 
+    def __str__(self) -> str:
+        return self._src_info.src_text
+
     def __init__(self, src_info: SourceInfo) -> None:
         """
         初始化编译时对象。

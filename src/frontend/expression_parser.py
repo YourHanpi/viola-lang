@@ -1,24 +1,10 @@
 # -*- coding: utf-8 -*-
-from .global_parser import GlobalParser, set_loc_command
-from .utils import ParsingResult, ParserGenericTable
+from .global_parser import GlobalParser
+from .utils import ParsingResult
 from utils import Token
 
 from enum import Enum
 from typing import Optional, Callable, Sequence, Mapping, Any
-
-
-__PARSER_UTILS_WITH_ARGS_TYPE = Callable[["Parser", Sequence[Any], Mapping[Any, Any]], Optional[Any]]
-__PARSER_UTILS_WITHOUT_ARGS_TYPE = Callable[["Parser"], Optional[Any]]
-__PARSER_UTILS_TYPE = __PARSER_UTILS_WITH_ARGS_TYPE | __PARSER_UTILS_WITHOUT_ARGS_TYPE
-
-
-_OPERATOR_TYPES: set[str] = {
-    "ADD", "SUB", "MUL", "MATMUL", "DIV", "MOD", "POW", "LSHIFT", "RSHIFT", "AND", "BIT_AND", "OR", "BIT_OR",
-    "BIT_XOR", "NOT", "INVERT", "EQ", "NE", "LT", "GT", "LE", "GE"
-}
-_EXPR_SPLITTERS: set[str] = {"COMMA", "L_BRACKET", "L_SQUARE_BRACKET", "L_CURLY_BRACKET", "QUESTION", "COLON"}
-
-_BLANK_TOKEN: Token = Token("", ["_BLANK"])
 
 
 class _ExprState(Enum):
@@ -53,26 +39,91 @@ def _is_substate(state: _ExprState, substate: _ExprState) -> bool:
     return False
 
 
+__PARSER_UTILS_WITH_ARGS_TYPE = Callable[["ExprParser", Sequence[Any], Mapping[Any, Any]], Optional[list[str]]]
+__PARSER_UTILS_WITHOUT_ARGS_TYPE = Callable[["ExprParser"], Optional[list[str]]]
+__PARSER_UTILS_TYPE = __PARSER_UTILS_WITH_ARGS_TYPE | __PARSER_UTILS_WITHOUT_ARGS_TYPE
+
+__PARSER_UTILS_WITH_STATE_WITH_ARGS_TYPE = Callable[["ExprParser", Sequence[Any], Mapping[Any, Any]], Optional[tuple[list[str], _ExprState]]]
+__PARSER_UTILS_WITH_STATE_WITHOUT_ARGS_TYPE = Callable[["ExprParser"], Optional[tuple[list[str], _ExprState]]]
+__PARSER_UTILS_WITH_STATE_TYPE = __PARSER_UTILS_WITH_STATE_WITH_ARGS_TYPE | __PARSER_UTILS_WITH_STATE_WITHOUT_ARGS_TYPE
+
+
+_OPERATOR_TYPES: set[str] = {
+    "ADD", "SUB", "MUL", "MATMUL", "DIV", "MOD", "POW", "LSHIFT", "RSHIFT", "AND", "BIT_AND", "OR", "BIT_OR",
+    "BIT_XOR", "NOT", "INVERT", "EQ", "NE", "LT", "GT", "LE", "GE"
+}
+_EXPR_SPLITTERS: set[str] = {"COMMA", "L_BRACKET", "L_SQUARE_BRACKET", "L_CURLY_BRACKET", "QUESTION", "COLON"}
+
+_BLANK_TOKEN: Token = Token("", ["_BLANK"])
+
+
+def _set_loc_command(parse_func: __PARSER_UTILS_TYPE) -> __PARSER_UTILS_TYPE:
+    def wrapper(self: "ExprParser", *args, **kwargs) -> Optional[list[str]]:
+        start_line, start_col, _, _ = self._src_info.location_tuple
+        start_token_count: int = self._current
+        result = parse_func(self, *args, **kwargs)
+        end_token_count: int = self._current
+        codes: str = "".join([token.text for token in self._tokens[start_token_count:end_token_count]])
+        self._src_info.set_text(codes)
+        if result is not None:
+            command = result
+            _, _, end_line, end_col = self._src_info.location_tuple
+            return [f"SET_INFO {start_line} {start_col} {end_line} {end_col}"] + command
+        return None
+
+    return wrapper
+
+
+def _set_loc_command_with_state(parse_func: __PARSER_UTILS_WITH_STATE_TYPE) -> __PARSER_UTILS_WITH_STATE_TYPE:
+    def wrapper(self: "ExprParser", *args, **kwargs) -> Optional[tuple[list[str], _ExprState]]:
+        start_line, start_col, _, _ = self._src_info.location_tuple
+        start_token_count: int = self._current
+        result = parse_func(self, *args, **kwargs)
+        end_token_count: int = self._current
+        codes: str = "".join([token.text for token in self._tokens[start_token_count:end_token_count]])
+        self._src_info.set_text(codes)
+        if result is not None:
+            command, state = result
+            _, _, end_line, end_col = self._src_info.location_tuple
+            return [f"SET_INFO {start_line} {start_col} {end_line} {end_col}"] + command, state
+        return None
+
+    return wrapper
+
+
 class ExprParser(GlobalParser):
 
     def __init__(self, workspace: str) -> None:
         super().__init__(workspace)
 
-    @staticmethod
-    def _lex_unary_op(tokens: list[Token]) -> list[Token]:
+    def _lex_unary_op(self) -> None:
         check_unary_op: bool = True
-        for t in tokens:
+        while self._current < self._tokens_num:
+            t: Token = self._get_current()
             if check_unary_op:
                 if "ADD" in t.type:
-                    t.add_types(["POS"])
+                    t.set_types(["POS"])
                 elif "SUB" in t.type:
-                    t.add_types(["NEG"])
+                    t.set_types(["NEG"])
                 elif "MUL" in t.type:
-                    t.add_types(["UNPACK"])
+                    t.set_types(["UNPACK"])
             check_unary_op = len((_OPERATOR_TYPES | _EXPR_SPLITTERS) & set(t.type)) > 0
-        return tokens
 
-    @set_loc_command
+    @_set_loc_command_with_state
+    def _parse_add_sub(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op(
+            {"ADD": "MAKE EXPR ADD_OP", "SUB": "MAKE EXPR SUB_OP"},
+            end_pos, self._parse_mul_div_mod
+        )
+
+    @_set_loc_command_with_state
+    def _parse_and(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op(
+            {"AND": "MAKE EXPR AND_OP"},
+            end_pos, self._parse_bit_xor
+        )
+
+    @_set_loc_command
     def _parse_arg_list(self) -> Optional[list[str]]:
         kwarg_name: str = ""
         start_pos: int = self._current
@@ -115,7 +166,7 @@ class ExprParser(GlobalParser):
         self._raise("Unexpected EOF")
         return None
 
-    @set_loc_command
+    @_set_loc_command_with_state
     def _parse_attr_expr(self) -> Optional[tuple[list[str], _ExprState]]:
         id_list: list[str] = []
         is_prefix: bool = True
@@ -156,6 +207,15 @@ class ExprParser(GlobalParser):
                     is_prefix = False
                     command += self.__handle_id_prefix(id_list)
                 command += ["CALL SET_EXPR_LEFT"]
+            elif self._match_type("GENERIC_START"):
+                if not expect_dot:
+                    self._raise("Unexpected token: " + self._get_current().text)
+                    return None
+                expr_result = self._parse_generic_expr()
+                if expr_result is None:
+                    return None
+                command = ["MAKE EXPR GENERIC_CALL"] + command + ["CALL SET_GENERIC_EXPR"] + expr_result + ["CALL FINISH_GENERIC"]
+                is_prefix = False
             elif self._match_type("DOT"):
                 if not expect_dot:
                     self._raise("Unexpected token: " + self._get_current().text)
@@ -171,13 +231,95 @@ class ExprParser(GlobalParser):
         self._raise("Unexpected EOF")
         return None
 
-    @set_loc_command
+    def _parse_bin_math_op(
+            self, op_maker_commands: dict[str, str], end_pos: int,
+            inner_parser: Callable[[int], Optional[tuple[list[str], _ExprState]]],
+            associativity_left: bool = True
+    ) -> Optional[tuple[list[str], _ExprState]]:
+        if associativity_left:
+            commands = self._parse_bin_op_left_associativity(op_maker_commands, end_pos, inner_parser)
+        else:
+            commands = self._parse_bin_op_right_associativity(op_maker_commands, end_pos, inner_parser)
+        if commands is None:
+            return None
+        return commands
+
+    @_set_loc_command
+    def _parse_bin_op_left_associativity(
+            self, op_maker_commands: dict[str, str], end_pos: int,
+            inner_parser: Callable[[int], Optional[tuple[list[str], _ExprState]]]
+    ) -> Optional[tuple[list[str], _ExprState]]:
+        token_start, op_list = self._split_by_bin_op(list(op_maker_commands.keys()), end_pos)
+        token_start.append(end_pos)
+        commands = list(map(lambda op: op_maker_commands[op], op_list[::-1]))
+        state: _ExprState = _ExprState.CALLABLE_ENDING
+        for i, start in enumerate(token_start):
+            sub_commands = inner_parser(start)
+            if sub_commands is None:
+                return None
+            commands += sub_commands[0]
+            state = sub_commands[1]
+            if i > 0:
+                commands += ["CALL SET_EXPR_RIGHT"]
+            if i < len(token_start) - 1:
+                commands += ["CALL SET_EXPR_LEFT"]
+            self._next_to(start)
+        return commands, state
+
+    @_set_loc_command
+    def _parse_bin_op_right_associativity(
+            self, op_maker_commands: dict[str, str], end_pos: int,
+            inner_parser: Callable[[int], Optional[tuple[list[str], _ExprState]]]
+    ) -> Optional[tuple[list[str], _ExprState]]:
+        token_start, op_list = self._split_by_bin_op(list(op_maker_commands.keys()), end_pos)
+        token_start = token_start[::-1] + [self._current]
+        token_end: list[int] = [end_pos] + token_start[1:]
+        commands = list(map(lambda op: op_maker_commands[op], op_list))
+        state: _ExprState = _ExprState.CALLABLE_ENDING
+        for i, start in enumerate(token_start):
+            sub_commands = inner_parser(token_end[i])
+            if sub_commands is None:
+                return None
+            commands += sub_commands[0]
+            state = sub_commands[1]
+            if i > 0:
+                commands += ["CALL SET_EXPR_LEFT"]
+            if i < len(token_start) - 1:
+                commands += ["CALL SET_EXPR_RIGHT"]
+            self._back_to(start)
+        return commands, state
+
+    @_set_loc_command_with_state
+    def _parse_bit_and(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op(
+            {"BIT_AND": "MAKE EXPR BIT_AND_OP"},
+            end_pos,
+            self._parse_equal_expr
+        )
+
+    @_set_loc_command_with_state
+    def _parse_bit_or(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op(
+            {"BIT_OR": "MAKE EXPR BIT_OR_OP"},
+            end_pos,
+            self._parse_bit_and
+        )
+
+    @_set_loc_command_with_state
+    def _parse_bit_xor(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op(
+            {"BIT_XOR": "MAKE EXPR BIT_XOR_OP"},
+            end_pos,
+            self._parse_bit_or
+        )
+
+    @_set_loc_command_with_state
     def _parse_bool(self) -> Optional[tuple[list[str], _ExprState]]:
         result = [f"MAKE EXPR BOOL_LITERAL {self._get_current().text}"]
         self._next()
         return result, _ExprState.EXPR_ENDING
 
-    @set_loc_command
+    @_set_loc_command_with_state
     def _parse_bracket_expr(self, current_state: _ExprState) -> Optional[tuple[list[str], _ExprState]]:
         if not self._match_type("L_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -207,7 +349,7 @@ class ExprParser(GlobalParser):
                 self._raise("Unexpected token: " + self._get_current().text)
                 return None
             self._next()
-            return ["MAKE EXPR CAST_OP", f"MAKE EXPR TYPE_REF {type_name}", "CALL SET_TYPE"], _ExprState.CAST_STARTING
+            return ["MAKE EXPR CAST_OP"] + type_name + ["CALL SET_TYPE"], _ExprState.CAST_STARTING
         while self._current < self._tokens_num and bracket_count >= 0:
             self._next()
             if self._match_type("L_BRACKET"):
@@ -258,7 +400,7 @@ class ExprParser(GlobalParser):
             return ["MAKE EXPR TUPLE_REF"] + command + ["CALL FINISH"], _ExprState.EXPR_ENDING
         return ["MAKE EXPR BRACKETS_OP"] + command, _ExprState.EXPR_ENDING
 
-    @set_loc_command
+    @_set_loc_command_with_state
     def _parse_closure_expr(self) -> Optional[tuple[list[str], _ExprState]]:
         closure_result = self._parse_func([], self._get_current().type[0], True, True)
         if closure_result is None:
@@ -266,7 +408,16 @@ class ExprParser(GlobalParser):
         commands = closure_result[0]
         return ["MAKE EXPR CLOSURE"] + commands + ["CALL SET_DEF"], _ExprState.CALLABLE_ENDING
 
-    @set_loc_command
+    @_set_loc_command_with_state
+    def _parse_compare_expr(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op({
+            "GT": "MAKE EXPR GT_OP",
+            "LT": "MAKE EXPR LT_OP",
+            "GE": "MAKE EXPR GE_OP",
+            "LE": "MAKE EXPR LE_OP"
+        }, end_pos, self._parse_shift)
+
+    @_set_loc_command_with_state
     def _parse_curly_bracket_expr(self, current_state: _ExprState) -> Optional[tuple[list[str], _ExprState]]:
         if not self._match_type("L_CURLY_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -281,13 +432,20 @@ class ExprParser(GlobalParser):
         self._raise("The dict expression and the set expression will be added in the future.")
         return None
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_expr(self, end_pos: int) -> Optional[list[str]]:
         # TODO: 添加表达式解析
         ...
 
-    @set_loc_command
-    def _parse_expr_ends_with(self, end_token_types: list[str]) -> Optional[list[str]]:
+    @_set_loc_command_with_state
+    def _parse_equal_expr(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op({
+            "EQ": "MAKE EXPR EQ_OP",
+            "NE": "MAKE EXPR NE_OP"
+        }, end_pos, self._parse_compare_expr)
+
+    @_set_loc_command
+    def _parse_expr_ends_with(self, end_token_types: list[str], parser: Callable[[int], Optional[list[str]]]) -> Optional[list[str]]:
         bracket_count: int = 0
         square_bracket_count: int = 0
         curly_bracket_count: int = 0
@@ -311,14 +469,15 @@ class ExprParser(GlobalParser):
                 curly_bracket_count -= 1
         end_pos: int = self._current
         self._back_to(start_pos)
-        return self._parse_expr(end_pos)
+        return parser(end_pos)
 
-    @set_loc_command
-    def _parse_expr_splits_with(self, splitters: list[str], end_token_types: list[str], expr_end_command: list[str]) -> Optional[tuple[list[str], int]]:
+    @_set_loc_command
+    def _parse_expr_splits_with(self, splitters: list[str], end_token_types: list[str], expr_end_command: list[str],
+                                parser: Callable[[int], Optional[list[str]]]) -> Optional[tuple[list[str], int]]:
         command: list[str] = []
         expr_count: int = 0
         while self._current < self._tokens_num:
-            sub_command = self._parse_expr_ends_with(splitters + end_token_types)
+            sub_command = self._parse_expr_ends_with(splitters + end_token_types, parser)
             expr_count += 1
             if sub_command is None:
                 return None
@@ -332,19 +491,40 @@ class ExprParser(GlobalParser):
         self._raise("Unexpected end of expression")
         return None
 
-    @set_loc_command
+    @_set_loc_command_with_state
     def _parse_float(self) -> Optional[tuple[list[str], _ExprState]]:
         result = [f"MAKE EXPR FLOAT_LITERAL {self._get_current().text}"]
         self._next()
         return result, _ExprState.EXPR_ENDING
 
-    @set_loc_command
+    @_set_loc_command
+    def _parse_generic_expr(self) -> Optional[list[str]]:
+        if not self._match_type("GENERIC_START"):
+            self._raise("Unexpected token: " + self._get_current().text)
+            return None
+        self._next()
+        result = self._parse_type_list(["CALL ADD_TYPE_ARG"])
+        if result is None:
+            return None
+        if result[1] < 0:
+            self._raise("Unbalanced angle brackets")
+            return None
+        return result[0]
+
+    @_set_loc_command_with_state
     def _parse_int(self) -> Optional[tuple[list[str], _ExprState]]:
         result = [f"MAKE EXPR INTEGER_LITERAL {self._get_current().text} {self._get_current().type[0]}"]
         self._next()
         return result, _ExprState.EXPR_ENDING
 
-    @set_loc_command
+    @_set_loc_command_with_state
+    def _parse_mul_div_mod(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op(
+            {"MUL": "MAKE EXPR MUL_OP", "DIV": "MAKE EXPR DIV_OP", "MOD": "MAKE EXPR MOD_OP", "MATMUL": "MAKE EXPR MATMUL_OP"},
+            end_pos, self._parse_pow
+        )
+
+    @_set_loc_command_with_state
     def _parse_operand(self) -> Optional[tuple[list[str], _ExprState]]:
         if self._match_type("L_BRACKET"):
             result = self._parse_bracket_expr(_ExprState.EXPR_STARTING)
@@ -371,7 +551,22 @@ class ExprParser(GlobalParser):
             return None
         return result
 
-    @set_loc_command
+    @_set_loc_command_with_state
+    def _parse_or(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op({"OR": "MAKE EXPR OR_OP"}, end_pos, self._parse_and)
+
+    @_set_loc_command_with_state
+    def _parse_pow(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op({"POW": "MAKE EXPR POW_OP"}, end_pos, self._parse_unary_op, False)
+
+    @_set_loc_command_with_state
+    def _parse_shift(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        return self._parse_bin_math_op(
+            {"LSHIFT": "MAKE EXPR LSHIFT_OP", "RSHIFT": "MAKE EXPR RSHIFT_OP"},
+            end_pos, self._parse_add_sub
+        )
+
+    @_set_loc_command_with_state
     def _parse_square_bracket_expr(self, expr_state: _ExprState) -> Optional[tuple[list[str], _ExprState]]:
         if not self._match_type("L_SQUARE_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -384,15 +579,15 @@ class ExprParser(GlobalParser):
             return ["MAKE EXPR ARRAY_REF", "CALL FINISH"], _ExprState.CALLABLE_ENDING
         command: list[str] = ["MAKE EXPR ARRAY_REF"] if not is_index else []
         if is_index:
-            result = self._parse_expr_splits_with(["COMMA"], ["R_SQUARE_BRACKET"], ["CALL ADD_ARG"])
+            result = self._parse_expr_splits_with(["COMMA"], ["R_SQUARE_BRACKET"], ["CALL ADD_ARG"], self._parse_expr)
         else:
-            result = self._parse_expr_splits_with(["COMMA"], ["R_SQUARE_BRACKET"], ["CALL ADD_VALUE"])
+            result = self._parse_expr_splits_with(["COMMA"], ["R_SQUARE_BRACKET"], ["CALL ADD_VALUE"], self._parse_expr)
         if result is None:
             return None
         command += result[0]
         return command, _ExprState.CALLABLE_ENDING
 
-    @set_loc_command
+    @_set_loc_command_with_state
     def _parse_string(self) -> Optional[tuple[list[str], _ExprState]]:
         string_buffer: list[str] = []
         while self._match_types(["STRING", "LONG_STRING"]):
@@ -404,8 +599,89 @@ class ExprParser(GlobalParser):
             self._next()
         return ["MAKE EXPR STRING_LITERAL " + "".join(string_buffer)], _ExprState.INDEXABLE_ENDING
 
-    @set_loc_command
-    def _parse_unary_op(self) -> Optional[tuple[list[str], _ExprState]]:
+    @_set_loc_command
+    def _parse_type(self) -> Optional[list[str]]:
+        result: list[str] = []
+        if self._match_type("IDENTIFIER"):
+            result.append(f"MAKE EXPR TYPE_REF {self._get_current().text}")
+            self._next()
+            if self._match_type("GENERIC_START"):
+                result = ["MAKE EXPR GENERIC_CALL"] + result + ["CALL SET_GENERIC_EXPR"]
+                inner_result = self._parse_type_list(["CALL ADD_TYPE_ARG"])
+                if inner_result is None:
+                    return None
+                result += inner_result[0] + ["CALL FINISH_GENERIC"]
+                if inner_result[1] < 0:
+                    return result
+        elif self._match_type("L_BRACKET"):
+            result.append("MAKE EXPR TUPLE_TYPE_REF")
+            self._next()
+            inner_result = self._parse_type_list(["CALL ADD_TYPE"])
+            if inner_result is None:
+                return None
+            result += inner_result[0]
+            if inner_result[1] < 0:
+                return result
+            result.append("CALL FINISH")
+            if self._match_type("ARROW"):
+                result = ["MAKE EXPR FUNCTION_TYPE_REF"] + result + ["CALL SET_ARG_TYPES"]
+                self._next()
+                if not self._match_type("L_BRACKET"):
+                    self._raise("Unexpected token: " + self._get_current().text)
+                    return None
+                result.append("MAKE EXPR TUPLE_TYPE_REF")
+                self._next()
+                inner_result = self._parse_type_list(["CALL ADD_TYPE"])
+                if inner_result is None:
+                    return None
+                result += inner_result[0]
+                result += ["CALL FINISH", "CALL SET_RETURN_TYPE", "CALL FINISH"]
+                if inner_result[1] < 0:
+                    return result
+        else:
+            self._raise("Unexpected token: " + self._get_current().text)
+            return None
+        while self._match_type("L_SQUARE_BRACKET"):
+            result = ["MAKE EXPR ARRAY_TYPE_REF"] + result + ["CALL SET_TYPE"]
+            self._next()
+            if not self._match_type("R_SQUARE_BRACKET"):
+                self._raise("Unexpected token: " + self._get_current().text)
+                return None
+            self._next()
+        return result
+
+    @_set_loc_command_with_state
+    def _parse_type_list(self, type_ending_commands: list[str]) -> Optional[tuple[list[str], int]]:
+        result: list[str] = []
+        expect_comma: bool = False
+        while self._current < self._tokens_num:
+            if not expect_comma:
+                inner_result = self._parse_type()
+                if inner_result is None:
+                    return None
+                result += inner_result + type_ending_commands
+                expect_comma = True
+                self._next()
+            elif self._match_type("R_BRACKET"):
+                self._next()
+                return result + type_ending_commands, 0
+            elif self._match_type("COMMA") and expect_comma:
+                self._next()
+                expect_comma = False
+            elif self._match_type("GT"):
+                self._next()
+                return result + type_ending_commands, 0
+            elif self._match_type("R_SHIFT"):
+                self._next()
+                return result + type_ending_commands, -1
+            else:
+                self._raise("Unexpected token: " + self._get_current().text)
+                return None
+        self._raise("Unexpected end of expression")
+        return None
+
+    @_set_loc_command_with_state
+    def _parse_unary_op(self, _end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
         command: list[str] = []
         steps: int = 0
         while self._match_types(["POS", "NEG", "NOT", "INVERSE", "UNPACK"]):
@@ -428,7 +704,7 @@ class ExprParser(GlobalParser):
         command += ["CALL SET_EXPR"] * steps
         return command, operand[1]
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_update(self) -> Optional[list[str]]:
         command: list[str] = []
         while self._current < self._tokens_num:
@@ -450,11 +726,11 @@ class ExprParser(GlobalParser):
         self._raise("Unexpected end of expression")
         return None
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_update_item(self) -> Optional[list[str]]:
         command: list[str] = []
         self._next()
-        result = self._parse_expr_splits_with(["COMMA"], ["R_SQUARE_BRACKET"], [])
+        result = self._parse_expr_splits_with(["COMMA"], ["R_SQUARE_BRACKET"], [], self._parse_expr)
         if result is None:
             return None
         command += result[0]
@@ -462,14 +738,14 @@ class ExprParser(GlobalParser):
         if not self._match_type("ASSIGN"):
             self._raise(f"Expected \"=\", but got unexpected token: {self._get_current().text}")
         self._next()
-        value = self._parse_expr_ends_with(["COMMA", "R_CURLY_BRACKET"])
+        value = self._parse_expr_ends_with(["COMMA", "R_CURLY_BRACKET"], self._parse_expr)
         if value is None:
             return None
         command += value + [f"CALL ADD_ITEM {expr_count}"]
         self._next()
         return command
 
-    @set_loc_command
+    @_set_loc_command
     def _parse_update_prop(self) -> Optional[list[str]]:
         command: list[str] = []
         self._next()
@@ -480,12 +756,40 @@ class ExprParser(GlobalParser):
         if not self._match_type("ASSIGN"):
             self._raise(f"Expected '=', but got unexpected token: {self._get_current().text}")
             return None
-        value = self._parse_expr_ends_with(["COMMA", "R_CURLY_BRACKET"])
+        value = self._parse_expr_ends_with(["COMMA", "R_CURLY_BRACKET"], self._parse_expr)
         if value is None:
             return None
         command += value
         self._next()
         return command
+
+    def _split_by_bin_op(self, op_types: list[str], end_pos: int) -> tuple[list[int], list[str]]:
+        tokens_start_pos: list[int] = []
+        operations: list[str] = []
+        bracket_count: int = 0
+        square_bracket_count: int = 0
+        curly_bracket_count: int = 0
+        steps: int = 0
+        while self._current < end_pos:
+            if self._match_type("L_BRACKET"):
+                bracket_count += 1
+            elif self._match_type("R_BRACKET"):
+                bracket_count -= 1
+            elif self._match_type("L_SQUARE_BRACKET"):
+                square_bracket_count += 1
+            elif self._match_type("R_SQUARE_BRACKET"):
+                square_bracket_count -= 1
+            elif self._match_type("L_CURLY_BRACKET"):
+                curly_bracket_count += 1
+            elif self._match_type("R_CURLY_BRACKET"):
+                curly_bracket_count -= 1
+            elif self._match_types(op_types) and bracket_count > 0 or square_bracket_count > 0 or curly_bracket_count > 0:
+                tokens_start_pos.append(self._current)
+                operations.append(self._get_current().type[0])
+            self._next()
+            steps += 1
+        self._back(steps)
+        return tokens_start_pos, operations
 
     def __handle_id_prefix(self, id_list: list[str]) -> list[str]:
         id_list = self.__get_import_prefix(id_list)

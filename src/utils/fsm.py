@@ -1,35 +1,32 @@
 # -*- coding: utf-8 -*-
 from abc import ABC, abstractmethod
-from typing import Optional, TypeVar
+from typing import Optional
 
 
-T = TypeVar("T", "Token", str)
+class Token:
 
-
-class Token[T = str]:
-
-    def __init__(self, children: str | list[T], token_type: list[str], start_col: int = -1) -> None:
+    def __init__(self, children: str | list[str], token_type: list[str], start_col: int = -1) -> None:
         self._text: str = children if isinstance(children, str) else ""
-        self._children: list[T] = [] if isinstance(children, str) else children
+        self._children: list[str] = [] if isinstance(children, str) else children
         self._type: list[str] = token_type
         self._start_col: int = start_col
 
     def add_types(self, new_types: list[str]) -> None:
         self._type += new_types
 
-    def append(self, text: T) -> None:
-        if T is str:
+    def append(self, text: str) -> None:
+        if str is str:
             self._text += text
         else:
             self._children.append(text)
 
     @property
-    def children(self) -> list[T]:
+    def children(self) -> list[str]:
         return self._children
 
     @staticmethod
-    def concat(tokens: list["Token[T]"], new_types: list[str]) -> "Token[T]":
-        if T is not str:
+    def concat(tokens: list["Token"], new_types: list[str]) -> "Token":
+        if str is not str:
             children = []
             for t in tokens:
                 children += t.children
@@ -44,6 +41,9 @@ class Token[T = str]:
     @property
     def text(self) -> str:
         return self._text
+    
+    def set_types(self, new_types: list[str]) -> None:
+        self._type = new_types
 
     @property
     def type(self) -> list[str]:

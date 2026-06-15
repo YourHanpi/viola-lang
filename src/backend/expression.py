@@ -413,7 +413,7 @@ class UnpackExpr(Expression):
         result: list[str] = [
             f"if ({self._var.name}->refCount == 0) {{",
             f"\tif ({self._var.name}->parent) {{",
-            f"\t\t{self._var.name}->parent->refCount --;",
+            f"\t\t{self._var.name}->parent->refCount--;",
             "\t} else {",
             f"\t\tfree({self._var.name}->data);",
             f"\t\t{self._var.name}->data = NULL;",
@@ -427,6 +427,14 @@ class UnpackExpr(Expression):
     @property
     def return_type(self) -> TypeName:
         return self._to_unpack.return_type
+
+    def set_expr(self, to_unpack: Expression) -> None:
+        """设置要被解包的表达式。
+
+        Args:
+            to_unpack: 需要解包的表达式（必须是元组类型）。
+        """
+        self._to_unpack = to_unpack
 
     def set_returns(self, returns: list[VariableName]) -> bool:
         # noinspection PyTypeChecker
@@ -455,14 +463,6 @@ class UnpackExpr(Expression):
             self._to_unpack.return_type
         )
         return True
-
-    def set_to_unpack(self, to_unpack: Expression) -> None:
-        """设置要被解包的表达式。
-
-        Args:
-            to_unpack: 需要解包的表达式（必须是元组类型）。
-        """
-        self._to_unpack = to_unpack
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
         new_expr = deepcopy(self)
@@ -1419,6 +1419,9 @@ class TupleRef(ValueRef):
             raise CompilerException("\n\n".join(exceptions_text), self._src_info)
 
 
+# TODO: 增加字典和集合的实现（推迟一个小版本）
+
+
 class TypeRef(ValueRef):
     """类型引用表达式。
 
@@ -1434,7 +1437,7 @@ class TypeRef(ValueRef):
         return self
 
     @classmethod
-    def from_name(cls, src_info: SourceInfo, type_name: str, symbol_table: SymbolTable) -> "TypeRef":
+    def from_name(cls, src_info: SourceInfo, symbol_table: SymbolTable, type_name: str) -> "TypeRef":
         """通过类型名从符号表中查找类型，创建 TypeRef。
 
         Args:
@@ -1504,12 +1507,11 @@ class ClassRef(TypeRef):
     与 TypeRef 的区别在于它专门用于类类型，会在构造时验证名称必须是 ClassName。
     """
 
-    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, cls_name: str) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, cls: ClassName) -> None:
         # noinspection PyTypeChecker
-        t: ClassName = self._symbol_table[cls_name, None]
-        if not isinstance(t, ClassName):
-            raise CompilerException("ClassRef is not a class type", src_info)
-        super().__init__(src_info, symbol_table, t)
+        if not isinstance(cls, ClassName):
+            raise CompilerException(f"{cls.raw_name} is not a ClassName", src_info)
+        super().__init__(src_info, symbol_table, cls)
 
 
 class ArrayTypeRef(TypeRef):
@@ -1554,8 +1556,10 @@ class TupleTypeRef(TypeRef):
         """完成元组类型构建，用收集到的所有元素类型创建最终的 TupleTypeName。"""
         self._type = TupleTypeName(self._src_info, self._types)
 
-
-# TODO: 增加字典和集合的实现（推迟一个小版本）
+    @property
+    def types(self) -> list[TypeName]:
+        """获取元组类型中的所有元素类型。"""
+        return self._type.types
 
 
 class AutoTypeRef(TypeRef):
@@ -1567,6 +1571,30 @@ class AutoTypeRef(TypeRef):
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
         super().__init__(src_info, symbol_table, AutoTypeName(src_info))
+
+
+class FunctionTypeRef(TypeRef):
+    """函数类型引用表达式。
+
+    对应 FunctionTypeName。
+    """
+
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        super().__init__(src_info, symbol_table, FunctionTypeName(src_info, [], []))
+        self._arg_types: list[TypeName] = []
+        self._return_types: list[TypeName] = []
+
+    def finish(self) -> None:
+        """结束对函数类型引用的设置。"""
+        self._type = FunctionTypeName(self._src_info, self._arg_types, self._return_types)
+
+    def set_arg_types(self, arg_types: TupleTypeRef) -> None:
+        """设置参数类型。"""
+        self._arg_types = arg_types.types
+
+    def set_return_types(self, return_types: TupleTypeRef) -> None:
+        """设置返回值类型。"""
+        self._return_types = return_types.types
 
 
 class Operator(Expression, ABC):
@@ -2136,7 +2164,7 @@ class CallOp(Expression):
         """设置被调用的函数表达式，根据表达式类型自动处理分发逻辑。
 
         支持四种调用形式：
-        - 类构造：VariableRef 对应类名 → 调用 __new__
+        - 类构造：ClassRef → 调用 __new__
         - 可调用对象：return_type 是 ClassName → 调用 __call__
         - 普通函数：VariableRef 直接引用函数
         - 方法调用：AttrOp → 动态/静态方法分发
@@ -2149,8 +2177,7 @@ class CallOp(Expression):
         Raises:
             CompilerException: 缺少参数且无默认值时抛出。
         """
-        if isinstance(expr, VariableRef) and (expr.var.name, None) in self._symbol_table:
-            expr = ClassRef(self._src_info, self._symbol_table, expr.var.name)
+        if isinstance(expr, ClassRef):
             attr_op = AttrOp(self._src_info, self._symbol_table)
             attr_op.set_caller(expr)
             attr_op.set_attr("__new__")

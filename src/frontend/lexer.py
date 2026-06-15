@@ -390,6 +390,8 @@ class Lexer(FSM):
     def __punctuation_states_list(first: StateNode) -> StateNode:
         comma: StateNode = StateNode()
         semicolon: StateNode = StateNode()
+        generic_start1: StateNode = StateNode()
+        generic_start2: StateNode = StateNode()
         colon: StateNode = StateNode()
         question: StateNode = StateNode()
         first.add_transfer(",", comma)
@@ -398,8 +400,11 @@ class Lexer(FSM):
         first.add_transfer("?", question)
         comma.set_output("COMMA")
         semicolon.set_output("SEMICOLON")
+        colon.add_transfer(":", generic_start1)
+        generic_start1.add_transfer("<", generic_start2)
         colon.set_output("COLON")
         question.set_output("QUESTION")
+        generic_start2.set_output("GENERIC_START")
         return first
         
     @staticmethod

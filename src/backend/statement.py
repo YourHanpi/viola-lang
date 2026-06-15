@@ -1323,8 +1323,10 @@ class CatchStmt(Statement):
         result: list[Optional[str]] = [
             f"if ({CONVERTIBLE_TO_FUNC}($$exc->$$vtable, {EXCEPTION_T})) {{",
             self._stmt.head_text,
-            f"\t{self._except_decl.name} = $$exc;",
+            f"\t{self._except_decl.type_name_pair_calling} = $$exc;",
             self._stmt.text,
+            f"\tviola$lang$exception$Exception$__del__({self._except_decl.name});",
+            f"\t{self._except_decl.name} = NULL;",
             f"\tgoto {self._success_jump_to};",
             "}"
         ]
@@ -1649,6 +1651,7 @@ class BlockStmt(Statement):
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
         super().__init__(src_info, symbol_table, var_states, single_stmt=False)
         self._stmt: list[Statement] = []
+        self._release_stmt_list: list[Statement] = []
         self._is_async: bool = False
         self._is_finished: bool = False
         self._outer_variables: dict[VariableName, VariableState] = var_states.state.copy()
@@ -1661,6 +1664,7 @@ class BlockStmt(Statement):
         self._closure_struct_setting_code: str = ""
         self._processing_mode: _ProcessingMode = _ProcessingMode.NORMAL
         self._cleanup_mark_name: str = self._symbol_table.get_counter()
+        self._after_cleanup_mark_name: str = self._cleanup_mark_name + "_after"
 
     def add_stmt(self, stmt: Statement) -> None:
         if not stmt.is_finished:
@@ -1756,7 +1760,18 @@ class BlockStmt(Statement):
                         call_op.set_func(attr_op)
                         call_op.set_returns([])
                         release_stmt.set_text(call_op.text)
+                        null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                        null_stmt.add_text(f"{var} = NULL;")
                         new_stmt_list.append(release_stmt)
+                        new_stmt_list.append(null_stmt)
+                        check_null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                        check_null_stmt.add_text(f"if ({var}) {{")
+                        end_check_null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                        end_check_null_stmt.add_text("}")
+                        self._release_stmt_list.append(check_null_stmt)
+                        self._release_stmt_list.append(release_stmt)
+                        self._release_stmt_list.append(null_stmt)
+                        self._release_stmt_list.append(end_check_null_stmt)
                 elif var in self._outer_variables and var not in self._used_outer_variables and not var.is_global:
                     self._used_outer_variables.append(var)
             stmt.set_jump_mark(self._cleanup_mark_name)
@@ -1769,6 +1784,14 @@ class BlockStmt(Statement):
             wait_text = f"{LISTENER_WAIT_FUNC}({listener});"
             wait_stmt.set_text(wait_text)
             self._stmt.append(wait_stmt)
+        cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
+        cleanup_mark.add_text(f"goto {self._after_cleanup_mark_name};")
+        cleanup_mark.add_text(f"{self._cleanup_mark_name}:")
+        self._stmt.append(cleanup_mark)
+        self._stmt += self._release_stmt_list
+        after_cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
+        after_cleanup_mark.add_text(f"{self._after_cleanup_mark_name}:")
+        self._stmt.append(after_cleanup_mark)
 
     @property
     def global_init_text(self) -> str:
@@ -2100,7 +2123,7 @@ class CastOp(Expression):
             self._temp_var_name = self._symbol_table.get_counter()
             self._throw_stmt = ThrowStmt(self._src_info, self._symbol_table, self._var_states)
             to_throw_expr = CallOp(self._src_info, self._symbol_table)
-            to_throw_expr.set_func(ClassRef(self._src_info, self._symbol_table, "RuntimeException"))
+            to_throw_expr.set_func(ClassRef.from_name(self._src_info, self._symbol_table, "RuntimeException"))
             to_throw_expr.add_arg(StringLiteral(self._src_info, self._symbol_table, f"Cannot cast {self._expr.return_type} to {self._type_name}"), None)
             self._throw_stmt.set_expr(to_throw_expr)
             self._throw_stmt.indent()

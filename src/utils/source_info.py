@@ -80,6 +80,13 @@ class SourceInfo:
         self._src_text = src_text.split("\n")[0]
 
     @property
+    def src_text(self) -> str:
+        """
+        获取源代码文本。
+        """
+        return self._src_text
+
+    @property
     def start_col(self) -> int:
         """
         获取源代码开始列。
