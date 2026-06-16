@@ -1,16 +1,38 @@
 # -*- coding: utf-8 -*-
-from utils import CompilerException, SourceInfo
-
 from abc import ABC, abstractmethod
 from typing import Optional
 
 
 class Token:
 
-    def __init__(self, text: str, token_type: list[str], start_col: int = -1) -> None:
-        self._text: str = text
+    def __init__(self, children: str | list[str], token_type: list[str], start_col: int = -1) -> None:
+        self._text: str = children if isinstance(children, str) else ""
+        self._children: list[str] = [] if isinstance(children, str) else children
         self._type: list[str] = token_type
         self._start_col: int = start_col
+
+    def add_types(self, new_types: list[str]) -> None:
+        self._type += new_types
+
+    def append(self, text: str) -> None:
+        if str is str:
+            self._text += text
+        else:
+            self._children.append(text)
+
+    @property
+    def children(self) -> list[str]:
+        return self._children
+
+    @staticmethod
+    def concat(tokens: list["Token"], new_types: list[str]) -> "Token":
+        if str is not str:
+            children = []
+            for t in tokens:
+                children += t.children
+            return Token(children, new_types, tokens[0].start_col)
+        children = "".join([t.text for t in tokens])
+        return Token(children, new_types, tokens[0].start_col)
 
     @property
     def start_col(self) -> int:
@@ -19,6 +41,9 @@ class Token:
     @property
     def text(self) -> str:
         return self._text
+    
+    def set_types(self, new_types: list[str]) -> None:
+        self._type = new_types
 
     @property
     def type(self) -> list[str]:

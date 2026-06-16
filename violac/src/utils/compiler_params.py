@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import tomllib
-from typing import Optional
 
 
-ItemType = str | int | float | bool
+_SingleItemType = str | int | float | bool
+ItemType = _SingleItemType | list[_SingleItemType] | dict[str, _SingleItemType]
 
 
 class CompilerParams:
@@ -21,9 +21,12 @@ class CompilerParams:
     @staticmethod
     def _get_default() -> dict[str, ItemType]:
         return {
+            "cCompile-exec": "gcc",
+            "cCompile-flags": ["-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O2"],
             "debug-memory-accessViolation": True,
             "debug-type-dynamicCheck": True,
             "encoding": "utf-8",
+            "log-encoding": "utf-8",
             "runtime-argvEncoding": "utf-8",
             "runtime-stringChunkSize": 4096
         }

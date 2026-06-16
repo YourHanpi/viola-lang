@@ -2,18 +2,20 @@
 from utils import SourceInfo
 
 from abc import ABC, abstractmethod
-from copy import deepcopy
 from typing import Optional
 
 
 class CompilingItem(ABC):
+
+    def __str__(self) -> str:
+        return self._src_info.src_text
 
     def __init__(self, src_info: SourceInfo) -> None:
         """
         初始化编译时对象。
         :param src_info: 源代码信息。
         """
-        self._src_info: SourceInfo = src_info
+        self._src_info: SourceInfo = src_info.copy()
         self._parent_item: Optional[CompilingItem] = None
 
     def bind_parent(self, parent_item: "CompilingItem") -> None:

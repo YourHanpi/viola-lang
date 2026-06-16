@@ -1,26 +1,33 @@
 # -*- coding: utf-8 -*-
+from .utils import TokenStreamIO
+from utils import SourceInfo, CompilerException, COMPILER_PARAMS, VIOLA_INIT
+from utils.file_marks import TOKEN_POSTFIX, CACHE_DIR
 from utils.fsm import Token, StateNode, FSM
-from utils import SourceInfo, CompilerException, COMPILER_PARAMS
+from utils.logger import Logger
+from utils.task import TaskResult, TaskResultState
 
-from copy import deepcopy
+import os
+from typing import Optional
 
 
 class Lexer(FSM):
     
-    def __init__(self) -> None:
+    def __init__(self, workspace: str) -> None:
         super().__init__()
-        self._src_info: SourceInfo = SourceInfo("")
+        self._workspace: str = workspace
+        self._src_info: SourceInfo = VIOLA_INIT
         self._start_line: int = 1
         self._start_col: int = 1
         self._end_line: int = 1
         self._end_col: int = 1
         self._exceptions: list[CompilerException] = []
+        self._logger = Logger(f"Lexer[0]")
 
     @property
     def exceptions(self) -> list[CompilerException]:
         return self._exceptions
 
-    def lex(self, path: str) -> list[Token]:
+    def lex(self, path: str) -> Optional[list[Token]]:
         self._src_info = SourceInfo(path)
         with open(path, "r", encoding=COMPILER_PARAMS["encoding"]) as f:
             text: str = f.read()
@@ -30,6 +37,7 @@ class Lexer(FSM):
         char_buf: list[str] = []
         current_loc: int = 0
         text_length: int = len(text)
+        error_occurred: bool = False
         while current_loc < text_length:
             char: str = text[current_loc]
             token: Token = Lexer._get_char_token(char)
@@ -43,7 +51,8 @@ class Lexer(FSM):
                 if self._current.output is None:
                     self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
                     self._src_info.set_text("".join(char_buf))
-                    self._exceptions.append(CompilerException(f"Unexpected character {char}", deepcopy(self._src_info)))
+                    self._logger.error(str(CompilerException(f"Unexpected character {char}", self._src_info.copy())))
+                    error_occurred = True
                     while current_loc < text_length and char not in " \n\t":
                         current_loc += 1
                         char = text[current_loc]
@@ -57,7 +66,26 @@ class Lexer(FSM):
                 self.transfer(token)
             char_buf.append(char)
             current_loc += 1
+        if error_occurred:
+            return None
         return tokens
+
+    def lex_with_writer(self, file_path: str, thread_index: int = 0) -> TaskResult:
+        self._logger = Logger(f"Lexer[{thread_index}]")
+        file_path = os.path.abspath(file_path)
+        file_relpath = os.path.relpath(file_path, self._workspace)
+        cache_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
+        if os.path.exists(file_path) and os.path.getmtime(file_path) < os.path.getmtime(cache_path):
+            self._logger.info(f"Passed: {file_path}")
+            return TaskResult(TaskResultState.SUCCESS)
+        self._logger.info(f"Lexing: {file_path}")
+        result = self.lex(file_path)
+        if result is None:
+            self._logger.error(f"Failed to lex: {file_path}")
+            return TaskResult(TaskResultState.FAILURE)
+        TokenStreamIO.write(cache_path + TOKEN_POSTFIX, result)
+        self._logger.info(f"Successfully lexed: {file_path}")
+        return TaskResult(TaskResultState.SUCCESS)
 
     @staticmethod
     def _get_char_token(char: str) -> Token:
@@ -67,6 +95,8 @@ class Lexer(FSM):
         if char in "01234567":
             type_list.append("OCT_DIGIT")
         if char.isdigit():
+            if char != "0":
+                type_list.append("DIGIT_NO_ZERO")
             type_list.append("DIGIT")
         if char.isalpha():
             type_list.append(f"CHAR_{char.upper()}")
@@ -199,6 +229,7 @@ class Lexer(FSM):
         assign.add_transfer(">", update)
         assign.set_output("ASSIGN")
         update.set_output("UPDATE")
+        eq.set_output("EQ")
         not_state.add_transfer("=", ne)
         not_state.set_output("NOT")
         lt.add_transfer("=", le)
@@ -211,6 +242,7 @@ class Lexer(FSM):
         rshift.set_output("RSHIFT")
         le.set_output("LE")
         ge.set_output("GE")
+        invert.set_output("INVERT")
         return first
 
     @staticmethod
@@ -224,6 +256,7 @@ class Lexer(FSM):
         identifier_state.set_output("IDENTIFIER")
         keywords: list[str] = [
             "abstract",
+            "as",
             "async",
             "catch",
             "class",
@@ -243,10 +276,13 @@ class Lexer(FSM):
             "private",
             "protected",
             "return",
-            "static",
             "sq",
+            "static",
+            "this",
             "throw",
-            "true"
+            "true",
+            "try",
+            "using"
         ]
         states: list[list[StateNode]] = []
         buffered_word: str = ""
@@ -301,44 +337,75 @@ class Lexer(FSM):
     def __number_states_list(first: StateNode) -> StateNode:
         int_state: StateNode = StateNode()
         zero_state: StateNode = StateNode()
-        float_state: StateNode = StateNode()
+        double_float_state: StateNode = StateNode()
         exponential_state1: StateNode = StateNode()
         exponential_state2: StateNode = StateNode()
         hex_state: StateNode = StateNode()
         oct_state: StateNode = StateNode()
         bin_state: StateNode = StateNode()
+        float_state: StateNode = StateNode()
+        unsigned_state: StateNode = StateNode()
+        size_state1: StateNode = StateNode()
+        size_state2: StateNode = StateNode()
+        signed_state: StateNode = StateNode()
+        unsigned_n_state: StateNode = StateNode()
+        signed_n_state: StateNode = StateNode()
         first.add_transfer("DIGIT_NO_ZERO", int_state)
-        first.add_transfer("SIGN", int_state)
-        first.add_transfer("ZERO", zero_state)
+        first.add_transfer("0", zero_state)
         int_state.add_transfer("DIGIT", int_state)
-        int_state.add_transfer("DOT", float_state)
+        int_state.add_transfer("DOT", double_float_state)
         int_state.add_transfer("CHAR_E", exponential_state1)
-        int_state.set_output("INT")
-        zero_state.add_transfer("DOT", float_state)
+        int_state.add_transfer("CHAR_U", unsigned_state)
+        int_state.add_transfer("CHAR_I", signed_state)
+        int_state.add_transfer("CHAR_S", size_state1)
+        int_state.set_output("INT32")
+        zero_state.add_transfer("DOT", double_float_state)
         zero_state.add_transfer("CHAR_X", hex_state)
         zero_state.add_transfer("DIGIT", oct_state)
-        zero_state.add_transfer("CHAR_O", oct_state)
         zero_state.add_transfer("CHAR_B", bin_state)
-        zero_state.set_output("INT")
-        float_state.add_transfer("DIGIT", float_state)
-        float_state.add_transfer("CHAR_E", exponential_state1)
-        float_state.set_output("FLOAT")
+        zero_state.add_transfer("CHAR_S", size_state1)
+        zero_state.set_output("INT32")
+        double_float_state.add_transfer("DIGIT", double_float_state)
+        double_float_state.add_transfer("CHAR_E", exponential_state1)
+        double_float_state.add_transfer("CHAR_F", float_state)
+        double_float_state.set_output("DOUBLE")
         exponential_state1.add_transfer("DIGIT", exponential_state2)
         exponential_state2.add_transfer("SIGN", exponential_state2)
         exponential_state2.add_transfer("DIGIT", exponential_state2)
-        exponential_state2.set_output("FLOAT")
+        exponential_state2.add_transfer("CHAR_F", float_state)
+        exponential_state2.set_output("DOUBLE")
         hex_state.add_transfer("HEX_DIGIT", hex_state)
-        hex_state.set_output("INT")
+        hex_state.add_transfer("CHAR_U", unsigned_state)
+        hex_state.add_transfer("CHAR_I", signed_state)
+        hex_state.add_transfer("CHAR_S", size_state1)
+        hex_state.set_output("INT32")
         oct_state.add_transfer("OCT_DIGIT", oct_state)
-        oct_state.set_output("INT")
+        oct_state.add_transfer("CHAR_U", unsigned_state)
+        oct_state.add_transfer("CHAR_I", signed_state)
+        oct_state.add_transfer("CHAR_S", size_state1)
+        oct_state.set_output("INT32")
         bin_state.add_transfer("BIN_DIGIT", bin_state)
-        bin_state.set_output("INT")
+        bin_state.add_transfer("CHAR_U", unsigned_state)
+        bin_state.add_transfer("CHAR_I", signed_state)
+        bin_state.add_transfer("CHAR_S", size_state2)
+        bin_state.set_output("INT32")
+        float_state.set_output("FLOAT")
+        size_state1.add_transfer("CHAR_Z", size_state2)
+        size_state2.set_output("SIZE_T")
+        unsigned_state.add_transfer("DIGIT", unsigned_n_state)
+        unsigned_n_state.set_output("UINT32")
+        signed_state.add_transfer("DIGIT", signed_n_state)
+        signed_n_state.set_output("INT32")
+        unsigned_n_state.set_output("UINT_N")
+        signed_n_state.set_output("INT_N")
         return first
 
     @staticmethod
     def __punctuation_states_list(first: StateNode) -> StateNode:
         comma: StateNode = StateNode()
         semicolon: StateNode = StateNode()
+        generic_start1: StateNode = StateNode()
+        generic_start2: StateNode = StateNode()
         colon: StateNode = StateNode()
         question: StateNode = StateNode()
         first.add_transfer(",", comma)
@@ -347,8 +414,11 @@ class Lexer(FSM):
         first.add_transfer("?", question)
         comma.set_output("COMMA")
         semicolon.set_output("SEMICOLON")
+        colon.add_transfer(":", generic_start1)
+        generic_start1.add_transfer("<", generic_start2)
         colon.set_output("COLON")
         question.set_output("QUESTION")
+        generic_start2.set_output("GENERIC_START")
         return first
         
     @staticmethod

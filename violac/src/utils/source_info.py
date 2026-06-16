@@ -19,12 +19,38 @@ class SourceInfo:
         self._end_line: int = 0
         self._end_col: int = 0
 
+    def copy(self) -> "SourceInfo":
+        """
+        复制源代码信息对象。
+        """
+        result = SourceInfo(self._src_file_name)
+        result._src_text = self._src_text
+        result._start_line = self._start_line
+        result._start_col = self._start_col
+        result._end_line = self._end_line
+        result._end_col = self._end_col
+        return result
+
     @property
     def lineno(self) -> int:
         """
         获取源代码行数。
         """
         return self._start_line
+
+    @property
+    def location(self) -> str:
+        """
+        获取源代码位置。
+        """
+        return f"{self._start_line}:{self._start_col}:{self._end_line}:{self._end_col}"
+
+    @property
+    def location_tuple(self) -> tuple[int, int, int, int]:
+        """
+        获取源代码位置元组。
+        """
+        return self._start_line, self._start_col, self._end_line, self._end_col
 
     @property
     def path(self) -> str:
@@ -51,7 +77,21 @@ class SourceInfo:
         设置源代码文本。
         :param src_text: 源代码的一行文本。
         """
-        self._src_text = src_text
+        self._src_text = src_text.split("\n")[0]
+
+    @property
+    def src_text(self) -> str:
+        """
+        获取源代码文本。
+        """
+        return self._src_text
+
+    @property
+    def start_col(self) -> int:
+        """
+        获取源代码开始列。
+        """
+        return self._start_col
 
     @property
     def traceback(self) -> str:

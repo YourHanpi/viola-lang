@@ -205,7 +205,7 @@ class TypeName(NamedSymbol, ABC):
         """
         检查此类型是否可转换为目标类型。
         target: 目标类型。
-        symbol_dict: 符号表（SYMBOL_TABLE.symbols）。
+        symbol_dict: 符号表（self._symbol_table.symbols）。
         """
         pass
 
@@ -600,8 +600,12 @@ class PropertyVariableName(VariableName):
         """
         return self._modifier
 
+    @property
+    def self_name_with_class(self) -> str:
+        return self._namespace[-1].name + "$" + self._self_name
 
-class TemporaryVariableName(VariableName):
+
+class LocalVariableName(VariableName):
     """
     临时变量名。
     """
@@ -1360,7 +1364,7 @@ class FunctionName(GlobalVariableName):
     """
 
     def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], name: str, t: FunctionTypeName,
-                 arg_names: list[str], ret_names: list[str], export: bool) -> None:
+                 arg_names: list[str], ret_names: list[str], export: bool, is_method: bool = False) -> None:
         """
         创建函数名称。
         src_info: 源代码信息。
@@ -1380,6 +1384,7 @@ class FunctionName(GlobalVariableName):
         self._default_params: dict[str, Optional[GlobalVariableName]] = {k: None for k in arg_names}
         self._arg_types: dict[str, TypeName] = {k: v for k, v in zip(arg_names, t.args)}
         self._kw_type = SymbolType.FUNCTION
+        self._is_method = is_method
 
     @property
     def arg_names(self) -> list[str]:
@@ -1403,11 +1408,11 @@ class FunctionName(GlobalVariableName):
         return self._arg_types
 
     @property
-    def args(self) -> list[TemporaryVariableName]:
+    def args(self) -> list[LocalVariableName]:
         """
         获取参数列表。
         """
-        return list(map(lambda t, x: TemporaryVariableName(self._src_info, x, t), self.type.args, self._arg_names))
+        return list(map(lambda t, x: LocalVariableName(self._src_info, x, t), self.type.args, self._arg_names))
 
     def as_async(self) -> "FunctionName":
         """
@@ -1498,6 +1503,13 @@ class FunctionName(GlobalVariableName):
         result: FunctionName = FunctionName(self._src_info, GENERIC_FUNC, new_name,
                                             new_type, self._arg_names, self._ret_names, self._export)
         return result
+
+    @property
+    def is_method(self) -> bool:
+        """
+        获取该函数是否为方法。
+        """
+        return self._is_method
 
     @property
     def ret_names(self) -> list[str]:
@@ -1597,7 +1609,7 @@ class MethodName(PropertyVariableName):
             t = FunctionTypeName(src_info, arg_types, t.returns, cls_generic_args + t_generic_args)
             arg_names: list[str] = ["_this"] + arg_names
         function_name: FunctionName = FunctionName(src_info, [NamespaceName(cls.raw_name)], name, t, arg_names,
-                                                   ret_names, export)
+                                                   ret_names, export, True)
         super().__init__(src_info, cls.namespace, function_name.name, t, modifier, is_static)
         func_type_name: str = "$".join(list(map(lambda ty: ty.name, t.args)))
         self._cls: ClassName = cls
@@ -1958,13 +1970,17 @@ class _TypeNameLexer(FSM):
         array_symbol: StateNode = StateNode()
         l_bracket: StateNode = StateNode()
         r_bracket: StateNode = StateNode()
-        l_angle_bracket: StateNode = StateNode()
+        colon: StateNode = StateNode()
+        double_colon: StateNode = StateNode()
+        generic_start: StateNode = StateNode()
         r_angle_bracket: StateNode = StateNode()
         first.add_transfer("-", sub)
         first.add_transfer("[", l_square_bracket)
         first.add_transfer("(", l_bracket)
         first.add_transfer(")", r_bracket)
-        first.add_transfer("<", l_angle_bracket)
+        first.add_transfer(":", colon)
+        colon.add_transfer(":", double_colon)
+        double_colon.add_transfer("<", generic_start)
         first.add_transfer(">", r_angle_bracket)
         sub.add_transfer(">", arrow)
         l_square_bracket.add_transfer("]", array_symbol)
@@ -1972,7 +1988,7 @@ class _TypeNameLexer(FSM):
         array_symbol.set_output("[]")
         l_bracket.set_output("(")
         r_bracket.set_output(")")
-        l_angle_bracket.set_output("<")
+        generic_start.set_output("::<")
         r_angle_bracket.set_output(">")
         return first
 
@@ -2084,7 +2100,7 @@ class _TypeNameParser:
             if self._current >= self._tokens_num - 1:
                 return result
             self._next()
-            if self._match_type("<"):
+            if self._match_type("::<"):
                 if not isinstance(result, ClassName):
                     raise CompilerException(f"Expected class type, but got {result.raw_name}", self._src_info)
                 type_args: list[TypeName] = self._parse_type_list(">")
@@ -2121,6 +2137,12 @@ class SymbolTable:
         if item[0].startswith(self._namespace_name + "$"):
             return (item[0][len(self._namespace_name + "$"):], item[1]) in self
         return item in self.symbols
+
+    def __delitem__(self, key: tuple[str, Optional[tuple[TypeName, ...]]]) -> None:
+        for i, sym in self._symbols:
+            if key in sym:
+                del self._symbols[i][key]
+                break
 
     def __getitem__(self, items: tuple[str, Optional[tuple[TypeName, ...]]]) -> NamedSymbol:
         """
@@ -2179,9 +2201,10 @@ class SymbolTable:
         name: 查找符号时使用的名称。
         types: 符号的参数类型列表（如果不是函数则为None）。
         """
-        if symbol.name in self.symbols:
-            raise CompilerException(f"Symbol {name} already exists.", self._src_info)
-        if symbol.kw_type == SymbolType.FUNCTION and types is None:
+        if types is not None:
+            if (symbol.name, tuple(types)) in self.symbols:
+                raise CompilerException(f"Symbol {name} already exists.", self._src_info)
+        if (symbol.kw_type == SymbolType.FUNCTION or symbol.kw_type == SymbolType.METHOD) and types is None:
             raise InternalCompilerException("Function must have types.", self._src_info)
         elif symbol.kw_type != SymbolType.FUNCTION and symbol.kw_type != SymbolType.METHOD and types is not None:
             raise InternalCompilerException("Symbol must not have types.", self._src_info)
@@ -2224,10 +2247,9 @@ class SymbolTable:
             raise CompilerException("Function not found", src_info)
         return results[0]
 
-    def find_functions(self, name: str, args: list[str], kwargs: dict[str, str], find_method: bool = False) -> list[
-                                                                                                                   FunctionName] | \
-                                                                                                               list[
-                                                                                                                   MethodName]:
+    def find_functions(self, name: str, args: list[str], kwargs: dict[str, str], find_method: bool = False) -> (
+            list[FunctionName] | list[MethodName]
+    ):
         """
         搜索符合条件的所有函数和方法。
         src_info: 源代码信息。
@@ -2267,8 +2289,8 @@ class SymbolTable:
         ))
         return list(matches.values())
 
-    def find_method(self, src_info: SourceInfo, cls_name: str, name: str, args: list[str],
-                    kwargs: dict[str, str]) -> MethodName:
+    def find_method(self, src_info: SourceInfo, cls_name: str, name: str, args: Optional[list[str]],
+                    kwargs: Optional[dict[str, str]]) -> MethodName:
         """
         搜索一个方法，如果找到多个则会报错。
         src_info: 源代码信息。
@@ -2277,6 +2299,11 @@ class SymbolTable:
         args: 参数类型名称列表。
         kwargs: 关键字参数类型名称列表。
         """
+        if args is None or kwargs is None:
+            result = self.symbols[cls_name + "." + name, None]
+            if not isinstance(result, MethodName):
+                raise CompilerException("Method not found", src_info)
+            return result
         results = self.find_methods(cls_name, name, args, kwargs)
         if len(results) > 1:
             raise CompilerException("Ambiguous method symbol", src_info)
@@ -2444,16 +2471,16 @@ class SymbolTable:
         ```
         <函数名> [\"export\"]
         <泛型参数列表>
-        <参数1类型> <参数1名称> <参数2类型> <参数2名称> <......>
-        <返回1类型> <返回1名称> <返回2类型> <返回2名称> <......>
+        <参数1类型>%<参数1名称>%<参数2类型>%<参数2名称>%<......>
+        <返回1类型>%<返回1名称>%<返回2类型>%<返回2名称>%<......>
         <有默认值的参数1名称> <有默认值的参数2名称> <......>
         ```
         """
         item_name: str = item[0].split(" ")[0]
         export: bool = "export" in item[0].split(" ")[1:]
         generic_args: list[str] = item[1].split(" ")
-        item_args: list[str] = item[2].split(" ")
-        item_returns: list[str] = item[3].split(" ")
+        item_args: list[str] = item[2].split("%")
+        item_returns: list[str] = item[3].split("%")
         item_default_args: list[str] = item[4].split(" ")
         # noinspection PyTypeChecker
         args = list(map(lambda arg: self[arg, None], item_args[::2])) if len(item_args) > 1 else []
@@ -2474,6 +2501,10 @@ class SymbolTable:
                             item_args[1::2] if len(item_args) > 1 else [],
                             item_returns[1::2] if len(item_returns) > 1 else [], export)
         self._func_overload_times[item_name] += 1
+        if self._func_overload_times[item_name] == 1:
+            self.add(func, item_name, None)
+        elif self._func_overload_times[item_name] == 2:
+            del self[item_name, None]
         func.set_default_params(item_default_args)
         for k, v in func.default_params.items():
             if v is not None:
@@ -2483,9 +2514,9 @@ class SymbolTable:
     def _read_global_var_decl(self, item: list[str]) -> None:
         """
         读取全局变量。记载格式如下：
-        <变量类型> <变量名>
+        <变量类型>%<变量名>
         """
-        item: list[str] = item[0].split(" ")
+        item: list[str] = item[0].split("%")
         item_name: str = item[1]
         item_type: str = item[0]
         # noinspection PyTypeChecker
@@ -2496,8 +2527,8 @@ class SymbolTable:
         读取方法。记载格式如下：
         <类名> <方法名> [\"abstract\"] [\"static\"] [\"export\"] [\"public\" | \"protected\" | \"private\"]
         <泛型参数列表>
-        <参数1类型> <参数1名称> <参数2类型> <参数2名称> <......>
-        <返回1类型> <返回1名称> <返回2类型> <返回2名称> <......>
+        <参数1类型>%<参数1名称>%<参数2类型>%<参数2名称>%<......>
+        <返回1类型>%<返回1名称>%<返回2类型>%<返回2名称>%<......>
         <有默认值的参数1名称> <有默认值的参数2名称> <......>
         """
         item_name: list[str] = item[0].split(" ")
@@ -2512,8 +2543,8 @@ class SymbolTable:
         is_abstract: bool = "abstract" in item_name[2:]
         is_static: bool = "static" in item_name[2:]
         export: bool = "export" in item_name[2:]
-        item_args: list[str] = item[2].split(" ")
-        item_returns: list[str] = item[3].split(" ")
+        item_args: list[str] = item[2].split("%")
+        item_returns: list[str] = item[3].split("%")
         item_default_args: list[str] = item[4].split(" ")
         # noinspection PyTypeChecker
         args = list(map(lambda arg: self[arg], item_args[::2])) if len(item_args) > 1 else []
@@ -2545,27 +2576,29 @@ class SymbolTable:
     def _read_class_decl(self, item: list[str]) -> None:
         """
         读取类。记载格式如下：
-        <类名> <父类名> [\"abstract\"] [\"c\"]
-        <开始行>:<开始列>:<结束行>:<结束列> <属性1类型> <属性1名称> [\"static\"] [\"public\" | \"protected\" | \"private\"]
-        <开始行>:<开始列>:<结束行>:<结束列> <属性2类型> <属性2名称> [\"static\"] [\"public\" | \"protected\" | \"private\"]
+        <类名>%<父类名> [\"abstract\"] [\"c\"]
+        <泛型参数列表>
+        <开始行>:<开始列>:<结束行>:<结束列> <属性1类型>%<属性1名称> [\"static\"] [\"public\" | \"protected\" | \"private\"]
+        <开始行>:<开始列>:<结束行>:<结束列> <属性2类型>%<属性2名称> [\"static\"] [\"public\" | \"protected\" | \"private\"]
         <......>
         END CLASS
         """
-        cls_name: str = item[0].split(" ")[0]
+        cls_name: str = item[0].split(" ")[0].split("%")[0]
         if (cls_name, None) in self:
             raise CompilerException(f"Class {cls_name} already exists.", self._src_info)
         parent: Optional[ClassName] = None
         if item[0].split(" ")[1] != "object":
-            parent_name = item[0].split(" ")[1]
+            parent_name = item[0].split(" ")[0].split("%")[1]
             # noinspection PyTypeChecker
             parent = self[parent_name]
             if not isinstance(parent, ClassName):
                 raise CompilerException(f"Parent class {parent_name} is not a class.", self._src_info)
         else:
             parent_name = None
-        is_abstract: bool = "abstract" in item[0].split(" ")[2:]
-        is_c_part: bool = "c" in item[0].split(" ")[2:]
-        cls = ClassName(self._src_info, self.namespace, cls_name, parent_name, is_abstract, is_c_part)
+        is_abstract: bool = "abstract" in item[0].split(" ")[1:]
+        is_c_part: bool = "c" in item[0].split(" ")[1:]
+        generic_args: list[str] = item[1].split(" ")
+        cls = ClassName(self._src_info, self.namespace, cls_name, parent_name, is_abstract, is_c_part, generic_args)
         if parent is not None:
             for name, prop in parent.properties.items():
                 cls.add_property_object(name, prop)
@@ -2573,36 +2606,37 @@ class SymbolTable:
                                           False)
             self.add(vtable, cls.name + ".$$vtable", None)
             cls.add_property(self._src_info, "$$vtable", vtable, Modifier.PUBLIC, True)
-        item_loc: int = 1
+        item_loc: int = 2
         while not item[item_loc] == "END CLASS":
             item_text: list[str] = item[item_loc].split(" ")
             loc_str: list[str] = item_text[0].split(":")
             loc_tuple: tuple[int, int, int, int] = int(loc_str[0]), int(loc_str[1]), int(loc_str[2]), int(loc_str[3])
             self._src_info.set_loc(*loc_tuple)
-            type_name: str = item_text[1]
-            property_name: str = item_text[2]
+            type_name: str = item_text[1].split("%")[0]
+            property_name: str = item_text[1].split("%")[0]
             # noinspection PyTypeChecker
             t: TypeName = self[type_name]
-            cls.add_property(self._src_info, property_name, t, self.__get_modifier(item_text[3:]),
-                             "static" in item_text[3:])
+            cls.add_property(self._src_info, property_name, t, self.__get_modifier(item_text[2].split(" ")),
+                             "static" in item_text[2].split(" "))
             if item_loc == len(item) - 1:
                 raise CompilerException(f"Unexpected end of class {cls_name}", self._src_info)
             item_loc += 1
-        if cls_name + ".__del__" not in self:
-            if is_c_part:
-                raise CompilerException(f"C part class {cls_name} must have a destructor.", self._src_info)
-            cls.add_method("__del__",
-                           MethodName(self._src_info, cls, "__del__", FunctionTypeName(self._src_info, [], []), False,
-                                      False, [], [], Modifier.PUBLIC, False))
+        if cls_name + ".__del__" not in self and not cls.is_c_part:
+            cls.add_method(
+                "__del__", MethodName(
+                    self._src_info, cls, "__del__", FunctionTypeName(self._src_info, [], []),
+                    False, False, [], [], Modifier.PUBLIC, False
+                )
+            )
         self.add(cls, cls_name, None)
 
     def _read_enum_decl(self, item: list[str]) -> None:
         """
         读取枚举类。记载格式如下：
-        <枚举类名称> <枚举类所基于的类名>
+        <枚举类名称>%<枚举类所基于的类名>
         """
-        item_name: str = item[0].split(" ")[0]
-        based_type: str = item[0].split(" ")[1]
+        item_name: str = item[0].split("%")[0]
+        based_type: str = item[0].split("%")[1]
         if based_type not in self:
             raise CompilerException(f"Based type {based_type} not found.", self._src_info)
         if (item_name, None) in self:
@@ -2658,7 +2692,7 @@ class VariableStateTable:
         """
         检查表是否包含某个变量。
         """
-        return item in self._state
+        return item in self.state
 
     def __getitem__(self, item: VariableName) -> VariableState:
         """
@@ -2666,9 +2700,9 @@ class VariableStateTable:
         """
         if item not in self:
             raise InternalCompilerException(f"Variable {item.name} not found.", SourceInfo(""))
-        return self._state[item]
+        return self.state[item]
 
-    def __init__(self, path: str, workspace: str) -> None:
+    def __init__(self, path: str = "", workspace: str = "") -> None:
         """
         创建表。
         path: 源代码目录。
@@ -2677,30 +2711,63 @@ class VariableStateTable:
         self._path: str = path
         dir_list: list[str] = os.path.relpath(path, workspace).replace("-", "_").split(os.sep)
         self._namespace: list[NamespaceName] = list(map(lambda x: NamespaceName(x), dir_list))
-        self._state: dict[VariableName, VariableState] = {}
+        self._state: list[dict[VariableName, VariableState]] = [{}]
 
     def __setitem__(self, key: VariableName, value: VariableState) -> None:
         """
         设置变量状态。
         """
-        self._state[key] = value
+        self._state[-1][key] = value
+
+    def add_scope(self) -> None:
+        """
+        添加作用域。
+        """
+        self._state.append({})
 
     @property
     def assigned_variables(self) -> list[VariableName]:
         """
         获取所有已赋值变量。
         """
-        return [k for k, v in self._state.items() if v == VariableState.ASSIGNED]
+        return [k for k, v in self.state.items() if v == VariableState.ASSIGNED]
 
-    def clear(self) -> None:
+    def pop_scope(self) -> None:
         """
-        清空临时变量。
+        弹出作用域。
         """
-        self._state = {k: v for k, v in self._state.items() if k.is_global}
+        self._state.pop()
+
+    def set_assigned(self, variables: list[VariableName]) -> None:
+        for variable in variables:
+            if variable in self and self[variable] == VariableState.ASSIGNED:
+                raise CompilerException(f"Variable {variable.name} is already assigned.", variable.src_info)
+            self[variable] = VariableState.ASSIGNED
+
+    def set_async_assigned(self, variables: list[VariableName]) -> None:
+        for variable in variables:
+            if variable in self and self[variable].value == VariableState.ASYNC_ASSIGNED.value:
+                raise CompilerException(f"Variable {variable.name} is already async assigned.", variable.src_info)
+            self[variable] = VariableState.ASYNC_ASSIGNED
+
+    def set_declared(self, variables: list[VariableName]) -> None:
+        for variable in variables:
+            if variable in self and self[variable].value >= VariableState.DECLARED.value:
+                raise CompilerException(f"Variable {variable.name} is already declared.", variable.src_info)
+            self[variable] = VariableState.DECLARED
 
     @property
     def state(self) -> dict[VariableName, VariableState]:
         """
         获取变量状态字典。
         """
-        return self._state
+        result = {}
+        for state in self._state:
+            result.update(state)
+        return result
+
+    def update(self, other: dict[VariableName, VariableState]) -> None:
+        """
+        更新变量状态。
+        """
+        self._state[-1].update(other)

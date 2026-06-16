@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
-from .expression import Expression, SYMBOL_TABLE, VariableRef, AttrOp, CallOp, UnpackExpr, CONVERTIBLE_TO_FUNC, TypeRef, ClassRef, StringLiteral, TupleRef
+from .expression import Expression, VariableRef, AttrOp, CallOp, UnpackExpr, CONVERTIBLE_TO_FUNC, TypeRef, ClassRef, StringLiteral, TupleRef
 from .symbol import (
     VariableName,
     TypeName,
     VariableState,
     NamespaceName,
     VariableStateTable,
-    TemporaryVariableName,
+    LocalVariableName,
     GlobalVariableName,
     TupleTypeName,
     EXCEPTION_T,
     ClassName,
-    GenericArgument
+    GenericArgument,
+    SymbolTable
 )
 from utils import CompilerException, unreachable_warning, SourceInfo, InternalCompilerException
 
@@ -31,18 +32,16 @@ STACK_B_PUSH_FUNC: str = "viola$lang$thread$pushStackB"
 STACK_B_POP_FUNC: str = "viola$lang$thread$popStackB"
 THREAD_INFO_T: str = "viola$lang$thread$ThreadInfo"
 
-VAR_STATE_TABLE: Optional[VariableStateTable] = None
 
-
-class Mark:
+class _Mark:
     _mark_counter: int = 0
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        self._text: StringLiteral = StringLiteral(src_info, src_info.traceback_no_location + "\tat ")
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        self._text: StringLiteral = StringLiteral(src_info, symbol_table, src_info.traceback_no_location + "\tat ")
         self._lineno: int = src_info.lineno
-        self._mark_name: str = f"$$_MARK_{Mark._mark_counter}"
+        self._mark_name: str = f"$$_MARK_{_Mark._mark_counter}"
         self._is_const_def: bool = False
-        Mark._mark_counter += 1
+        _Mark._mark_counter += 1
 
     @property
     def mark_declare(self) -> str:
@@ -82,17 +81,21 @@ class Mark:
 
 class Statement(CompilingItem, ABC):
 
-    def __init__(self, src_info: SourceInfo, single_stmt: bool = True) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, single_stmt: bool = True) -> None:
         super().__init__(src_info)
         self._indent: int = 0
         self._is_async: bool = False
         self._inline_mapping: dict[str, str] = {}
         if single_stmt:
-            self._mark: Optional[Mark] = Mark(src_info)
+            self._mark: Optional[_Mark] = _Mark(src_info, symbol_table)
+            self._jump_mark: str = "$$cleanup"
         else:
             self._mark = None
+            self._jump_mark = ""
         self._tail_recursive_mark: Optional[str] = None
         self._is_const_def: bool = False
+        self._symbol_table: SymbolTable = symbol_table
+        self._var_states: VariableStateTable = var_states
 
     @abstractmethod
     def as_async(self) -> "Statement":
@@ -176,6 +179,9 @@ class Statement(CompilingItem, ABC):
         if self._mark is not None:
             self._mark.set_as_const_def()
 
+    def set_jump_mark(self, jump_mark: str) -> None:
+        self._jump_mark = jump_mark
+
     @property
     def src_info(self) -> SourceInfo:
         return self._src_info
@@ -194,6 +200,7 @@ class Statement(CompilingItem, ABC):
         result: list[str] = [
             self._mark.mark_insert,
             self._inner_text,
+            f"if ($$exc) goto {self._jump_mark};" if self._jump_mark is not None else "// jump passed",
             self._mark.mark_pop
         ]
         return self._indent_text("\n".join(result))
@@ -222,8 +229,8 @@ class _StmtList(Statement):
     def __getitem__(self, item: int) -> Statement:
         return self._stmts[item]
 
-    def __init__(self, src_info: SourceInfo, stmts: list[Statement]) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, stmts: list[Statement]) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._stmts: list[Statement] = stmts
 
     def as_async(self) -> "Statement":
@@ -292,8 +299,8 @@ class _StmtList(Statement):
 
 class DeclStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName]) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, namespace: list[NamespaceName]) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._var_value: Optional[Expression] = None
         self._var: list[VariableName] = []
         self._namespace: list[NamespaceName] = namespace
@@ -302,14 +309,18 @@ class DeclStmt(Statement):
 
     def add_var(self, var_name: str, var_type_ref: TypeRef, is_global: bool) -> None:
         if not is_global:
-            self._var.append(TemporaryVariableName(self._src_info, var_name, var_type_ref.return_type))
+            var = LocalVariableName(self._src_info, var_name, var_type_ref.return_type)
         else:
-            self._var.append(GlobalVariableName(self._src_info, self._namespace, var_name, var_type_ref.return_type))
+            var = GlobalVariableName(self._src_info, self._namespace, var_name, var_type_ref.return_type)
+        self._var.append(var)
+        self._var_states.set_declared([var])
+        self._symbol_table.add(var, var_name, None)
 
     def as_async(self) -> "Statement":
         new_stmt = super().as_async()
         if self._var_value is not None:
             new_stmt._var_value = self._var_value.as_async()
+            self._var_states.set_async_assigned(self._var)
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
@@ -318,7 +329,7 @@ class DeclStmt(Statement):
             new_stmt._var_value = self._var_value.as_inline(inline_mapping)
             new_stmt._inline_mapping.update(new_stmt._var_value.inline_mapping)
         for i, var in enumerate(self._var):
-            new_stmt._inline_mapping[var.name] = SYMBOL_TABLE.get_counter()
+            new_stmt._inline_mapping[var.name] = self._symbol_table.get_counter()
             new_stmt._var[i].rename(new_stmt.inline_mapping[var.name])
         return new_stmt
 
@@ -339,7 +350,7 @@ class DeclStmt(Statement):
         expr_type = self._var_value.return_type
         var_names_num: int = len(self._var)
         if var_names_num > 1 and self._var_value is not None:
-            self._var_value = UnpackExpr(self._src_info, self._var_value)
+            self._var_value = UnpackExpr(self._src_info, self._symbol_table, self._var_value)
         for i, var in enumerate(self._var):
             if var.type.name == "auto":
                 if self._var_value is None:
@@ -355,7 +366,7 @@ class DeclStmt(Statement):
                         raise CompilerException("Too many variables for unpacking.", self._src_info)
                     self._var[i].type.set_real_type(expr_type)
             else:
-                if var.type not in SYMBOL_TABLE:
+                if var.type not in self._symbol_table:
                     raise CompilerException(f"{var.type.name} is not defined.", self._src_info)
         if isinstance(expr_type, TupleTypeName):
             if len(self._var) > len(expr_type.types):
@@ -363,24 +374,24 @@ class DeclStmt(Statement):
             elif len(self._var) == len(expr_type.types):
                 type_list: list[TypeName] = list(map(lambda var: var.type, self._var))
                 for i, (t0, t1) in enumerate(zip(type_list, expr_type.types)):
-                    if not t1.convertable_to(t0, SYMBOL_TABLE.symbols):
+                    if not t1.convertable_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
             else:
                 type_list: list[TypeName] = list(map(lambda var: var.type, self._var[:-1]))
                 for i, (t0, t1) in enumerate(zip(type_list, expr_type.types[:len(type_list)])):
-                    if not t1.convertable_to(t0, SYMBOL_TABLE.symbols):
+                    if not t1.convertable_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
                 if not TupleTypeName(self._src_info, expr_type.types[len(type_list):]).convertable_to(
-                        self._var[-1].type, SYMBOL_TABLE.symbols):
+                        self._var[-1].type, self._symbol_table.symbols):
                     raise CompilerException(
                         f"{TupleTypeName(self._src_info, expr_type.types[len(type_list):]).raw_name} cannot be assigned to {self._var[-1].type.raw_name}.",
                         self._src_info)
         else:
             if len(self._var) > 1:
                 raise CompilerException("Too many variables for unpacking.", self._src_info)
-            if not expr_type.convertable_to(self._var[0].type, SYMBOL_TABLE.symbols):
+            if not expr_type.convertable_to(self._var[0].type, self._symbol_table.symbols):
                 raise CompilerException(f"{expr_type.raw_name} cannot be assigned to {self._var[0].type.raw_name}.",
                                         self._src_info)
         self._is_finished = True
@@ -423,17 +434,17 @@ class DeclStmt(Statement):
             self._var_value = self._var_value.optimize()
             if self._var_value.is_const and len(self._var) == 1 and not self._is_const_def:
                 self._const_vars[self._var[0]] = self._var_value
-                return _StmtList(self._src_info, [])
+                return _StmtList(self._src_info, self._symbol_table, self._var_states, [])
         if isinstance(self._var_value, UnpackExpr):
             to_unpack = self._var_value.to_unpack
             if len(self._var) == 1:
-                result = DeclStmt(self._src_info, self._namespace)
+                result = DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)
                 result.set_var_value(to_unpack)
                 result._add_var_object(self._var[0])
                 return result
             if isinstance(to_unpack, TupleRef) and not self._is_const_def:
                 to_unpack_const: list[Expression] = list(map(lambda expr: expr.optimize().is_const, to_unpack.expressions))
-                results: list[DeclStmt] = [DeclStmt(self._src_info, self._namespace)] * (len(self._var) - len(to_unpack_const))
+                results: list[DeclStmt] = [DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)] * (len(self._var) - len(to_unpack_const))
                 result_count: int = 0
                 expr_count: int = 0
                 for i, var in enumerate(self._var[:-1]):
@@ -466,7 +477,7 @@ class DeclStmt(Statement):
                 else:
                     results[-1].set_var_value(to_unpack[len(self._var):])
                     results[-1]._add_var_object(self._var[-1])
-                return _StmtList(self._src_info, results)
+                return _StmtList(self._src_info, self._symbol_table, self._var_states, results)
         return self
 
     @property
@@ -480,6 +491,7 @@ class DeclStmt(Statement):
     def set_var_value(self, var_value: Expression) -> None:
         var_value.validate()
         self._var_value = var_value
+        self._var_states.set_assigned(self._var)
 
     def set_vars_with_known_type(self, var_name_list: list[str], var_type_name_list: list[TypeName],
                                  is_global_list: list[bool]):
@@ -487,12 +499,12 @@ class DeclStmt(Statement):
             raise CompilerException("Invalid variable declaration.", self._src_info)
         var_names_num: int = len(var_name_list)
         if var_names_num > 1 and self._var_value is not None:
-            self._var_value = UnpackExpr(self._src_info, self._var_value)
+            self._var_value = UnpackExpr(self._src_info, self._symbol_table, self._var_value)
         for i, (var_name, var_type, is_global) in enumerate(zip(var_name_list, var_type_name_list, is_global_list)):
             if is_global:
                 self._var.append(GlobalVariableName(self._src_info, self._namespace, var_name, var_type))
             else:
-                self._var.append(TemporaryVariableName(self._src_info, var_name, var_type))
+                self._var.append(LocalVariableName(self._src_info, var_name, var_type))
 
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
         self._var_value = self._var_value.substitute(const_vars)
@@ -538,20 +550,29 @@ class DeclStmt(Statement):
 
 class AssignStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, this_cls: Optional[ClassName] = None) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._var: list[VariableName] = []
         self._var_value: Optional[Expression] = None
         self._is_async: bool = False
         self._is_finished: bool = False
         self._var_types: Optional[TypeName] = None
         self._const_vars: dict[VariableName, Expression] = {}
+        self._this_cls: Optional[ClassName] = this_cls
 
     def add_var_name(self, var_name: str) -> None:
-        symbol = SYMBOL_TABLE[var_name]
+        if self._this_cls is not None and var_name.startswith("this."):
+            var_name = var_name[len("this."):]
+            if var_name not in self._this_cls.properties:
+                raise CompilerException(f"{var_name} is not a property of {self._this_cls.name}.", self._src_info)
+            var_name_type = self._this_cls.properties[var_name].type
+            symbol = LocalVariableName(self._src_info, "_this->" + var_name, var_name_type)
+        else:
+            symbol = self._symbol_table[var_name, None]
         if not isinstance(symbol, VariableName):
             raise CompilerException(f"{var_name} is not a variable.", self._src_info)
         self._var.append(symbol)
+        self._var_states.set_assigned([symbol])
 
     def as_async(self) -> "Statement":
         new_stmt = super().as_async()
@@ -559,22 +580,12 @@ class AssignStmt(Statement):
         new_stmt._is_async = True
         return new_stmt
 
-    def as_constructor(self, this_var: VariableName) -> "ConstructorAssignStmt":
-        new_stmt = ConstructorAssignStmt(self._src_info, this_var)
-        new_stmt._var = self._var
-        new_stmt._var_value = self._var_value
-        new_stmt._var_types = self._var_types
-        new_stmt._is_async = self._is_async
-        new_stmt._is_finished = self._is_finished
-        new_stmt._const_vars = self._const_vars
-        return new_stmt
-
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
         new_stmt = deepcopy(self)
         new_stmt._var_value = self._var_value.as_inline(inline_mapping)
         new_stmt._inline_mapping.update(new_stmt._var_value.inline_mapping)
         for i, var in enumerate(self._var):
-            new_stmt._inline_mapping[var.name] = SYMBOL_TABLE.get_counter() if not var.is_global else var.name
+            new_stmt._inline_mapping[var.name] = self._symbol_table.get_counter() if not var.is_global else var.name
             new_stmt._var[i].rename(new_stmt._inline_mapping[var.name])
         return new_stmt
 
@@ -599,17 +610,17 @@ class AssignStmt(Statement):
             elif len(self._var) == len(expr_type.types):
                 type_list: list[TypeName] = list(map(lambda var: var.type, self._var))
                 for i, (t0, t1) in enumerate(zip(type_list, expr_type.types)):
-                    if not t1.convertable_to(t0, SYMBOL_TABLE.symbols):
+                    if not t1.convertable_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
             else:
                 type_list: list[TypeName] = list(map(lambda var: var.type, self._var[:-1]))
                 for i, (t0, t1) in enumerate(zip(type_list, expr_type.types[:len(type_list)])):
-                    if not t1.convertable_to(t0, SYMBOL_TABLE.symbols):
+                    if not t1.convertable_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
                 if not TupleTypeName(self._src_info, expr_type.types[len(type_list):]).convertable_to(
-                        self._var[-1].type, SYMBOL_TABLE.symbols):
+                        self._var[-1].type, self._symbol_table.symbols):
                     raise CompilerException(
                         f"{TupleTypeName(self._src_info, expr_type.types[len(type_list):]).raw_name} cannot be assigned to {self._var[-1].type.raw_name}.",
                         self._src_info)
@@ -651,18 +662,18 @@ class AssignStmt(Statement):
         if self._var_value is not None:
             self._var_value = self._var_value.optimize()
             if self._var_value.is_const and len(self._var) == 1:
-                return _StmtList(self._src_info, [])
+                return _StmtList(self._src_info, self._symbol_table, self._var_states, [])
         if isinstance(self._var_value, UnpackExpr):
             to_unpack = self._var_value.to_unpack
             if len(self._var) == 1:
-                result = AssignStmt(self._src_info)
+                result = AssignStmt(self._src_info, self._symbol_table, self._var_states)
                 result.set_var_value(to_unpack)
                 result._add_var_object(self._var[0])
                 return result
             if isinstance(to_unpack, TupleRef):
                 to_unpack_const: list[Expression] = list(
                     map(lambda expr: expr.optimize().is_const, to_unpack.expressions))
-                results: list[AssignStmt] = [AssignStmt(self._src_info)] * (
+                results: list[AssignStmt] = [AssignStmt(self._src_info, self._symbol_table, self._var_states)] * (
                             len(self._var) - len(to_unpack_const))
                 result_count: int = 0
                 for i, var in enumerate(self._var[:-1]):
@@ -682,7 +693,7 @@ class AssignStmt(Statement):
                 else:
                     results[-1].set_var_value(to_unpack[len(self._var):])
                     results[-1]._add_var_object(self._var[-1])
-                return _StmtList(self._src_info, results)
+                return _StmtList(self._src_info, self._symbol_table, self._var_states, results)
         return self
 
     @property
@@ -723,26 +734,10 @@ class AssignStmt(Statement):
         return self._var_value.front_text
 
 
-class ConstructorAssignStmt(AssignStmt):
-
-    def __init__(self, src_info: SourceInfo, this_var: VariableName) -> None:
-        super().__init__(src_info)
-        self._this_var: VariableName = this_var
-
-    @property
-    def _inner_text(self) -> str:
-        var_list: list[VariableName] = deepcopy(self._var)
-        for i, v in enumerate(var_list):
-            if v.name in self._this_var.type.properties:
-                var_list[i] = TemporaryVariableName(self._src_info, self._this_var.name + "->" + v.name, v.type)
-        self._var_value.set_returns(var_list)
-        return self._var_value.front_text
-
-
 class OpStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._expr: Optional[Expression] = None
 
     def as_async(self) -> "Statement":
@@ -830,8 +825,8 @@ class OpStmt(Statement):
 
 class ReturnStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._finally_stmt_list: list[Statement] = []
 
     def as_async(self) -> "Statement":
@@ -906,8 +901,8 @@ class ReturnStmt(Statement):
 
 class ThrowStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._to_throw_expr: Optional[Expression] = None
         self._finally_stmt_list: list[Statement] = []
 
@@ -983,7 +978,7 @@ class ThrowStmt(Statement):
     def set_expr(self, expr: Expression) -> None:
         expr.validate()
         # noinspection PyTypeChecker
-        if not expr.return_type.convertable_to(SYMBOL_TABLE["exception"], SYMBOL_TABLE.symbols):
+        if not expr.return_type.convertable_to(self._symbol_table["exception"], self._symbol_table.symbols):
             raise CompilerException(f"Type {expr.return_type.raw_name} cannot be thrown.", self._src_info)
 
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
@@ -1002,16 +997,15 @@ class ThrowStmt(Statement):
             finally_text += "\n"
         result: list[str] = list(filter(lambda x: x is not None, [
             self._to_throw_expr.front_text,
-            f"listener->exc->exception = {self._to_throw_expr.text};",
-            "longjmp(listener->exc->jmpBuf, 1);"
+            f"listener->exc = {self._to_throw_expr.text};"
         ]))
         return finally_text + "\n".join(result)
 
 
 class CStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._text: Optional[str] = None
 
     def add_text(self, text: str) -> None:
@@ -1088,8 +1082,8 @@ class _CondKw(Enum):
 
 class CondStmt(Statement):
 
-    def __init__(self, kw: _CondKw, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, kw: _CondKw, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._cond_expr: Optional[Expression] = None
         self._stmt: Optional[Statement] = None
         self._cond_kw: _CondKw = kw
@@ -1199,14 +1193,14 @@ class CondStmt(Statement):
 
 class ElifStmt(CondStmt):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(_CondKw.ELIF, src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(_CondKw.ELIF, src_info, symbol_table, var_states)
 
 
 class ElseStmt(CondStmt):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(_CondKw.ELSE, src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(_CondKw.ELSE, src_info, symbol_table, var_states)
 
     def set_cond_expr(self, expr: Expression) -> None:
         raise CompilerException("ElseStmt can't have a condition.", self._src_info)
@@ -1214,8 +1208,8 @@ class ElseStmt(CondStmt):
 
 class IfStmt(CondStmt):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(_CondKw.IF, src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(_CondKw.IF, src_info, symbol_table, var_states)
         self._branches: list[CondStmt] = []
 
     def add_branch(self, branch: CondStmt) -> None:
@@ -1235,10 +1229,12 @@ class IfStmt(CondStmt):
 
 class CatchStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._except_decl: Optional[VariableName] = None
         self._stmt: Optional[Statement] = None
+        self._success_jump_to: str = ""
+        self._jump_mark = ""
 
     def as_async(self) -> "Statement":
         new_stmt = super().as_async()
@@ -1304,10 +1300,15 @@ class CatchStmt(Statement):
 
     def set_except_decl(self, except_decl: VariableName) -> None:
         self._except_decl = except_decl
+        self._symbol_table.add(except_decl, except_decl.name, None)
+        self._var_states.set_assigned([except_decl])
 
     def set_stmt(self, stmt: Statement) -> None:
         stmt.indent()
         self._stmt = stmt
+
+    def set_success_jump_to(self, jump_to: str) -> None:
+        self._success_jump_to = jump_to
 
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
         self._stmt = self._stmt.substitute(const_vars)
@@ -1320,11 +1321,13 @@ class CatchStmt(Statement):
     @property
     def _inner_text(self) -> str:
         result: list[Optional[str]] = [
-            f"if ({CONVERTIBLE_TO_FUNC}(listener->exc->exception->$$vtable, {EXCEPTION_T})) {{",
+            f"if ({CONVERTIBLE_TO_FUNC}($$exc->$$vtable, {EXCEPTION_T})) {{",
             self._stmt.head_text,
-            f"\t{self._except_decl.name} = listener->exc->exception;",
+            f"\t{self._except_decl.type_name_pair_calling} = $$exc;",
             self._stmt.text,
-            "\tbreak;",
+            f"\tviola$lang$exception$Exception$__del__({self._except_decl.name});",
+            f"\t{self._except_decl.name} = NULL;",
+            f"\tgoto {self._success_jump_to};",
             "}"
         ]
         return "\n".join(list(filter(lambda x: x is not None, result)))
@@ -1332,8 +1335,8 @@ class CatchStmt(Statement):
 
 class FinallyStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._stmt: Optional[Statement] = None
 
     def as_async(self) -> "Statement":
@@ -1417,12 +1420,13 @@ class FinallyStmt(Statement):
 
 class TryStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._try_stmt: Optional[Statement] = None
         self._except_stmt: list[CatchStmt] = []
         self._finally_stmt: Optional[FinallyStmt] = None
-        self._jump_buf_name: str = SYMBOL_TABLE.get_counter()
+        self._exc_mark_name: str = self._symbol_table.get_counter()
+        self._finally_mark_name: str = self._symbol_table.get_counter()
         self._is_finished: bool = False
 
     def add_except_stmt(self, except_stmt: CatchStmt) -> None:
@@ -1471,13 +1475,15 @@ class TryStmt(Statement):
             raise CompilerException("TryStmt is already finished.", self._src_info)
         if len(self._except_stmt) == 0:
             raise CompilerException("TryStmt must have at least one except clause.", self._src_info)
-        if self._finally_stmt is not None:
-            self.insert_finally_stmt(self._finally_stmt.as_inline({var.name: var.name for var in self.input_variables}))
+        self._try_stmt.set_jump_mark(self._exc_mark_name)
+        for except_stmt in self._except_stmt:
+            except_stmt.set_success_jump_to(self._finally_mark_name)
+            except_stmt.set_jump_mark(self._finally_mark_name)
         self._is_finished = True
 
     @property
     def head_text(self) -> Optional[str]:
-        return f"jmp_buf {self._jump_buf_name};"
+        return None
 
     @property
     def input_variables(self) -> set[VariableName]:
@@ -1548,22 +1554,14 @@ class TryStmt(Statement):
         finally_text: list[str] = [
             *map(lambda x: "\t" + x, self._finally_stmt.text.split("\n"))
         ] if self._finally_stmt is not None else []
-        finally_text_indent2: list[str] = [
-            *map(lambda x: "\t" + x, finally_text)
-        ]
         result: str = "\n".join(list(filter(lambda x: x is not None, [
-            f"memcpy(&{self._jump_buf_name}, listener->exc->jmpBuf, sizeof(jmp_buf));",
-            f"if (!setjmp(listener->exc->jmpBuf)) {{",
-            f"\tmemcpy(listener->exc->jmpBuf, &{self._jump_buf_name}, sizeof(jmp_buf));",
+            "do {",
             self._try_stmt.text,
-            "} else {",
-            f"\tmemcpy(listener->exc->jmpBuf, &{self._jump_buf_name}, sizeof(jmp_buf));",
-            "\tdo {",
+            f"goto {self._finally_mark_name};",
+            "} while (0);",
+            f"{self._exc_mark_name}:",
             *map(lambda except_stmt: except_stmt.text, self._except_stmt),
-            *finally_text_indent2,
-            "\t\tlongjmp(listener->exc->jmpBuf, 1);",
-            "\t} while (0);",
-            "}",
+            f"{self._finally_mark_name}:",
             *finally_text
         ])))
         return result
@@ -1571,8 +1569,8 @@ class TryStmt(Statement):
 
 class TypeDefStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo, dst_type_name: str) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, dst_type_name: str) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         # noinspection PyTypeChecker
         self._src_type_decl: Optional[TypeName] = None
         self._dst_type_name: str = dst_type_name
@@ -1629,7 +1627,7 @@ class TypeDefStmt(Statement):
 
     def set_type(self, t: TypeRef) -> None:
         self._src_type_decl = t.return_type
-        SYMBOL_TABLE.add(t.return_type, self._dst_type_name, None)
+        self._symbol_table.add(t.return_type, self._dst_type_name, None)
 
     @property
     def variables_states(self) -> dict[VariableName, VariableState]:
@@ -1650,12 +1648,13 @@ class _ProcessingMode(Enum):
 
 class BlockStmt(Statement):
 
-    def __init__(self, src_info: SourceInfo, outer_variables: dict[VariableName, VariableState]) -> None:
-        super().__init__(src_info, single_stmt=False)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states, single_stmt=False)
         self._stmt: list[Statement] = []
+        self._release_stmt_list: list[Statement] = []
         self._is_async: bool = False
         self._is_finished: bool = False
-        self._outer_variables: dict[VariableName, VariableState] = outer_variables
+        self._outer_variables: dict[VariableName, VariableState] = var_states.state.copy()
         self._inner_variables: dict[VariableName, VariableState] = {}
         self._listeners: dict[VariableName, str] = {}
         self._input_variables: set[VariableName] = set()
@@ -1664,6 +1663,8 @@ class BlockStmt(Statement):
         self._is_closure: bool = False
         self._closure_struct_setting_code: str = ""
         self._processing_mode: _ProcessingMode = _ProcessingMode.NORMAL
+        self._cleanup_mark_name: str = self._symbol_table.get_counter()
+        self._after_cleanup_mark_name: str = self._cleanup_mark_name + "_after"
 
     def add_stmt(self, stmt: Statement) -> None:
         if not stmt.is_finished:
@@ -1702,7 +1703,7 @@ class BlockStmt(Statement):
                 self._inner_variables[k] = v
         for var in stmt.input_variables:
             if var in self._listeners:
-                wait_stmt = CStmt(stmt.src_info)
+                wait_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
                 wait_text = "\n".join([
                     f"{LISTENER_WAIT_FUNC}({self._listeners[var]});",
                     f"free({self._listeners[var]}$$_call);"
@@ -1751,26 +1752,46 @@ class BlockStmt(Statement):
                 if var not in used_variables and var not in self._outer_variables:
                     used_variables.add(var)
                     if var.is_object:
-                        release_stmt = CStmt(stmt.src_info)
-                        call_op = CallOp(stmt.src_info)
-                        attr_op = AttrOp(stmt.src_info)
+                        release_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                        call_op = CallOp(stmt.src_info, self._symbol_table)
+                        attr_op = AttrOp(stmt.src_info, self._symbol_table)
                         attr_op.set_attr("__del__")
-                        attr_op.set_caller(VariableRef(stmt.src_info, var))
+                        attr_op.set_caller(VariableRef(stmt.src_info, self._symbol_table, var))
                         call_op.set_func(attr_op)
                         call_op.set_returns([])
                         release_stmt.set_text(call_op.text)
+                        null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                        null_stmt.add_text(f"{var} = NULL;")
                         new_stmt_list.append(release_stmt)
+                        new_stmt_list.append(null_stmt)
+                        check_null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                        check_null_stmt.add_text(f"if ({var}) {{")
+                        end_check_null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                        end_check_null_stmt.add_text("}")
+                        self._release_stmt_list.append(check_null_stmt)
+                        self._release_stmt_list.append(release_stmt)
+                        self._release_stmt_list.append(null_stmt)
+                        self._release_stmt_list.append(end_check_null_stmt)
                 elif var in self._outer_variables and var not in self._used_outer_variables and not var.is_global:
                     self._used_outer_variables.append(var)
+            stmt.set_jump_mark(self._cleanup_mark_name)
             new_stmt_list.append(stmt)
         self._is_finished = True
         new_stmt_list.reverse()
         self._stmt = new_stmt_list
         for listener in self._listeners.values():
-            wait_stmt = CStmt(self.src_info)
+            wait_stmt = CStmt(self.src_info, self._symbol_table, self._var_states)
             wait_text = f"{LISTENER_WAIT_FUNC}({listener});"
             wait_stmt.set_text(wait_text)
             self._stmt.append(wait_stmt)
+        cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
+        cleanup_mark.add_text(f"goto {self._after_cleanup_mark_name};")
+        cleanup_mark.add_text(f"{self._cleanup_mark_name}:")
+        self._stmt.append(cleanup_mark)
+        self._stmt += self._release_stmt_list
+        after_cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
+        after_cleanup_mark.add_text(f"{self._after_cleanup_mark_name}:")
+        self._stmt.append(after_cleanup_mark)
 
     @property
     def global_init_text(self) -> str:
@@ -1837,7 +1858,7 @@ class BlockStmt(Statement):
             f"{struct_name} *$$captureStructPtr = ({struct_name} *)$$capture;",
             "\n".join(used_outer_variables_convert)
         ]
-        closure_init_stmt: CStmt = CStmt(self._src_info)
+        closure_init_stmt: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
         closure_init_stmt.set_text("\n".join(ptr_convert_def))
         self._stmt.insert(0, closure_init_stmt)
         struct_alloc: str = f"{struct_name} *{closure_name}$$capture = ({struct_name} *)malloc(sizeof({struct_name}));"
@@ -1898,8 +1919,8 @@ class BlockStmt(Statement):
 
 class FnBlockStmt(BlockStmt):
 
-    def __init__(self, src_info: SourceInfo, outer_variables: dict[VariableName, VariableState]) -> None:
-        super().__init__(src_info, outer_variables)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table, var_states)
         self._stmt_set: set[Statement] = set()
         self._variable_dependencies: dict[VariableName, Statement] = {}
         self._cond_stmt_buffer: list[Statement] = []
@@ -1923,7 +1944,7 @@ class FnBlockStmt(BlockStmt):
                 self._cond_stmt_buffer.append(stmt)
             else:
                 if len(self._cond_stmt_buffer) > 0:
-                    new_stmt = BlockStmt(stmt.src_info, self._outer_variables)
+                    new_stmt = BlockStmt(stmt.src_info, self._symbol_table, self._var_states, self._outer_variables)
                     for buffer_stmt in self._cond_stmt_buffer:
                         new_stmt.add_stmt(buffer_stmt)
                     self._cond_stmt_buffer.clear()
@@ -1931,7 +1952,7 @@ class FnBlockStmt(BlockStmt):
                 self._cond_stmt_buffer.append(stmt)
             return
         if len(self._cond_stmt_buffer) > 0:
-            new_stmt = BlockStmt(stmt.src_info, self._outer_variables)
+            new_stmt = BlockStmt(stmt.src_info, self._symbol_table, self._var_states, self._outer_variables)
             for buffer_stmt in self._cond_stmt_buffer:
                 new_stmt.add_stmt(buffer_stmt)
             self._cond_stmt_buffer.clear()
@@ -1946,7 +1967,7 @@ class FnBlockStmt(BlockStmt):
 
     def finish(self) -> None:
         if len(self._cond_stmt_buffer) > 0:
-            new_stmt = BlockStmt(self._cond_stmt_buffer[0].src_info, self._outer_variables)
+            new_stmt = BlockStmt(self._cond_stmt_buffer[0].src_info, self._symbol_table, self._var_states, self._outer_variables)
             for buffer_stmt in self._cond_stmt_buffer:
                 new_stmt.add_stmt(buffer_stmt)
             self._cond_stmt_buffer.clear()
@@ -1987,22 +2008,23 @@ class FnBlockStmt(BlockStmt):
 
 class CastOp(Expression):
 
-    def __init__(self, src_info: SourceInfo) -> None:
-        super().__init__(src_info)
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        super().__init__(src_info, symbol_table)
         self._type_name: Optional[TypeName] = None
         self._expr: Optional[Expression] = None
         self._is_dynamic_cast: bool = False
         self._temp_var_name: Optional[str] = None
         self._throw_stmt: Optional[ThrowStmt] = None
+        self._var_states: VariableStateTable = var_states
 
     def as_async(self) -> "Expression":
         self._expr = self._expr.as_async()
         return self
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        result = CastOp(self._src_info)
+        result = CastOp(self._src_info, self._symbol_table, self._var_states)
+        result._type_name = self._type_name
         result.set_expr(self._expr.as_inline(inline_mapping))
-        result.set_type(self._type_name)
         return result
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
@@ -2069,8 +2091,8 @@ class CastOp(Expression):
         if self._type_name is not None:
             self._is_dynamic_cast = self.__check_dynamic_cast()
 
-    def set_type(self, type_name: TypeName) -> None:
-        self._type_name = type_name
+    def set_type(self, type_name: TypeRef) -> None:
+        self._type_name = type_name.return_type
         if self._expr is not None:
             self._is_dynamic_cast = self.__check_dynamic_cast()
 
@@ -2096,13 +2118,13 @@ class CastOp(Expression):
         self._expr.validate()
 
     def __check_dynamic_cast(self) -> bool:
-        result = not self._expr.return_type.convertable_to(self._type_name, SYMBOL_TABLE.symbols)
+        result = not self._expr.return_type.convertable_to(self._type_name, self._symbol_table.symbols)
         if result:
-            self._temp_var_name = SYMBOL_TABLE.get_counter()
-            self._throw_stmt = ThrowStmt(self._src_info)
-            to_throw_expr = CallOp(self._src_info)
-            to_throw_expr.set_func(ClassRef(self._src_info, "RuntimeException"))
-            to_throw_expr.add_arg(StringLiteral(self._src_info, f"Cannot cast {self._expr.return_type} to {self._type_name}"), None)
+            self._temp_var_name = self._symbol_table.get_counter()
+            self._throw_stmt = ThrowStmt(self._src_info, self._symbol_table, self._var_states)
+            to_throw_expr = CallOp(self._src_info, self._symbol_table)
+            to_throw_expr.set_func(ClassRef.from_name(self._src_info, self._symbol_table, "RuntimeException"))
+            to_throw_expr.add_arg(StringLiteral(self._src_info, self._symbol_table, f"Cannot cast {self._expr.return_type} to {self._type_name}"), None)
             self._throw_stmt.set_expr(to_throw_expr)
             self._throw_stmt.indent()
         return result
