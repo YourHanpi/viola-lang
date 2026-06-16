@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from utils.task import TaskResult
+from utils.task import TaskResult, TaskResultState
 
 from abc import ABC, abstractmethod
 from threading import Thread
@@ -10,14 +10,23 @@ class ThreadWithResult:
 
     def __init__(self, target: Callable[[...], TaskResult]) -> None:
         self._result: Optional[TaskResult] = None
-        self._thread: Thread = Thread(target=self.__target_wrapper(target))
+        self._target: Callable[[...], None] = self.__target_wrapper(target)
+        self._thread: Optional[Thread] = None
+
+    @property
+    def is_busy(self) -> bool:
+        return self._result is None
 
     def join(self) -> TaskResult:
+        if self._thread is None:
+            return TaskResult(TaskResultState.PASSED)
         self._thread.join()
         # noinspection PyTypeChecker
         return self._result
 
-    def start(self) -> None:
+    def start(self, *args, **kwargs) -> None:
+        self._result = None
+        self._thread = Thread(target=self._target, args=args, kwargs=kwargs)
         self._thread.start()
 
     def __target_wrapper(self, target: Callable[[...], TaskResult]) -> Callable[[...], None]:
@@ -32,7 +41,16 @@ class Controller(ABC):
         self._matching_command = matching_command
 
     @abstractmethod
-    def handle(self, command: list[str]) -> Optional[ThreadWithResult]:
+    def handle(self, command: list[str]) -> None:
+        pass
+
+    @property
+    @abstractmethod
+    def is_busy(self) -> bool:
+        pass
+
+    @abstractmethod
+    def join(self) -> TaskResult:
         pass
 
     @staticmethod
@@ -67,25 +85,21 @@ class SingleController(Controller, ABC):
 
     def __init__(self, matching_command: str) -> None:
         super().__init__([matching_command])
+        self._thread: Optional[ThreadWithResult] = None
 
-    def handle(self, command: list[str]) -> Optional[ThreadWithResult]:
+    def handle(self, command: list[str]) -> None:
         if command[0] in self._matching_command:
-            return self._handle(*self._get_params(command[1:]))
-        return None
+            self._handle(*self._get_params(command[1:]))
+
+    @property
+    def is_busy(self) -> bool:
+        return self._thread is not None and self._thread.is_busy
+
+    def join(self) -> TaskResult:
+        if self._thread is None:
+            return TaskResult(TaskResultState.PASSED)
+        return self._thread.join()
 
     @abstractmethod
-    def _handle(self, args: list[str], kwargs: dict[str, str]) -> ThreadWithResult:
+    def _handle(self, args: list[str], kwargs: dict[str, str]) -> None:
         pass
-
-
-class GroupController(Controller):
-
-    def __init__(self, controllers: list[Controller]) -> None:
-        super().__init__(sum([controller._matching_command for controller in controllers], []))
-        self._controllers: list[Controller] = controllers
-
-    def handle(self, command: list[str]) -> Optional[ThreadWithResult]:
-        for controller in self._controllers:
-            if command[0] in controller._matching_command:
-                return controller.handle(command)
-        return None

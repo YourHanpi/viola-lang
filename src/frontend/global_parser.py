@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from .utils import ParserGenericTable, ParsingResult, ParsingSlice, TokenStreamIO
+from .utils import ParserGenericTable, ParsingResult, TokenStreamIO
 from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS
 from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TYPE_POSTFIX, CACHE_DIR
 from utils.logger import Logger
@@ -43,7 +43,7 @@ _BLANK_TOKEN: Token = Token("", ["_BLANK"])
 class GlobalParser:
     _ENCODING: str = COMPILER_PARAMS["encoding"]
 
-    def __init__(self, workspace: str, thread_index: int = 0) -> None:
+    def __init__(self, workspace: str) -> None:
         self._workspace: str = workspace
         self._tokens: list[Token] = []
         self._tokens_num: int = 0
@@ -58,10 +58,12 @@ class GlobalParser:
         self._imports: dict[str, str] = {}
         self._parser_generic_table: ParserGenericTable = ParserGenericTable()
         self._symbol_types: dict[str, tuple[str, int]] = {}
-        self._logger: Logger = Logger(f"Parser[{thread_index}]")
-        self._tasks: list[str] = []
+        self._logger: Logger = Logger(f"Parser[0]")
+        self._tasks: list[list[str]] = []
         self._static_libs_to_link: list[str] = []
         self._dynamic_libs_to_link: list[str] = []
+        self._expr_count: int = 0
+        self._expr_tokens: list[list[Token]] = []
 
     def parse(self, tokens: list[Token]) -> Optional[ParsingResult]:
         self._tasks.clear()
@@ -91,11 +93,14 @@ class GlobalParser:
                 symbol += result[1]
         if is_error:
             return None
-        return ParsingResult(command, symbol, self._parser_generic_table, True)
+        return ParsingResult(command, symbol, self._expr_tokens, True)
     
     def parse_from_file(self, file_path: str) -> Optional[ParsingResult]:
         self._set_file_lock(file_path)
         self._logger.info(f"Start parsing {file_path}")
+        if not os.path.exists(file_path + TOKEN_POSTFIX):
+            self._add_task(["violac", "lex", file_path])
+            return None
         tokens: list[Token] = TokenStreamIO.read(file_path + TOKEN_POSTFIX)
         result = self.parse(tokens)
         self._dump_symbol_type_list(file_path)
@@ -109,18 +114,23 @@ class GlobalParser:
             self._logger.info(f"Successfully parsed {file_path}")
         return result
 
-    def parse_to_file(self, file_path: str) -> TaskResult:
+    def parse_to_file(self, file_path: str, thread_index: int = 0) -> TaskResult:
+        self._logger: Logger = Logger(f"Parser[{thread_index}]")
         file_relpath = os.path.relpath(os.path.abspath(file_path), self._workspace)
         cache_file_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
         result = self.parse_from_file(cache_file_path)
         if result is not None:
             result.write(cache_file_path)
-            return TaskResult(TaskResultState.SUCCESS, [f"viola parse-expr \"{file_path}\""])
+            return TaskResult(TaskResultState.SUCCESS, [["violac", "parse-expr", file_path]])
         elif len(self._tasks) > 0:
             return TaskResult(TaskResultState.DELAYED, self._tasks)
         return TaskResult(TaskResultState.FAILURE)
 
-    def _add_task(self, task_command: str) -> None:
+    def _add_parsing_slice(self, expr_tokens: list[Token]) -> str:
+        self._expr_tokens.append(expr_tokens)
+        return f"RAW {len(self._expr_tokens) - 1}"
+
+    def _add_task(self, task_command: list[str]) -> None:
         self._tasks.append(task_command)
 
     def _back(self, steps: int = 1) -> None:
@@ -221,7 +231,7 @@ class GlobalParser:
                 while os.path.exists(parsing_lock_path):
                     time.sleep(0.1)
             else:
-                self._add_task(f"violac parse \"{token_path}\"")
+                self._add_task(["violac", "parse", token_path])
                 return None
         with open(symbol_table_path, "r", encoding=GlobalParser._ENCODING) as file:
             texts: str = file.read().split("---", 1)[1]
@@ -263,7 +273,7 @@ class GlobalParser:
                 while os.path.exists(parsing_lock_path):
                     time.sleep(0.1)
             else:
-                self._add_task(f"violac parse \"{token_path}\"")
+                self._add_task(["violac", "parse", token_path])
                 return
         with open(symbol_types_path, "r") as file:
             texts: list[str] = file.readlines()
@@ -369,7 +379,8 @@ class GlobalParser:
         expr_results = self._collect_until("SEMICOLON")
         if expr_results is None:
             return None
-        expr_commands = ParsingSlice(self._src_info, expr_results, "EXPR")
+        expr_commands = self._add_parsing_slice(expr_results)
+        self._expr_count += 1
         if not self._match_type("SEMICOLON"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -593,7 +604,7 @@ class GlobalParser:
             "CALL FINISH"
         ], []
 
-    def _parse_cond_expr(self) -> Optional[ParsingSlice]:
+    def _parse_cond_expr(self) -> Optional[str]:
         tokens: list[Token] = []
         if not self._match_type("L_BRACKET"):
             self._raise("Expected \"(\". Unexpected token: " + self._get_current().text)
@@ -608,7 +619,9 @@ class GlobalParser:
                 bracket_count -= 1
             if bracket_count == 0:
                 self._next()
-                return ParsingSlice(self._src_info, tokens, "EXPR")
+                result = self._add_parsing_slice(tokens)
+                self._expr_count += 1
+                return result
         self._raise("Unexpected EOF")
         return None
 
@@ -666,7 +679,8 @@ class GlobalParser:
         expr_results = self._collect_until("SEMICOLON")
         if expr_results is None:
             return None
-        expr_commands = ParsingSlice(self._src_info, expr_results, "EXPR")
+        expr_commands = self._add_parsing_slice(expr_results)
+        self._expr_count += 1
         return ["MAKE STMT DECL", expr_commands, "CALL SET_VAR_VALUE"] + name_command + ["CALL FINISH"], symbol
 
     @_set_loc_command
@@ -806,7 +820,8 @@ class GlobalParser:
         value = self._collect_until("SEMICOLON")
         if value is None:
             return None
-        result = ParsingSlice(self._src_info, value, "EXPR")
+        result = self._add_parsing_slice(value)
+        self._expr_count += 1
         command: list[str] = [result] + [f"CALL ADD_ENUM {name}"]
         self._next()
         return command, []
@@ -815,7 +830,9 @@ class GlobalParser:
         result_tokens = self._collect_until("SEMICOLON")
         if result_tokens is None:
             return None
-        return [ParsingSlice(self._src_info, result_tokens, "EXPR")]
+        result = self._add_parsing_slice(result_tokens)
+        self._expr_count += 1
+        return [result]
 
     @_set_loc_command
     def _parse_finally_stmt(self) -> Optional[tuple[list[str], list[str]]]:
@@ -1069,7 +1086,9 @@ class GlobalParser:
             self._raise("Unexpected token: " + self._get_current().text)
             return None
         self._next()
-        return ["MAKE STMT OP", ParsingSlice(self._src_info, expr_result, "EXPR"), "CALL SET_EXPR"], []
+        parsing_slice = self._add_parsing_slice(expr_result)
+        self._expr_count += 1
+        return ["MAKE STMT OP", parsing_slice, "CALL SET_EXPR"], []
 
     def _parse_prefixes(self, matches: list[str]) -> Optional[list[str]]:
         prefixes: list[str] = []
@@ -1115,7 +1134,8 @@ class GlobalParser:
             expr_tokens = self._collect_until("SEMICOLON")
             if expr_tokens is None:
                 return None
-            command = [ParsingSlice(self._src_info, expr_tokens, "EXPR"), "CALL ADD_STATIC_PROP"]
+            command = [self._add_parsing_slice(expr_tokens), "CALL ADD_STATIC_PROP"]
+            self._expr_count += 1
         if not self._match_type("SEMICOLON"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None

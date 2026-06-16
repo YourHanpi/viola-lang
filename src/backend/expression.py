@@ -4,7 +4,7 @@ from .symbol import (
     TypeName, GenericArgument, VariableName, SymbolTable, ArrayTypeName, ClassName, TupleTypeName,
     LocalVariableName, BaseTypeName, FunctionTypeName, BOOL, INT8, INT16, UINT8, UINT16, INT32, UINT32, INT64,
     UINT64, FLOAT, DOUBLE, GlobalVariableName, FunctionName, MethodName, LISTENER_T, LISTENER_INIT_FUNC,
-    EmptyArrayTypeName, base_type_degrade, SliceTypeName, INT_TYPES, StringTypeName, AnyTypeName, AutoTypeName
+    EmptyArrayTypeName, base_type_degrade, SliceTypeName, INT_TYPES, StringTypeName, AnyTypeName, AutoTypeName, SIZE_T
 )
 from utils import CompilerException, InternalCompilerException, COMPILER_PARAMS, SourceInfo
 
@@ -15,6 +15,8 @@ from typing import Optional, Callable
 CONVERTIBLE_TO_FUNC = "viola$lang$convertibleTo"
 FUNC_CALL_T: str = "viola$lang$thread$FuncCall"
 FUNC_ENQUEUE_FUNC: str = "viola$lang$thread$enqueue"
+
+I_SIZE_MAX: str = "I_SIZE_MAX"
 
 
 class Expression(CompilingItem, ABC):
@@ -867,6 +869,8 @@ class IntegerLiteral(Literal):
                 t = INT32
             case "UINT32":
                 t = UINT32
+            case "SIZE_T":
+                t = SIZE_T
             case "INT_N":
                 if "i" in value:
                     bits_num: str = value.split("i")[1]
@@ -937,14 +941,14 @@ class SliceRef(ValueRef):
     """切片表达式。
 
     表示 [start:end:step] 形式的切片操作，编译为运行时 SliceTypeName 对象。
-    默认值为 start=0、end=0、step=1。
+    默认值为 start=0、end=I64_MAX、step=1。
     """
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
         super().__init__(src_info, symbol_table)
         self._is_finished: bool = False
         self._start: Expression = IntegerLiteral(src_info, symbol_table, "0")
-        self._end: Expression = IntegerLiteral(src_info, symbol_table, "0")
+        self._end: Expression = IntegerLiteral(src_info, symbol_table, I_SIZE_MAX, "SIZE_T")
         self._step: Expression = IntegerLiteral(src_info, symbol_table, "1")
         self._temp_var: LocalVariableName = LocalVariableName(src_info, self._symbol_table.get_counter(),
                                                               SliceTypeName)

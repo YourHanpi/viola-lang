@@ -2,8 +2,12 @@
 from .global_parser import GlobalParser
 from .utils import ParsingResult
 from utils import Token
+from utils.file_marks import COMMAND_POSTFIX, CACHE_DIR
+from utils.logger import Logger
+from utils.task import TaskResult, TaskResultState
 
 from enum import Enum
+import os
 from typing import Optional, Callable, Sequence, Mapping, Any
 
 
@@ -95,6 +99,43 @@ class ExprParser(GlobalParser):
 
     def __init__(self, workspace: str) -> None:
         super().__init__(workspace)
+
+    def parse_all_expr(self, parsing_result: ParsingResult) -> Optional[list[str]]:
+        command = parsing_result.command
+        expr_tokens: list[list[Token]] = parsing_result.expr_tokens
+        expr_commands: list[list[str]] = []
+        for expr_token in expr_tokens:
+            result = self.parse_single_expr(expr_token)
+            if result is None:
+                return None
+            expr_commands.append(result)
+        current_command_count: int = 0
+        command_count: int = len(command)
+        while current_command_count < command_count:
+            if command[current_command_count].startswith("RAW "):
+                expr_index: int = int(command[current_command_count].split(" ")[1])
+                command = command[:current_command_count] + expr_commands[expr_index] + command[current_command_count + 1:]
+                current_command_count += len(expr_commands[expr_index])
+                command_count = len(command)
+            else:
+                current_command_count += 1
+        return command
+
+    def parse_expr_to_file(self, file_path: str, thread_index: int = 0) -> TaskResult:
+        self._logger = Logger(f"Expression Parser[{thread_index}]")
+        file_relpath = os.path.relpath(os.path.abspath(file_path), self._workspace)
+        cache_file_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath + COMMAND_POSTFIX))
+        parsing_result: ParsingResult = ParsingResult.read(file_path)
+        command = self.parse_all_expr(parsing_result)
+        if command is None:
+            return TaskResult(TaskResultState.FAILURE)
+        with open(cache_file_path, "w", encoding=self._ENCODING) as f:
+            f.writelines(command)
+        return TaskResult(TaskResultState.SUCCESS, [["violac", "run-vm", file_path]])
+
+    def parse_single_expr(self, expr_tokens: list[Token]) -> Optional[list[str]]:
+        self._load_tokens(expr_tokens)
+        return self._parse_expr(len(expr_tokens))
 
     def _lex_unary_op(self) -> None:
         check_unary_op: bool = True
@@ -434,8 +475,10 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command
     def _parse_expr(self, end_pos: int) -> Optional[list[str]]:
-        # TODO: 添加表达式解析
-        ...
+        result = self._parse_slice(end_pos)
+        if result is None:
+            return None
+        return result[0]
 
     @_set_loc_command_with_state
     def _parse_equal_expr(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
@@ -445,13 +488,20 @@ class ExprParser(GlobalParser):
         }, end_pos, self._parse_compare_expr)
 
     @_set_loc_command
-    def _parse_expr_ends_with(self, end_token_types: list[str], parser: Callable[[int], Optional[list[str]]]) -> Optional[list[str]]:
+    def _parse_expr_ends_with(
+            self, end_token_types: list[str], parser: Callable[[int], Optional[list[str]]],
+            end_pos: Optional[int] = None
+    ) -> Optional[list[str]]:
         bracket_count: int = 0
         square_bracket_count: int = 0
         curly_bracket_count: int = 0
+        question_mark_count: int = 0
         start_pos: int = self._current
-        while not self._match_types(end_token_types) or bracket_count > 0 or square_bracket_count > 0 or curly_bracket_count > 0:
+        while not self._match_types(end_token_types) or bracket_count > 0 or square_bracket_count > 0 or \
+                curly_bracket_count > 0 or question_mark_count > 0:
             self._next()
+            if end_pos is not None and self._current >= end_pos:
+                break
             if self._current >= self._tokens_num:
                 self._raise("Unexpected end of expression")
                 return None
@@ -467,6 +517,11 @@ class ExprParser(GlobalParser):
                 curly_bracket_count += 1
             elif self._match_type("R_CURLY_BRACKET"):
                 curly_bracket_count -= 1
+            if bracket_count == 0 and square_bracket_count == 0 and curly_bracket_count == 0:
+                if self._match_type("QUESTION_MARK"):
+                    question_mark_count += 1
+                elif self._match_type("COLON"):
+                    question_mark_count -= 1
         end_pos: int = self._current
         self._back_to(start_pos)
         return parser(end_pos)
@@ -534,7 +589,7 @@ class ExprParser(GlobalParser):
             result = self._parse_curly_bracket_expr(_ExprState.EXPR_STARTING)
         elif self._match_type("IDENTIFIER"):
             result = self._parse_attr_expr()
-        elif self._match_types(["INT32", "UINT32", "INT_N", "UINT_N"]):
+        elif self._match_types(["INT32", "UINT32", "INT_N", "UINT_N", "SIZE_T"]):
             result = self._parse_int()
         elif self._match_types(["FLOAT", "DOUBLE"]):
             result = self._parse_float()
@@ -555,9 +610,39 @@ class ExprParser(GlobalParser):
     def _parse_or(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
         return self._parse_bin_math_op({"OR": "MAKE EXPR OR_OP"}, end_pos, self._parse_and)
 
+    def _parse_or_no_state(self, end_pos: int) -> Optional[list[str]]:
+        result = self._parse_or(end_pos)
+        if result is None:
+            return None
+        return result[0]
+
     @_set_loc_command_with_state
     def _parse_pow(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
         return self._parse_bin_math_op({"POW": "MAKE EXPR POW_OP"}, end_pos, self._parse_unary_op, False)
+
+    @_set_loc_command_with_state
+    def _parse_question_expr(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        cond_commands = self._parse_expr_ends_with(["QUESTION"], self._parse_or_no_state, end_pos)
+        if cond_commands is None:
+            return None
+        if self._current >= end_pos:
+            return cond_commands, _ExprState.EXPR_ENDING
+        self._next()
+        then_commands = self._parse_expr_ends_with(["COLON"], self._parse_question_expr_no_state)
+        if then_commands is None:
+            return None
+        self._next()
+        else_commands = self._parse_expr_ends_with([], self._parse_question_expr_no_state, end_pos)
+        if else_commands is None:
+            return None
+        return ["MAKE EXPR COND_OP"] + cond_commands + ["CALL SET_EXPR_COND"] + then_commands + ["CALL SET_EXPR_THEN"] + \
+            else_commands + ["CALL SET_EXPR_ELSE"], _ExprState.EXPR_ENDING
+
+    def _parse_question_expr_no_state(self, end_pos: int) -> Optional[list[str]]:
+        result = self._parse_question_expr(end_pos)
+        if result is None:
+            return None
+        return result[0]
 
     @_set_loc_command_with_state
     def _parse_shift(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
@@ -565,6 +650,83 @@ class ExprParser(GlobalParser):
             {"LSHIFT": "MAKE EXPR LSHIFT_OP", "RSHIFT": "MAKE EXPR RSHIFT_OP"},
             end_pos, self._parse_add_sub
         )
+
+    @_set_loc_command_with_state
+    def _parse_slice(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        question_count: int = 0
+        slice_count: int = 0
+        bracket_count: int = 0
+        square_bracket_count: int = 0
+        curly_bracket_count: int = 0
+        start_token_begin: Optional[int] = self._current if not self._match_type("COLON") else None
+        stop_token_begin: Optional[int] = None
+        step_token_begin: Optional[int] = None
+        steps: int = -1
+        while self._current < end_pos:
+            if self._match_type("QUESTION") and bracket_count == 0 and square_bracket_count == 0 and curly_bracket_count == 0:
+                question_count += 1
+            elif self._match_type("COLON") and bracket_count == 0 and square_bracket_count == 0 and curly_bracket_count == 0:
+                if question_count > 0:
+                    question_count -= 1
+                else:
+                    slice_count += 1
+                    if slice_count == 1:
+                        stop_token_begin = self._current
+                    elif slice_count == 2:
+                        step_token_begin = self._current
+                    else:
+                        self._raise("Unexpected token: " + self._get_current().text)
+                        return None
+            elif self._match_type("L_BRACKET"):
+                bracket_count += 1
+            elif self._match_type("R_BRACKET"):
+                bracket_count -= 1
+            elif self._match_type("L_SQUARE_BRACKET"):
+                square_bracket_count += 1
+            elif self._match_type("R_SQUARE_BRACKET"):
+                square_bracket_count -= 1
+            elif self._match_type("L_CURLY_BRACKET"):
+                curly_bracket_count += 1
+            elif self._match_type("R_CURLY_BRACKET"):
+                curly_bracket_count -= 1
+            self._next()
+            steps += 1
+        is_slice = slice_count > 0
+        command: list[str] = ["MAKE EXPR SLICE_REF"] if is_slice else []
+        self._back(steps)
+        if start_token_begin is not None:
+            if stop_token_begin is not None:
+                start_expr_end_pos: int = stop_token_begin
+            elif step_token_begin is not None:
+                start_expr_end_pos: int = step_token_begin - 1
+            else:
+                start_expr_end_pos: int = end_pos
+            start_result = self._parse_question_expr(start_expr_end_pos)
+            if start_result is None:
+                return None
+            command += start_result[0]
+            if not is_slice:
+                return command, start_result[1]
+            else:
+                command.append("CALL SET_START")
+        self._next()
+        if stop_token_begin is not None:
+            if step_token_begin is not None:
+                stop_expr_end_pos: int = step_token_begin - 1
+            else:
+                stop_expr_end_pos: int = end_pos
+            stop_result = self._parse_question_expr(stop_expr_end_pos)
+            if stop_result is None:
+                return None
+            command += stop_result[0] + ["CALL SET_END"]
+            if slice_count < 2:
+                return command, _ExprState.CALLABLE_ENDING
+        self._next()
+        step_result = self._parse_question_expr(end_pos)
+        if step_result is None:
+            return None
+        command += step_result[0] + ["CALL SET_STEP"]
+        return command, _ExprState.CALLABLE_ENDING
 
     @_set_loc_command_with_state
     def _parse_square_bracket_expr(self, expr_state: _ExprState) -> Optional[tuple[list[str], _ExprState]]:

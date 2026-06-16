@@ -28,7 +28,7 @@ class _ScopeCount(Enum):
 class CompilerVM:
     _ENCODING: str = COMPILER_PARAMS["encoding"]
 
-    def __init__(self, proj: project.Project, thread_index: int = 0) -> None:
+    def __init__(self, proj: project.Project) -> None:
         self._project: project.Project = proj
         self._output_path = proj.output_path
         workspace = proj.root_path
@@ -40,7 +40,7 @@ class CompilerVM:
         self._var_state_table: symbol.VariableStateTable = symbol.VariableStateTable()
         self._stack: list[CompilingItem] = []
         self._current_class: Optional[symbol.ClassName] = None
-        self._logger: Logger = Logger(f"Compiler VM[{thread_index}]")
+        self._logger: Logger = Logger(f"Compiler VM[0]")
         # noinspection PyTypeChecker
         self._DEF_MAKER_DICT: dict[str, Callable[[list[str]], definition.Definition]] = {
             "CONST": lambda cmd: self.__make(definition.ConstDef(self._src_info, self._symbol_table, self._symbol_table.namespace)),
@@ -165,22 +165,22 @@ class CompilerVM:
             "SET_VAR_VALUE": lambda cmd: self.__call_set_var_value(),
         }
 
-    def compile(self, src_path: str) -> TaskResult:
+    def compile(self, src_path: str, thread_index: int = 0) -> TaskResult:
+        self._logger = Logger(f"Compiler VM[{thread_index}]")
         src_path = os.path.abspath(src_path)
         src_relpath = os.path.relpath(src_path, self._workspace)
         output_path = os.path.join(self._output_path, src_relpath)
-        output_relpath = os.path.relpath(output_path, self._workspace)
         if not os.path.exists(src_path):
             self._logger.error(f"Source file not found: {src_path}")
             return TaskResult(TaskResultState.FAILURE)
         self._logger.debug(f"Found compiling target: {src_path}")
         if CompilerVM._check_skip(src_path, output_path):
             self._logger.debug(f"Skipped: {src_path}")
-            return TaskResult(TaskResultState.SUCCESS, [f"violac add-make {output_relpath}"])
+            return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
         if not os.path.exists(src_path + SYMBOL_TABLE_POSTFIX) or not os.path.exists(src_path + COMMAND_POSTFIX):
             self._logger.debug(f"Required: {src_path + SYMBOL_TABLE_POSTFIX}")
             self._logger.debug(f"Required: {src_path + COMMAND_POSTFIX}")
-            return TaskResult(TaskResultState.DELAYED, [f"violac parse \"{src_path}\""])
+            return TaskResult(TaskResultState.DELAYED, [["violac", "parse", src_path]])
         self._symbol_table = symbol.SymbolTable.read_from(src_path + SYMBOL_TABLE_POSTFIX)
         self._var_state_table = symbol.VariableStateTable(src_path, self._workspace)
         self._stack.clear()
@@ -198,7 +198,7 @@ class CompilerVM:
         src_file = self.get()
         self._project.add_source_file(src_file)
         self._logger.info(f"Successfully compiled: {src_path}")
-        return TaskResult(TaskResultState.SUCCESS, [f"viola add-make \"{output_relpath}\""])
+        return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
 
     def exec(self, cmd: str) -> None:
         lines: list[str] = cmd.split("\n")

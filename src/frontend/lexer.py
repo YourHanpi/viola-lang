@@ -12,7 +12,7 @@ from typing import Optional
 
 class Lexer(FSM):
     
-    def __init__(self, workspace: str, thread_index: int = 0) -> None:
+    def __init__(self, workspace: str) -> None:
         super().__init__()
         self._workspace: str = workspace
         self._src_info: SourceInfo = VIOLA_INIT
@@ -21,7 +21,7 @@ class Lexer(FSM):
         self._end_line: int = 1
         self._end_col: int = 1
         self._exceptions: list[CompilerException] = []
-        self._logger = Logger(f"Lexer[{thread_index}]")
+        self._logger = Logger(f"Lexer[0]")
 
     @property
     def exceptions(self) -> list[CompilerException]:
@@ -70,16 +70,21 @@ class Lexer(FSM):
             return None
         return tokens
 
-    def lex_with_writer(self, file_path: str) -> TaskResult:
+    def lex_with_writer(self, file_path: str, thread_index: int = 0) -> TaskResult:
+        self._logger = Logger(f"Lexer[{thread_index}]")
         file_path = os.path.abspath(file_path)
+        file_relpath = os.path.relpath(file_path, self._workspace)
+        cache_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
+        if os.path.exists(file_path) and os.path.getmtime(file_path) < os.path.getmtime(cache_path):
+            self._logger.info(f"Passed: {file_path}")
+            return TaskResult(TaskResultState.SUCCESS)
+        self._logger.info(f"Lexing: {file_path}")
         result = self.lex(file_path)
         if result is None:
             self._logger.error(f"Failed to lex: {file_path}")
             return TaskResult(TaskResultState.FAILURE)
-        file_relpath = os.path.relpath(file_path, self._workspace)
-        file_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
-        if not os.path.exists(file_path + TOKEN_POSTFIX):
-            TokenStreamIO.write(file_path + TOKEN_POSTFIX, result)
+        TokenStreamIO.write(cache_path + TOKEN_POSTFIX, result)
+        self._logger.info(f"Successfully lexed: {file_path}")
         return TaskResult(TaskResultState.SUCCESS)
 
     @staticmethod
@@ -340,6 +345,8 @@ class Lexer(FSM):
         bin_state: StateNode = StateNode()
         float_state: StateNode = StateNode()
         unsigned_state: StateNode = StateNode()
+        size_state1: StateNode = StateNode()
+        size_state2: StateNode = StateNode()
         signed_state: StateNode = StateNode()
         unsigned_n_state: StateNode = StateNode()
         signed_n_state: StateNode = StateNode()
@@ -350,11 +357,13 @@ class Lexer(FSM):
         int_state.add_transfer("CHAR_E", exponential_state1)
         int_state.add_transfer("CHAR_U", unsigned_state)
         int_state.add_transfer("CHAR_I", signed_state)
+        int_state.add_transfer("CHAR_S", size_state1)
         int_state.set_output("INT32")
         zero_state.add_transfer("DOT", double_float_state)
         zero_state.add_transfer("CHAR_X", hex_state)
         zero_state.add_transfer("DIGIT", oct_state)
         zero_state.add_transfer("CHAR_B", bin_state)
+        zero_state.add_transfer("CHAR_S", size_state1)
         zero_state.set_output("INT32")
         double_float_state.add_transfer("DIGIT", double_float_state)
         double_float_state.add_transfer("CHAR_E", exponential_state1)
@@ -368,16 +377,21 @@ class Lexer(FSM):
         hex_state.add_transfer("HEX_DIGIT", hex_state)
         hex_state.add_transfer("CHAR_U", unsigned_state)
         hex_state.add_transfer("CHAR_I", signed_state)
+        hex_state.add_transfer("CHAR_S", size_state1)
         hex_state.set_output("INT32")
         oct_state.add_transfer("OCT_DIGIT", oct_state)
         oct_state.add_transfer("CHAR_U", unsigned_state)
         oct_state.add_transfer("CHAR_I", signed_state)
+        oct_state.add_transfer("CHAR_S", size_state1)
         oct_state.set_output("INT32")
         bin_state.add_transfer("BIN_DIGIT", bin_state)
         bin_state.add_transfer("CHAR_U", unsigned_state)
         bin_state.add_transfer("CHAR_I", signed_state)
+        bin_state.add_transfer("CHAR_S", size_state2)
         bin_state.set_output("INT32")
         float_state.set_output("FLOAT")
+        size_state1.add_transfer("CHAR_Z", size_state2)
+        size_state2.set_output("SIZE_T")
         unsigned_state.add_transfer("DIGIT", unsigned_n_state)
         unsigned_n_state.set_output("UINT32")
         signed_state.add_transfer("DIGIT", signed_n_state)

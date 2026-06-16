@@ -20,6 +20,16 @@ class CommandException(Exception):
         return self.__class__.__name__ + ": " + self._message
 
 
+class InternalCommandException(CommandException):
+
+    def __init__(self, message: str) -> None:
+        """
+        初始化内部命令异常对象。
+        :param message: 错误信息。
+        """
+        super().__init__("Internal exception occurred, please report this exception.\n" + message)
+
+
 class CompilerException(Exception):
     """
     编译异常类。

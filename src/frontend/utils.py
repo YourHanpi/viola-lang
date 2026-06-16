@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from utils import COMPILER_PARAMS, SourceInfo
-from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, GENERIC_TABLE_POSTFIX
+from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, EXPR_TOKENS_POSTFIX
 
 from abc import ABC, abstractmethod
 import os
@@ -99,16 +99,16 @@ class ParserGenericTable:
 
 class ParsingSlice(str):
 
-    def __init__(self, src_info: SourceInfo, token_list: list[Token], slice_type: str) -> None:
+    def __init__(self, src_info: SourceInfo, token_list: list[Token], index: int) -> None:
         self._src_info: SourceInfo = src_info.copy()
         self._tokens: list[Token] = token_list
-        self._slice_type: str = slice_type
+        self._index: int = index
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self._src_info}, {self._tokens}, {self._slice_type})"
+        return f"{self.__class__.__name__}({self._src_info}, {self._tokens}, {self._index})"
 
     def __str__(self) -> str:
-        return f"RAW {self._slice_type}"
+        return f"RAW {self._index}"
 
     @property
     def src_info(self) -> SourceInfo:
@@ -117,51 +117,6 @@ class ParsingSlice(str):
     @property
     def tokens(self) -> list[Token]:
         return self._tokens
-
-
-class ParsingResult:
-
-    def __init__(self, command: list[str], symbol: list[str], generic_table: ParserGenericTable, from_global_parser: bool) -> None:
-        self._command: list[str] = command
-        self._symbol: list[str] = symbol
-        self._generic_table: ParserGenericTable = generic_table
-        self._from_global_parser: bool = from_global_parser
-
-    @property
-    def command(self) -> list[str]:
-        return self._command
-
-    @property
-    def generic_table(self) -> ParserGenericTable:
-        return self._generic_table
-
-    @classmethod
-    def read(cls, path: str) -> "ParsingResult":
-        if os.path.exists(path + COMMAND_POSTFIX):
-            with open(path + COMMAND_POSTFIX, "r") as f:
-                command = f.readlines()
-            from_global_parser = False
-        else:
-            with open(path + GLOBAL_COMMAND_POSTFIX, "r") as f:
-                command = f.readlines()
-            from_global_parser = True
-        with open(path + SYMBOL_TABLE_POSTFIX, "r") as f:
-            symbol = f.readlines()
-        with open(path + GENERIC_TABLE_POSTFIX, "r") as f:
-            generic_table = ParserGenericTable.load(f.read())
-        return cls(command, symbol, generic_table, from_global_parser)
-
-    @property
-    def symbol(self) -> list[str]:
-        return self._symbol
-
-    def write(self, path: str) -> None:
-        with open(path + (GLOBAL_COMMAND_POSTFIX if self._from_global_parser else COMMAND_POSTFIX), "w") as f:
-            f.writelines(self._command)
-        with open(path + SYMBOL_TABLE_POSTFIX, "w") as f:
-            f.writelines(self._symbol)
-        with open(path + GENERIC_TABLE_POSTFIX, "w") as f:
-            f.write(self._generic_table.dump())
 
 
 class TokenStreamIO:
@@ -174,9 +129,19 @@ class TokenStreamIO:
             return TokenStreamIO._load_token_list_bytes(f.read())
 
     @staticmethod
+    def read_lists(path: str) -> list[list[Token]]:
+        with open(path, "rb") as f:
+            return TokenStreamIO._load_token_lists(f.read())
+
+    @staticmethod
     def write(path: str, tokens: list[Token]) -> None:
         with open(path, "wb") as f:
             f.write(TokenStreamIO._dump_token_list_bytes(tokens))
+
+    @staticmethod
+    def write_lists(path: str, token_lists: list[list[Token]]) -> None:
+        with open(path, "wb") as f:
+            f.write(TokenStreamIO._dump_token_lists(token_lists))
 
     @staticmethod
     def _dump_single_token_bytes(token: Token) -> bytes:
@@ -196,6 +161,14 @@ class TokenStreamIO:
         for token in tokens:
             text += TokenStreamIO._dump_single_token_bytes(token)
         return text
+
+    @staticmethod
+    def _dump_token_lists(tokens: list[list[Token]]) -> bytes:
+        data: list[bytes] = [TokenStreamIO._dump_token_list_bytes(token) for token in tokens]
+        pos_list: list[int] = [0] + [sum(map(len, data[:i])) for i in range(1, len(data))]
+        header: bytes = b"VLAe" + len(pos_list).to_bytes(4, "little")
+        pos_buffers: bytes = b"".join([pos.to_bytes(4, "little") for pos in pos_list])
+        return header + pos_buffers + b"".join(data)
 
     @staticmethod
     def _load_single_token_bytes(buffer: bytes) -> tuple[Token, bytes]:
@@ -221,3 +194,59 @@ class TokenStreamIO:
             token, buffer = TokenStreamIO._load_single_token_bytes(buffer)
             tokens.append(token)
         return tokens
+
+    @staticmethod
+    def _load_token_lists(buffer: bytes) -> list[list[Token]]:
+        pos_count: int = int.from_bytes(buffer[4:8], "little")
+        buffer = buffer[8:]
+        pos_list: list[int] = [int.from_bytes(buffer[:4], "little") for _ in range(pos_count)]
+        buffer = buffer[pos_count * 4:]
+        data_list: list[bytes] = [buffer[pos:pos_list[i + 1]] for i, pos in enumerate(pos_list[:-1])] + [buffer[pos_list[-1]:]]
+        return [TokenStreamIO._load_token_list_bytes(data) for data in data_list]
+
+
+class ParsingResult:
+
+    def __init__(self, command: list[str], symbol: list[str], expr_tokens: list[list[Token]], from_global_parser: bool) -> None:
+        self._command: list[str] = command
+        self._symbol: list[str] = symbol
+        self._expr_tokens: list[list[Token]] = expr_tokens
+        self._from_global_parser: bool = from_global_parser
+
+    @property
+    def command(self) -> list[str]:
+        return self._command
+
+    @property
+    def expr_tokens(self) -> list[list[Token]]:
+        return self._expr_tokens
+
+    @classmethod
+    def read(cls, path: str) -> "ParsingResult":
+        if os.path.exists(path + COMMAND_POSTFIX):
+            with open(path + COMMAND_POSTFIX, "r") as f:
+                command = f.readlines()
+            from_global_parser = False
+        else:
+            with open(path + GLOBAL_COMMAND_POSTFIX, "r") as f:
+                command = f.readlines()
+            from_global_parser = True
+        with open(path + SYMBOL_TABLE_POSTFIX, "r") as f:
+            symbol = f.readlines()
+        if from_global_parser:
+            expr_tokens = TokenStreamIO.read_lists(path + EXPR_TOKENS_POSTFIX)
+        else:
+            expr_tokens = []
+        return cls(command, symbol, expr_tokens, from_global_parser)
+
+    @property
+    def symbol(self) -> list[str]:
+        return self._symbol
+
+    def write(self, path: str) -> None:
+        with open(path + (GLOBAL_COMMAND_POSTFIX if self._from_global_parser else COMMAND_POSTFIX), "w") as f:
+            f.writelines(self._command)
+        with open(path + SYMBOL_TABLE_POSTFIX, "w") as f:
+            f.writelines(self._symbol)
+        if self._from_global_parser:
+            TokenStreamIO.write_lists(path + EXPR_TOKENS_POSTFIX, self._expr_tokens)

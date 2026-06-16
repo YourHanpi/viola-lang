@@ -7,19 +7,20 @@ from typing import Optional
 
 
 class TaskResultState(Enum):
-    SUCCESS = 0
-    FAILURE = 1
+    FAILURE = 0
+    SUCCESS = 1
     DELAYED = 2
+    PASSED = 3
 
 
 class TaskResult:
 
-    def __init__(self, state: TaskResultState, data: Optional[list[str]] = None) -> None:
+    def __init__(self, state: TaskResultState, data: Optional[list[list[str]]] = None) -> None:
         self._state: TaskResultState = state
-        self._data: list[str] = data if data is not None else []
+        self._data: list[list[str]] = data if data is not None else []
 
     @property
-    def data(self) -> list[str]:
+    def data(self) -> list[list[str]]:
         return self._data
 
     @property
@@ -30,7 +31,7 @@ class TaskResult:
 class TaskStack:
 
     def __init__(self) -> None:
-        self._tasks: list[str] = []
+        self._tasks: list[list[str]] = []
         self._executing_tasks_count: int = 0
 
     def finish_task(self) -> None:
@@ -39,7 +40,7 @@ class TaskStack:
                 raise CommandException("No task to finish.")
             self._executing_tasks_count -= 1
 
-    def get(self) -> str:
+    def get(self) -> list[str]:
         with Lock():
             if len(self._tasks) == 0:
                 raise CommandException("No task to execute.")
@@ -48,10 +49,14 @@ class TaskStack:
         return task
 
     @property
+    def is_empty(self) -> bool:
+        return len(self._tasks) == 0
+
+    @property
     def is_finished(self) -> bool:
         return len(self._tasks) == 0 and self._executing_tasks_count == 0
 
-    def put(self, command: str) -> None:
+    def put(self, command: list[str]) -> None:
         with Lock():
             self._tasks.append(command)
 
