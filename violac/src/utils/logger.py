@@ -4,6 +4,7 @@ from .compiler_params import COMPILER_PARAMS
 from .source_info import VIOLA_INIT
 
 from enum import Enum
+import os
 from sys import stderr
 from threading import Lock
 import time
@@ -38,14 +39,16 @@ class FileHandler:
         self._handler: Optional[TextIO] = None
         # noinspection PyTypeChecker
         self._encoding: str = COMPILER_PARAMS["log-encoding"]
-
-    def config_workspace(self, workspace: str) -> None:
-        self._workspace = workspace
+        self._output_name: str = ""
 
     def close(self) -> None:
         if self._handler is not None:
             self._handler.close()
             self._handler = None
+
+    def config_project(self, workspace: str, output_name: str) -> None:
+        self._workspace = workspace
+        self._output_name = output_name
 
     def log(self, message: str) -> None:
         if self._handler is None:
@@ -55,18 +58,20 @@ class FileHandler:
     def open(self) -> None:
         if self._workspace == "":
             raise InternalCompilerException("Log file handler is not configured.", VIOLA_INIT)
-        self._path = f"{self._workspace}/viola-{time.strftime('%Y-%m-%d-%H-%M-%S')}.log"
+        if not os.path.exists(os.path.join(self._workspace, "__log__")):
+            os.mkdir(os.path.join(self._workspace, "__log__"))
+        self._path = f"{self._workspace}/__log__/{self._output_name}-{time.strftime('%Y-%m-%d-%H-%M-%S')}.log"
         self._handler = open(self._path, "a")
 
 
 class LoggerController:
 
-    def __del__(self) -> None:
-        self._file_handler.close()
-
     def __init__(self) -> None:
         self._log_level: LogLevel = LogLevel.INFO
         self._file_handler: FileHandler = FileHandler()
+
+    def close(self) -> None:
+        self._file_handler.close()
 
     def config_log_level(self, log_level: str) -> None:
         match log_level:
@@ -83,8 +88,8 @@ class LoggerController:
             case _:
                 raise CommandException("Invalid log level.")
 
-    def config_workspace(self, workspace: str) -> None:
-        self._file_handler.config_workspace(workspace)
+    def config_workspace(self, workspace: str, output_name: str) -> None:
+        self._file_handler.config_project(workspace, output_name)
 
     @property
     def log_level(self) -> LogLevel:

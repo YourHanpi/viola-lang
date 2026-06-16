@@ -43,35 +43,44 @@ class CompilerVM:
         self._logger: Logger = Logger(f"Compiler VM[0]")
         # noinspection PyTypeChecker
         self._DEF_MAKER_DICT: dict[str, Callable[[list[str]], definition.Definition]] = {
-            "CONST": lambda cmd: self.__make(definition.ConstDef(self._src_info, self._symbol_table, self._symbol_table.namespace)),
+            "CONST": lambda cmd: self.__make(
+                definition.ConstDef(self._src_info, self._symbol_table, self._symbol_table.namespace)),
             "SQ": self.__make_def_sq,
             "CONSTRUCTOR": self.__make_def_constructor,
             "DESTRUCTOR": self.__make_def_destructor,
             "FN": self.__make_def_fn,
-            "C_PART_SQ": lambda cmd: self.__make(definition.CPartSqDef(self._src_info, self._symbol_table, self._symbol_table.namespace,
-                                                                       self._var_state_table.assigned_variables, cmd[0],
+            "C_PART_SQ": lambda cmd: self.__make(
+                definition.CPartSqDef(self._src_info, self._symbol_table, self._symbol_table.namespace,
+                                      self._var_state_table.assigned_variables, cmd[0],
                                                                        " ".join(cmd[1:]).split("%"))),
             "CLASS": lambda cmd: self.__make_class(cmd),
-            "FROM_IMPORT": lambda cmd: self.__make(definition.FromImportDef(self._src_info, self._symbol_table, workspace, cmd[0], cmd[1:])),
+            "FROM_IMPORT": lambda cmd: self.__make(
+                definition.FromImportDef(self._src_info, self._symbol_table, workspace, cmd[0], cmd[1:])),
             "IMPORT": lambda cmd: self.__make(project.ImportDef(self._src_info, self._symbol_table, workspace, cmd[0])),
-            "ENUM": lambda cmd: self.__make(definition.EnumDef(self._src_info, self._symbol_table, self._symbol_table.namespace, cmd[0]))
+            "ENUM": lambda cmd: self.__make(
+                definition.EnumDef(self._src_info, self._symbol_table, self._symbol_table.namespace, cmd[0]))
         }
         # noinspection PyTypeChecker
         self._EXPR_MAKER_DICT: dict[str, Callable[[list[str]], expression.Expression]] = {
             "C": lambda cmd: self.__make(expression.CExpr(self._src_info, self._symbol_table)),
             "UNPACK": lambda cmd: self.__make(expression.UnpackExpr(self._src_info, self._symbol_table)),
             "VARIABLE_REF": lambda cmd: self.__make_variable_ref(cmd),
-            "STRING_LITERAL": lambda cmd: self.__make(expression.StringLiteral(self._src_info, self._symbol_table, " ".join(cmd))),
+            "STRING_LITERAL": lambda cmd: self.__make(
+                expression.StringLiteral(self._src_info, self._symbol_table, " ".join(cmd))),
             "BOOL_LITERAL": lambda cmd: self.__make(expression.BoolLiteral(self._src_info, self._symbol_table, cmd[0])),
-            "INTEGER_LITERAL": lambda cmd: self.__make(expression.IntegerLiteral(self._src_info, self._symbol_table, cmd[0], cmd[1])),
-            "FLOAT_LITERAL": lambda cmd: self.__make(expression.FloatLiteral(self._src_info, self._symbol_table, cmd[0])),
+            "INTEGER_LITERAL": lambda cmd: self.__make(
+                expression.IntegerLiteral(self._src_info, self._symbol_table, cmd[0], cmd[1])),
+            "FLOAT_LITERAL": lambda cmd: self.__make(
+                expression.FloatLiteral(self._src_info, self._symbol_table, cmd[0])),
             "SLICE_REF": lambda cmd: self.__make(expression.SliceRef(self._src_info, self._symbol_table)),
             "ARRAY_REF": lambda cmd: self.__make(expression.ArrayRef(self._src_info, self._symbol_table)),
             "TUPLE_REF": lambda cmd: self.__make(expression.TupleRef(self._src_info, self._symbol_table)),
             "AUTO_TYPE_REF": lambda cmd: self.__make(expression.AutoTypeRef(self._src_info, self._symbol_table)),
             "FUNCTION_TYPE_REF": lambda cmd: self.__make(expression.FunctionTypeRef(self._src_info, self._symbol_table)),
-            "TYPE_REF": lambda cmd: self.__make(expression.TypeRef.from_name(self._src_info, self._symbol_table, " ".join(cmd))),
-            "CLASS_REF": lambda cmd: self.__make(expression.ClassRef.from_name(self._src_info, self._symbol_table, " ".join(cmd))),
+            "TYPE_REF": lambda cmd: self.__make(
+                expression.TypeRef.from_name(self._src_info, self._symbol_table, " ".join(cmd))),
+            "CLASS_REF": lambda cmd: self.__make(
+                expression.ClassRef.from_name(self._src_info, self._symbol_table, " ".join(cmd))),
             "ATTR_OP": lambda cmd: self.__make(expression.AttrOp(self._src_info, self._symbol_table)),
             "CALL_OP": lambda cmd: self.__make(expression.CallOp(self._src_info, self._symbol_table)),
             "ADD_OP": lambda cmd: self.__make(expression.AddOp(self._src_info, self._symbol_table)),
@@ -102,25 +111,35 @@ class CompilerVM:
             "BRACKETS_OP": lambda cmd: self.__make(expression.BracketsOp(self._src_info, self._symbol_table)),
             "COND_OP": lambda cmd: self.__make(expression.ConditionalOp(self._src_info, self._symbol_table)),
             "UPDATE": lambda cmd: self.__make(expression.UpdateExpr(self._src_info, self._symbol_table)),
-            "CAST_OP": lambda cmd: self.__make(statement.CastOp(self._src_info, self._symbol_table, self._var_state_table)),
+            "CAST_OP": lambda cmd: self.__make(
+                statement.CastOp(self._src_info, self._symbol_table, self._var_state_table)),
             "CLOSURE": lambda cmd: self.__make(definition.Closure(self._src_info, self._symbol_table)),
             "GENERIC_CALL": lambda cmd: self.__make(definition.GenericCall(self._src_info, self._symbol_table)),
         }
         # noinspection PyTypeChecker
         self._STMT_MAKER_DICT: dict[str, Callable[[list[str]], statement.Statement]] = {
-            "DECL": lambda cmd: self.__make(statement.DeclStmt(self._src_info, self._symbol_table, self._symbol_table.namespace, self._var_state_table)),
-            "ASSIGN": lambda cmd: self.__make(statement.AssignStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "DECL": lambda cmd: self.__make(
+                statement.DeclStmt(self._src_info, self._symbol_table, self._symbol_table.namespace, self._var_state_table)),
+            "ASSIGN": lambda cmd: self.__make(
+                statement.AssignStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "OP": lambda cmd: self.__make(statement.OpStmt(self._src_info, self._symbol_table, self._var_state_table)),
-            "RETURN": lambda cmd: self.__make(statement.ReturnStmt(self._src_info, self._symbol_table, self._var_state_table)),
-            "THROW": lambda cmd: self.__make(statement.ThrowStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "RETURN": lambda cmd: self.__make(
+                statement.ReturnStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "THROW": lambda cmd: self.__make(
+                statement.ThrowStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "C": lambda cmd: self.__make(statement.CStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "IF": lambda cmd: self.__make(statement.IfStmt(self._src_info, self._symbol_table, self._var_state_table)),
-            "ELIF": lambda cmd: self.__make(statement.ElifStmt(self._src_info, self._symbol_table, self._var_state_table)),
-            "ELSE": lambda cmd: self.__make(statement.ElseStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "ELIF": lambda cmd: self.__make(
+                statement.ElifStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "ELSE": lambda cmd: self.__make(
+                statement.ElseStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "TRY": lambda cmd: self.__make(statement.TryStmt(self._src_info, self._symbol_table, self._var_state_table)),
-            "CATCH": lambda cmd: self.__make(statement.CatchStmt(self._src_info, self._symbol_table, self._var_state_table)),
-            "FINALLY": lambda cmd: self.__make(statement.FinallyStmt(self._src_info, self._symbol_table, self._var_state_table)),
-            "TYPE_DEF": lambda cmd: self.__make(statement.TypeDefStmt(self._src_info, self._symbol_table, cmd[0], self._var_state_table)),
+            "CATCH": lambda cmd: self.__make(
+                statement.CatchStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "FINALLY": lambda cmd: self.__make(
+                statement.FinallyStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "TYPE_DEF": lambda cmd: self.__make(
+                statement.TypeDefStmt(self._src_info, self._symbol_table, cmd[0], self._var_state_table)),
             "BLOCK": lambda cmd: self.__make_stmt_block()
         }
         self._CALLER_DICT: dict[str, Callable[[list[str]], None]] = {

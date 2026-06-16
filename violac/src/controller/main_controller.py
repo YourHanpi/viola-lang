@@ -2,12 +2,14 @@
 from .controller import Controller
 from .single_controllers import LexerController, GlobalParserController, ExprParserController, CompilerVMController
 from backend.project import Project
+from maker import TargetSourceRecorder
 from utils import CommandException
 from utils.logger import LOGGER_CONTROLLER, Logger
 from utils.task import TaskStack, TaskResultState
 
 from copy import copy
 import subprocess
+import sys
 import time
 
 
@@ -22,16 +24,20 @@ class MainController:
         self._thread_num: int = thread_num
         self._controllers: list[Controller] = []
         self._task_stack: TaskStack = TaskStack()
-        LOGGER_CONTROLLER.config_workspace(workspace)
+        LOGGER_CONTROLLER.config_workspace(workspace, output_path)
         self._logger: Logger = Logger("Main")
+        self._maker: TargetSourceRecorder = TargetSourceRecorder(workspace, output_path)
 
     def run(self) -> None:
         LOGGER_CONTROLLER.open()
         try:
             while not self._task_stack.is_finished:
                 self._post_task()
-        except CommandException:
+        except CommandException as e:
+            sys.stderr.write(str(e))
             exit(1)
+        finally:
+            LOGGER_CONTROLLER.close()
 
     def _post_task(self) -> None:
         not_busy: list[int] = self._wait()

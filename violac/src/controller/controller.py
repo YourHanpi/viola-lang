@@ -54,7 +54,7 @@ class Controller(ABC):
         pass
 
     @staticmethod
-    def _get_params(command: list[str]) -> dict[str, str]:
+    def _get_params(command: list[str]) -> tuple[list[str], dict[str, str]]:
         args: list[str] = []
         kwargs: dict[str, str] = {}
         for arg in command:
@@ -65,10 +65,10 @@ class Controller(ABC):
                     arg = arg[1:-1]
                 args.append(arg)
                 continue
-            if arg.startswith("-"):
-                arg = arg[1:]
-            elif arg.startswith("--"):
+            if arg.startswith("--"):
                 arg = arg[2:]
+            elif arg.startswith("-"):
+                arg = arg[1:]
             if "=" in arg:
                 key, value = arg.split("=", 1)
                 if value.startswith('"') and value.endswith('"'):
@@ -78,7 +78,7 @@ class Controller(ABC):
                 kwargs[key] = value
             else:
                 kwargs[arg] = "true"
-        return kwargs
+        return args, kwargs
 
 
 class SingleController(Controller, ABC):

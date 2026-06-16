@@ -23,7 +23,6 @@ class CompilerParams:
         return {
             "cCompile-exec": "gcc",
             "cCompile-flags": ["-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic", "-O2"],
-            "cCompile-output": "a.out",
             "debug-memory-accessViolation": True,
             "debug-type-dynamicCheck": True,
             "encoding": "utf-8",
