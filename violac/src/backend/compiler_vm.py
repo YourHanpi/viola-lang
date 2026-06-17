@@ -203,7 +203,7 @@ class CompilerVM:
         self._logger = Logger(f"Compiler VM[{thread_index}]")
         src_path = os.path.abspath(src_path)
         src_relpath = os.path.relpath(src_path, self._workspace)
-        cache_path = os.path.abspath(os.path.join(CACHE_DIR, src_relpath))
+        cache_path = os.path.join(self._workspace, CACHE_DIR, src_relpath)
         output_path = os.path.join(self._output_path, src_relpath)
         if not os.path.exists(src_path):
             self._logger.error(f"Source file not found: {src_path}")

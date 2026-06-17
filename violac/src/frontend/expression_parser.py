@@ -156,7 +156,7 @@ class ExprParser(GlobalParser):
         self._logger = Logger(f"Expression Parser[{thread_index}]")
         file_abs_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_abs_path, self._workspace)
-        cache_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
+        cache_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
         cache_file_path = cache_path + COMMAND_POSTFIX
         parsing_result: ParsingResult = ParsingResult.read(cache_path)
         command = self.parse_all_expr(parsing_result)

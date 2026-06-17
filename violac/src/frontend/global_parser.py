@@ -148,7 +148,7 @@ class GlobalParser:
         self._logger: Logger = Logger(f"Parser[{thread_index}]")
         file_abs_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_abs_path, self._workspace)
-        cache_file_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
+        cache_file_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
         result = self.parse_from_file(cache_file_path, file_abs_path)
         if result is not None:
             result.write(cache_file_path)

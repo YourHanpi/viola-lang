@@ -2,10 +2,10 @@
 from .compiling_item import CompilingItem
 from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp, ClassRef, TypeRef
 from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, \
-    STACK_B_POP_FUNC
+    STACK_B_POP_FUNC, CleanupBlock, FinallyStmt
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
     ClassName, MethodName, CLOSURE_T, TypeName, EXCEPTION_T_NAME, EnumName, GlobalVariableName, GenericArgument, \
-    ArrayTypeName, StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable
+    StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable
 from utils import CompilerException, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
@@ -362,6 +362,7 @@ class SqDef(Definition):
             self._body.head_text + ("\n\r" + self._body.tail_recursive_mark) if self._body.tail_recursive_mark is not None else "",
             f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
             self._body.text,
+            CleanupBlock(self._src_info, self._symbol_table, self._var_states, list(self._body.new_variables)).text,
             "}"
         ]
         async_text: list[str] = [

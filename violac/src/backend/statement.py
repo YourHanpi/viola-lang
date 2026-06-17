@@ -1854,6 +1854,21 @@ class _ProcessingMode(Enum):
     TRY_CATCH = 2
 
 
+class CleanupBlock(CStmt):
+
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 to_released_vars: list[VariableName], jump_label: str = "cleanup:") -> None:
+        super().__init__(src_info, symbol_table, var_states)
+        self._to_released_vars: list[VariableName] = to_released_vars
+        self.add_text(jump_label)
+        for v in self._to_released_vars:
+            self.add_text(f"if ({v.name}) {{ {v.free_text} }}")
+
+    @property
+    def text(self) -> str:
+        return self._inner_text
+
+
 class BlockStmt(Statement):
     """语句块，包含多条子语句。"""
 
@@ -2189,10 +2204,11 @@ class FnBlockStmt(BlockStmt):
                 new_stmt.add_stmt(buffer_stmt)
             self._cond_stmt_buffer.clear()
             self.add_stmt(new_stmt)
-        if isinstance(stmt, OpStmt):
+        if isinstance(stmt, OpStmt | ReturnStmt | ThrowStmt | CStmt):
             unreachable_warning(
-                "Function call without return will be depreciated in any function defined with keyword \"fn\".",
-                stmt.src_info)
+                "Function call without return will be depreciated in any function defined with keyword \"fn\". Try to use \"sq\" for instead.",
+                stmt.src_info
+            )
             return
         self._stmt_set.add(stmt)
         self._variable_dependencies.update(map(lambda var: (var, stmt), stmt.new_variables))

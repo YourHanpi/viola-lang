@@ -471,6 +471,15 @@ class VariableName(NamedSymbol):
         """
         return f"&{self.name}"
 
+    @property
+    def free_text(self) -> str:
+        """
+        获取这一变量的释放文本。
+        """
+        if not self.is_object:
+            return ""
+        return f"{self._type.name}$__del__({self.name}); {self.name} = NULL;"
+
     def instantiation(self, new_name: str, t: dict["GenericArgument", TypeName]) -> "VariableName":
         """
         实例化这一变量（如果是泛型参数类型的话）。
@@ -1426,7 +1435,9 @@ class FunctionName(GlobalVariableName):
         """
         转换为声明。
         """
-        return self.type.as_header(self._name)
+        args_text = ", ".join(list(map(lambda a: a.type_name_pair_calling, self.args)))
+        returns_text = ", ".join(list(map(lambda a: a.type_name_pair_assigning, self.type.returns)))
+        return f"void {self.name}({', '.join(filter(lambda x: x != "", [args_text, returns_text, LISTENER_T + ' *listener']))})"
 
     def as_define_name(self) -> str:
         """
@@ -2819,6 +2830,10 @@ class VariableStateTable:
         获取所有已赋值变量。
         """
         return [k for k, v in self.state.items() if v == VariableState.ASSIGNED]
+
+    @property
+    def last_scope(self) -> dict[VariableName, VariableState]:
+        return self._state[-1]
 
     def pop_scope(self) -> None:
         """
