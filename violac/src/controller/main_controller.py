@@ -17,8 +17,16 @@ import time
 
 
 class MainController:
+    """主控制器类，负责编译流程的整体调度。"""
 
     def __init__(self, workspace: str, entry_path: str, output_path: str, thread_num: int, kwargs: dict[str, str]) -> None:
+        """初始化主控制器对象。
+        :param workspace: 工作空间路径。
+        :param entry_path: 入口文件路径。
+        :param output_path: 输出路径。
+        :param thread_num: 线程数。
+        :param kwargs: 其他参数。
+        """
         self._project: Project = Project(workspace, entry_path, output_path)
         self._lexer_controller: LexerController = LexerController(workspace)
         self._parser_controller: GlobalParserController = GlobalParserController(workspace)
@@ -32,13 +40,15 @@ class MainController:
         self._maker: TargetSourceRecorder = TargetSourceRecorder(workspace, output_path)
         self._workspace: str = workspace
         self._entry_path: str = entry_path
-        if kwargs["clear-cache"] == "true":
+        if "clear-cache" in kwargs and kwargs["clear-cache"] == "true" and os.path.exists(os.path.join(workspace, CACHE_DIR)):
             shutil.rmtree(os.path.join(workspace, CACHE_DIR))
-        if kwargs["clear-output"] == "true":
+            os.mkdir(os.path.join(workspace, CACHE_DIR))
+        if "clear-output" in kwargs and kwargs["clear-output"] == "true" and os.path.exists(output_path):
             shutil.rmtree(output_path)
             os.mkdir(output_path)
 
     def run(self) -> None:
+        """运行编译流程。"""
         LOGGER_CONTROLLER.open()
         try:
             entry_path = os.path.join(self._workspace, self._entry_path)
@@ -58,6 +68,7 @@ class MainController:
             LOGGER_CONTROLLER.close()
 
     def _post_task(self) -> bool:
+        """处理任务队列中的下一个任务。"""
         not_busy: list[int] = self._wait()
         not_busy_count: int = len(not_busy)
         for i in not_busy:
@@ -83,6 +94,7 @@ class MainController:
         return not_busy_count >= len(self._controllers) and self._task_stack.is_empty
 
     def _get_controller(self, command: list[str]) -> Controller:
+        """根据命令获取对应的控制器副本。"""
         if command[1] == "lex":
             return copy(self._lexer_controller)
         elif command[1] == "parse":
@@ -95,6 +107,7 @@ class MainController:
             raise CommandException("Invalid command")
 
     def _wait(self) -> list[int]:
+        """等待至少一个控制器空闲。"""
         not_busy: list[int] = []
         while len(not_busy) == 0:
             if len(self._controllers) == 0:

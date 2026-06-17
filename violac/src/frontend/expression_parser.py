@@ -62,6 +62,11 @@ _BLANK_TOKEN: Token = Token("", ["_BLANK"])
 
 
 def _set_loc_command(parse_func: __PARSER_UTILS_TYPE) -> __PARSER_UTILS_TYPE:
+    """
+    装饰器：自动为解析函数注入位置信息和源代码文本，并生成SET_INFO命令。
+    :param parse_func: 被装饰的解析函数。
+    :return: 装饰后的包装函数。
+    """
     def wrapper(self: "ExprParser", *args, **kwargs) -> Optional[list[str]]:
         start_line, start_col, _, _ = self._src_info.location_tuple
         start_token_count: int = self._current
@@ -79,6 +84,11 @@ def _set_loc_command(parse_func: __PARSER_UTILS_TYPE) -> __PARSER_UTILS_TYPE:
 
 
 def _set_loc_command_with_state(parse_func: __PARSER_UTILS_WITH_STATE_TYPE) -> __PARSER_UTILS_WITH_STATE_TYPE:
+    """
+    装饰器：自动为解析函数注入位置信息和源代码文本，并生成SET_INFO命令（带表达式状态）。
+    :param parse_func: 被装饰的解析函数。
+    :return: 装饰后的包装函数。
+    """
     def wrapper(self: "ExprParser", *args, **kwargs) -> Optional[tuple[list[str], _ExprState]]:
         start_line, start_col, _, _ = self._src_info.location_tuple
         start_token_count: int = self._current
@@ -96,11 +106,23 @@ def _set_loc_command_with_state(parse_func: __PARSER_UTILS_WITH_STATE_TYPE) -> _
 
 
 class ExprParser(GlobalParser):
+    """
+    表达式解析器，负责解析Viola语言中的各种表达式。
+    """
 
     def __init__(self, workspace: str) -> None:
+        """
+        初始化表达式解析器。
+        :param workspace: 工作区路径。
+        """
         super().__init__(workspace)
 
     def parse_all_expr(self, parsing_result: ParsingResult) -> Optional[list[str]]:
+        """
+        解析解析结果中的所有表达式。
+        :param parsing_result: 解析结果对象。
+        :return: 完整命令列表，失败返回None。
+        """
         command = parsing_result.command
         expr_tokens: list[list[Token]] = parsing_result.expr_tokens
         expr_commands: list[list[str]] = []
@@ -125,6 +147,12 @@ class ExprParser(GlobalParser):
         return command
 
     def parse_expr_to_file(self, file_path: str, thread_index: int = 0) -> TaskResult:
+        """
+        解析表达式并将结果写入文件。
+        :param file_path: 源文件路径。
+        :param thread_index: 线程索引。
+        :return: 任务结果。
+        """
         self._logger = Logger(f"Expression Parser[{thread_index}]")
         file_abs_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_abs_path, self._workspace)
@@ -140,12 +168,20 @@ class ExprParser(GlobalParser):
         return TaskResult(TaskResultState.SUCCESS, [["violac", "run-vm", file_path]])
 
     def parse_single_expr(self, expr_tokens: list[Token]) -> Optional[list[str]]:
+        """
+        解析单个表达式。
+        :param expr_tokens: 表达式的记号列表。
+        :return: 表达式对应的命令列表，失败返回None。
+        """
         self._load_tokens(expr_tokens)
         self._lex_unary_op()
         self._back_to(0)
         return self._parse_expr(len(expr_tokens))
 
     def _lex_unary_op(self) -> None:
+        """
+        预处理一元运算符，将加减乘等标记转换为一元运算符标记。
+        """
         check_unary_op: bool = True
         while self._current < self._tokens_num:
             t: Token = self._get_current()
@@ -160,6 +196,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_add_sub(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析加减法表达式。"""
         return self._parse_bin_math_op(
             {"ADD": "MAKE EXPR ADD_OP", "SUB": "MAKE EXPR SUB_OP"},
             end_pos, self._parse_mul_div_mod
@@ -167,6 +204,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_and(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析逻辑与表达式。"""
         return self._parse_bin_math_op(
             {"AND": "MAKE EXPR AND_OP"},
             end_pos, self._parse_bit_xor
@@ -174,6 +212,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command
     def _parse_arg_list(self) -> Optional[list[str]]:
+        """解析函数调用参数列表。"""
         kwarg_name: str = ""
         start_pos: int = self._current
         bracket_count: int = 0
@@ -217,6 +256,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_attr_expr(self) -> Optional[tuple[list[str], _ExprState]]:
+        """解析属性访问表达式（包括链式调用和索引）。"""
         id_list: list[str] = []
         is_prefix: bool = True
         expect_dot: bool = False
@@ -285,6 +325,7 @@ class ExprParser(GlobalParser):
             inner_parser: Callable[[int], Optional[tuple[list[str], _ExprState]]],
             associativity_left: bool = True
     ) -> Optional[tuple[list[str], _ExprState]]:
+        """解析二元数学运算表达式，支持左右结合性。"""
         if associativity_left:
             commands = self._parse_bin_op_left_associativity(op_maker_commands, end_pos, inner_parser)
         else:
@@ -298,6 +339,7 @@ class ExprParser(GlobalParser):
             self, op_maker_commands: dict[str, str], end_pos: int,
             inner_parser: Callable[[int], Optional[tuple[list[str], _ExprState]]]
     ) -> Optional[tuple[list[str], _ExprState]]:
+        """解析左结合二元运算符表达式。"""
         token_start, op_list = self._split_by_bin_op(list(op_maker_commands.keys()), end_pos)
         token_start.append(end_pos)
         commands = list(map(lambda op: op_maker_commands[op], op_list[::-1]))
@@ -320,6 +362,7 @@ class ExprParser(GlobalParser):
             self, op_maker_commands: dict[str, str], end_pos: int,
             inner_parser: Callable[[int], Optional[tuple[list[str], _ExprState]]]
     ) -> Optional[tuple[list[str], _ExprState]]:
+        """解析右结合二元运算符表达式。"""
         token_start, op_list = self._split_by_bin_op(list(op_maker_commands.keys()), end_pos)
         token_start = token_start[::-1] + [self._current]
         token_end: list[int] = [end_pos] + token_start[1:]
@@ -340,6 +383,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_bit_and(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析按位与表达式。"""
         return self._parse_bin_math_op(
             {"BIT_AND": "MAKE EXPR BIT_AND_OP"},
             end_pos,
@@ -348,6 +392,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_bit_or(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析按位或表达式。"""
         return self._parse_bin_math_op(
             {"BIT_OR": "MAKE EXPR BIT_OR_OP"},
             end_pos,
@@ -356,6 +401,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_bit_xor(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析按位异或表达式。"""
         return self._parse_bin_math_op(
             {"BIT_XOR": "MAKE EXPR BIT_XOR_OP"},
             end_pos,
@@ -364,12 +410,14 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_bool(self) -> Optional[tuple[list[str], _ExprState]]:
+        """解析布尔字面量（true/false）。"""
         result = [f"MAKE EXPR BOOL_LITERAL {self._get_current().text}"]
         self._next()
         return result, _ExprState.EXPR_ENDING
 
     @_set_loc_command_with_state
     def _parse_bracket_expr(self, current_state: _ExprState) -> Optional[tuple[list[str], _ExprState]]:
+        """解析圆括号表达式（分组、调用、元组、类型转换）。"""
         if not self._match_type("L_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -451,6 +499,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_closure_expr(self) -> Optional[tuple[list[str], _ExprState]]:
+        """解析闭包表达式（匿名函数）。"""
         closure_result = self._parse_func([], self._get_current().type[0], True, True)
         if closure_result is None:
             return None
@@ -459,6 +508,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_compare_expr(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析比较表达式（> < >= <=）。"""
         return self._parse_bin_math_op({
             "GT": "MAKE EXPR GT_OP",
             "LT": "MAKE EXPR LT_OP",
@@ -468,6 +518,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_curly_bracket_expr(self, current_state: _ExprState) -> Optional[tuple[list[str], _ExprState]]:
+        """解析花括号表达式（对象更新）。"""
         if not self._match_type("L_CURLY_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -483,6 +534,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command
     def _parse_expr(self, end_pos: int) -> Optional[list[str]]:
+        """解析表达式（顶层入口，分发到切片解析）。"""
         result = self._parse_slice(end_pos)
         if result is None:
             return None
@@ -490,6 +542,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_equal_expr(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析相等性比较表达式（== !=）。"""
         return self._parse_bin_math_op({
             "EQ": "MAKE EXPR EQ_OP",
             "NE": "MAKE EXPR NE_OP"
@@ -500,6 +553,7 @@ class ExprParser(GlobalParser):
             self, end_token_types: list[str], parser: Callable[[int], Optional[list[str]]],
             end_pos: Optional[int] = None
     ) -> Optional[list[str]]:
+        """解析以指定类型记号结尾的表达式。"""
         bracket_count: int = 0
         square_bracket_count: int = 0
         curly_bracket_count: int = 0
@@ -537,6 +591,7 @@ class ExprParser(GlobalParser):
     @_set_loc_command
     def _parse_expr_splits_with(self, splitters: list[str], end_token_types: list[str], expr_end_command: list[str],
                                 parser: Callable[[int], Optional[list[str]]]) -> Optional[tuple[list[str], int]]:
+        """解析以分隔符分割的表达式列表。"""
         command: list[str] = []
         expr_count: int = 0
         while self._current < self._tokens_num:
@@ -556,12 +611,14 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_float(self) -> Optional[tuple[list[str], _ExprState]]:
+        """解析浮点数字面量。"""
         result = [f"MAKE EXPR FLOAT_LITERAL {self._get_current().text}"]
         self._next()
         return result, _ExprState.EXPR_ENDING
 
     @_set_loc_command
     def _parse_generic_expr(self) -> Optional[list[str]]:
+        """解析泛型参数表达式（::<T>）。"""
         if not self._match_type("GENERIC_START"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -576,12 +633,14 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_int(self) -> Optional[tuple[list[str], _ExprState]]:
+        """解析整数字面量。"""
         result = [f"MAKE EXPR INTEGER_LITERAL {self._get_current().text} {self._get_current().type[0]}"]
         self._next()
         return result, _ExprState.EXPR_ENDING
 
     @_set_loc_command_with_state
     def _parse_mul_div_mod(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析乘除模表达式（* / % @）。"""
         return self._parse_bin_math_op(
             {"MUL": "MAKE EXPR MUL_OP", "DIV": "MAKE EXPR DIV_OP", "MOD": "MAKE EXPR MOD_OP", "MATMUL": "MAKE EXPR MATMUL_OP"},
             end_pos, self._parse_pow
@@ -589,6 +648,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_operand(self) -> Optional[tuple[list[str], _ExprState]]:
+        """解析操作数（字面量、标识符、括号表达式等）。"""
         if self._match_type("L_BRACKET"):
             result = self._parse_bracket_expr(_ExprState.EXPR_STARTING)
         elif self._match_type("L_SQUARE_BRACKET"):
@@ -616,9 +676,11 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_or(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析逻辑或表达式。"""
         return self._parse_bin_math_op({"OR": "MAKE EXPR OR_OP"}, end_pos, self._parse_and)
 
     def _parse_or_no_state(self, end_pos: int) -> Optional[list[str]]:
+        """解析逻辑或表达式（无状态版本，用于条件表达式内部）。"""
         result = self._parse_or(end_pos)
         if result is None:
             return None
@@ -626,10 +688,12 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_pow(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析幂运算表达式（**，右结合）。"""
         return self._parse_bin_math_op({"POW": "MAKE EXPR POW_OP"}, end_pos, self._parse_unary_op, False)
 
     @_set_loc_command_with_state
     def _parse_question_expr(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析条件表达式（三元运算符 ? :）。"""
         cond_commands = self._parse_expr_ends_with(["QUESTION"], self._parse_or_no_state, end_pos)
         if cond_commands is None:
             return None
@@ -647,6 +711,7 @@ class ExprParser(GlobalParser):
             else_commands + ["CALL SET_EXPR_ELSE"], _ExprState.EXPR_ENDING
 
     def _parse_question_expr_no_state(self, end_pos: int) -> Optional[list[str]]:
+        """解析条件表达式（无状态版本，用于嵌套调用）。"""
         result = self._parse_question_expr(end_pos)
         if result is None:
             return None
@@ -654,6 +719,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_shift(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析移位表达式（<< >>）。"""
         return self._parse_bin_math_op(
             {"LSHIFT": "MAKE EXPR LSHIFT_OP", "RSHIFT": "MAKE EXPR RSHIFT_OP"},
             end_pos, self._parse_add_sub
@@ -661,6 +727,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_slice(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析切片表达式或顶层表达式（包含三元运算符）。"""
         question_count: int = 0
         slice_count: int = 0
         bracket_count: int = 0
@@ -738,6 +805,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_square_bracket_expr(self, expr_state: _ExprState) -> Optional[tuple[list[str], _ExprState]]:
+        """解析方括号表达式（数组、索引）。"""
         if not self._match_type("L_SQUARE_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -759,6 +827,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_string(self) -> Optional[tuple[list[str], _ExprState]]:
+        """解析字符串字面量（支持连续字符串拼接）。"""
         string_buffer: list[str] = []
         while self._match_types(["STRING", "LONG_STRING"]):
             if self._match_type("LONG_STRING"):
@@ -771,6 +840,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command
     def _parse_type(self) -> Optional[list[str]]:
+        """解析类型表达式（类型引用、泛型、函数类型等）。"""
         result: list[str] = []
         if self._match_type("IDENTIFIER"):
             result.append(f"MAKE EXPR TYPE_REF {self._get_current().text}")
@@ -822,6 +892,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_type_list(self, type_ending_commands: list[str]) -> Optional[tuple[list[str], int]]:
+        """解析类型列表（逗号分隔的类型序列）。"""
         result: list[str] = []
         expect_comma: bool = False
         while self._current < self._tokens_num:
@@ -852,6 +923,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command_with_state
     def _parse_unary_op(self, _end_pos: int) -> Optional[tuple[list[str], _ExprState]]:
+        """解析一元运算符表达式（正、负、非、取反、解包）。"""
         command: list[str] = []
         steps: int = 0
         while self._match_types(["POS", "NEG", "NOT", "INVERSE", "UNPACK"]):
@@ -876,6 +948,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command
     def _parse_update(self) -> Optional[list[str]]:
+        """解析对象更新表达式（花括号内的属性和索引更新）。"""
         command: list[str] = []
         while self._current < self._tokens_num:
             if self._match_type("COMMA"):
@@ -898,6 +971,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command
     def _parse_update_item(self) -> Optional[list[str]]:
+        """解析对象更新中的索引项。[expr] = value。"""
         command: list[str] = []
         self._next()
         result = self._parse_expr_splits_with(["COMMA"], ["R_SQUARE_BRACKET"], [], self._parse_expr)
@@ -917,6 +991,7 @@ class ExprParser(GlobalParser):
 
     @_set_loc_command
     def _parse_update_prop(self) -> Optional[list[str]]:
+        """解析对象更新中的属性项。.prop = value。"""
         command: list[str] = []
         self._next()
         if not self._match_type("IDENTIFIER"):
@@ -934,6 +1009,12 @@ class ExprParser(GlobalParser):
         return command
 
     def _split_by_bin_op(self, op_types: list[str], end_pos: int) -> tuple[list[int], list[str]]:
+        """
+        根据二元运算符分割表达式，返回操作数起始位置和运算符列表。
+        :param op_types: 运算符类型列表。
+        :param end_pos: 结束位置。
+        :return: 起始位置列表和运算符类型列表。
+        """
         tokens_start_pos: list[int] = []
         operations: list[str] = []
         bracket_count: int = 0
@@ -962,6 +1043,11 @@ class ExprParser(GlobalParser):
         return tokens_start_pos, operations
 
     def __handle_id_prefix(self, id_list: list[str]) -> list[str]:
+        """
+        处理标识符前缀，将其转换为属性访问命令序列。
+        :param id_list: 标识符列表。
+        :return: 属性访问命令列表。
+        """
         id_list = self.__get_import_prefix(id_list)
         command: list[str] = ["MAKE EXPR ATTR_OP"] * (len(id_list) - 1)
         command += ["MAKE EXPR VARIABLE_REF auto " + id_list[0]]

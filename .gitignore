@@ -5,6 +5,7 @@ project
 .idea
 violac/src_modified
 violac/test_compiled
+.claude
 *.log
 *.vla.vlacmd
 *.vla.vlacmd0

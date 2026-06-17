@@ -1,4 +1,4 @@
-fn main(string[] argv) -> () {
+sq main(string[] argv) -> () {
     cpart {
         printf("Hello World!\n");
     }

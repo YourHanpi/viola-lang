@@ -17,19 +17,27 @@ from typing import Callable, Optional
 
 
 class _ExecMode(Enum):
+    """执行模式枚举：SQ 表示语句块模式，FN 表示函数模式。"""
     SQ = 0
     FN = 1
 
 
 class _ScopeCount(Enum):
+    """作用域计数枚举：HOLD 表示保持作用域，INC 表示增加作用域。"""
     HOLD = 0
     INC = 1
 
 
 class CompilerVM:
+    """编译器虚拟机，负责执行编译指令、管理符号表和编译栈。"""
+
     _ENCODING: str = COMPILER_PARAMS["encoding"]
 
     def __init__(self, proj: project.Project) -> None:
+        """
+        初始化编译器虚拟机。
+        :param proj: 项目对象，包含输出路径和根路径等信息。
+        """
         self._project: project.Project = proj
         self._output_path = proj.output_path
         workspace = proj.root_path
@@ -186,6 +194,12 @@ class CompilerVM:
         }
 
     def compile(self, src_path: str, thread_index: int = 0) -> TaskResult:
+        """
+        编译指定的源文件。
+        :param src_path: 源文件的路径。
+        :param thread_index: 线程索引，用于日志标识。
+        :return: 包含编译结果的任务结果对象。
+        """
         self._logger = Logger(f"Compiler VM[{thread_index}]")
         src_path = os.path.abspath(src_path)
         src_relpath = os.path.relpath(src_path, self._workspace)
@@ -222,11 +236,13 @@ class CompilerVM:
         return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
 
     def exec(self, cmd: str) -> None:
+        """逐行执行编译命令字符串。"""
         lines: list[str] = cmd.split("\n")
         for line in lines:
             self._exec_line(line)
 
     def get(self) -> project.SourceFile:
+        """获取栈底的源文件对象，完成写入并返回。"""
         # noinspection PyTypeChecker
         src_file: project.SourceFile = self._stack[0]
         src_file.finish()
@@ -234,16 +250,19 @@ class CompilerVM:
         return src_file
 
     def _call(self, cmd: list[str]) -> None:
+        """根据命令调用对应的处理器函数。"""
         self._CALLER_DICT[cmd[1]](cmd[2:])
 
     @staticmethod
     def _check_skip(src_path: str, dst_path: str) -> bool:
+        """检查是否需要跳过编译（若目标头文件比源文件更新则跳过）。"""
         header_output_exists = os.path.exists(dst_path + ".h")
         if header_output_exists:
             return os.path.getmtime(dst_path + ".h") >= os.path.getmtime(src_path)
         return False
 
     def _exec_line(self, cmd: str) -> None:
+        """解析并执行单行编译命令。"""
         cmd = cmd.strip()
         if not cmd:
             return
@@ -259,6 +278,7 @@ class CompilerVM:
                 raise InternalCompilerException(f"{cmd_parts[0]} is not a valid command", self._src_info)
 
     def _make(self, cmd: list[str]) -> None:
+        """创建编译项（定义、表达式或语句）并压入栈中。"""
         match cmd[1]:
             case "DEF":
                 result: CompilingItem = self._DEF_MAKER_DICT[cmd[2]](cmd[3:])
@@ -274,12 +294,14 @@ class CompilerVM:
         self._stack[-1].bind_parent(self._stack[-2])
 
     def _set_info(self, cmd: list[str]) -> None:
+        """设置当前源代码位置信息。"""
         loc: tuple[int, int, int, int] = int(cmd[1]), int(cmd[2]), int(cmd[3]), int(cmd[4])
         src_text: str = " ".join(cmd[5:])
         self._src_info.set_loc(*loc)
         self._src_info.set_text(src_text)
 
     def __call_add_arg(self, cmd: list[str]) -> None:
+        """为调用操作添加参数。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.CallOp])
         # noinspection PyUnresolvedReferences
@@ -287,6 +309,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_def(self) -> None:
+        """将定义添加到源文件中。"""
         self.__check_type(self._stack[-1], [definition.Definition])
         self.__check_type(self._stack[-2], [project.SourceFile])
         # noinspection PyUnresolvedReferences
@@ -294,6 +317,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_enum(self, cmd: list[str]) -> None:
+        """为枚举定义添加枚举值。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [definition.EnumDef])
         # noinspection PyUnresolvedReferences
@@ -301,6 +325,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_item(self, cmd: list[str]) -> None:
+        """向更新表达式中添加元素。"""
         target_index: int = int(cmd[0])
         value_expr = self._stack[-1]
         self.__check_type(value_expr, [expression.Expression])
@@ -317,6 +342,7 @@ class CompilerVM:
             self.__pop()
 
     def __call_add_method(self) -> None:
+        """向类的定义中添加方法。"""
         self.__check_type(self._stack[-1], [definition.SqDef])
         self.__check_type(self._stack[-2], [definition.ClassDef])
         # noinspection PyUnresolvedReferences
@@ -324,6 +350,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_property(self, cmd: list[str]) -> None:
+        """为更新表达式添加属性。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.UpdateExpr])
         # noinspection PyUnresolvedReferences
@@ -331,6 +358,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_static_prop(self, cmd: list[str]) -> None:
+        """为类的定义中添加静态属性。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [definition.ClassDef])
         # noinspection PyUnresolvedReferences
@@ -338,6 +366,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_stmt(self) -> None:
+        """向语句块或函数定义中添加语句。"""
         self.__check_type(self._stack[-1], [statement.Statement])
         self.__check_type(self._stack[-2], [definition.SqDef, statement.BlockStmt])
         # noinspection PyUnresolvedReferences
@@ -345,11 +374,13 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_text(self, cmd: list[str]) -> None:
+        """向 C 语句或表达式中添加文本。"""
         self.__check_type(self._stack[-1], [statement.CStmt, expression.CExpr])
         # noinspection PyUnresolvedReferences
         self._stack[-1].add_text(" ".join(cmd))
 
     def __call_add_type(self) -> None:
+        """向元组类型引用中添加类型。"""
         self.__check_type(self._stack[-1], [expression.TypeRef])
         self.__check_type(self._stack[-2], [expression.TupleTypeRef])
         # noinspection PyUnresolvedReferences
@@ -357,6 +388,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_type_arg(self) -> None:
+        """为泛型调用添加类型参数。"""
         self.__check_type(self._stack[-2], [definition.GenericCall])
         self.__check_type(self._stack[-1], [expression.TypeRef])
         # noinspection PyUnresolvedReferences
@@ -364,6 +396,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_value(self) -> None:
+        """向数组或元组引用中添加值。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.ArrayRef, expression.TupleRef])
         # noinspection PyUnresolvedReferences
@@ -371,6 +404,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_var(self, cmd: list[str]) -> None:
+        """为声明语句添加变量。"""
         self.__check_type(self._stack[-1], [expression.TypeRef])
         self.__check_type(self._stack[-2], [statement.DeclStmt])
         # noinspection PyUnresolvedReferences
@@ -378,16 +412,19 @@ class CompilerVM:
         self.__pop()
 
     def __call_add_var_name(self, cmd: list[str]) -> None:
+        """为赋值语句设置变量名列表。"""
         self.__check_type(self._stack[-1], [statement.AssignStmt])
         # noinspection PyUnresolvedReferences
         self._stack[-1].set_var_names(cmd)
 
     def __call_as_async(self) -> None:
+        """将栈顶语句转换为异步版本。"""
         self.__check_type(self._stack[-1], [statement.Statement])
         # noinspection PyUnresolvedReferences
         self._stack[-1] = self._stack[-1].as_async()
 
     def __call_finish(self) -> None:
+        """完成栈顶编译项的构建。"""
         self.__check_type(self._stack[-1], [
             definition.SqDef, definition.ClassDef, definition.EnumDef, statement.DeclStmt, statement.AssignStmt,
             statement.TryStmt, statement.BlockStmt, expression.ArrayRef, expression.TupleRef,
@@ -404,6 +441,7 @@ class CompilerVM:
                 self._stack[-1].add_stmt(blk)
 
     def __call_finish_generic(self) -> None:
+        """完成泛型调用，生成实例化后的表达式。"""
         self.__check_type(self._stack[-1], [definition.GenericCall])
         # noinspection PyUnresolvedReferences
         self._stack[-1].finish()
@@ -413,11 +451,13 @@ class CompilerVM:
         self.__make(instance)
 
     def __call_set_attr(self, cmd: list[str]) -> None:
+        """设置属性表达式的属性名。"""
         self.__check_type(self._stack[-1], [expression.AttrOp])
         # noinspection PyUnresolvedReferences
         self._stack[-1].set_attr(cmd[0])
 
     def __call_set_arg_types(self) -> None:
+        """为函数类型引用设置参数类型。"""
         self.__check_type(self._stack[-1], [expression.TupleTypeRef])
         self.__check_type(self._stack[-2], [expression.FunctionTypeRef])
         # noinspection PyUnresolvedReferences
@@ -425,6 +465,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_caller(self) -> None:
+        """设置属性表达式的调用者。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.AttrOp])
         # noinspection PyUnresolvedReferences
@@ -432,6 +473,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_cond_expr(self) -> None:
+        """设置条件语句的条件表达式。"""
         self.__check_type(self._stack[-1], [statement.CondStmt])
         self.__check_type(self._stack[-2], [expression.Expression])
         # noinspection PyUnresolvedReferences
@@ -439,6 +481,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_def(self) -> None:
+        """设置闭包中的函数定义。"""
         self.__check_type(self._stack[-1], [definition.SqDef])
         self.__check_type(self._stack[-2], [definition.Closure])
         # noinspection PyUnresolvedReferences
@@ -446,6 +489,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_end(self) -> None:
+        """设置切片引用的结束位置。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.SliceRef])
         # noinspection PyUnresolvedReferences
@@ -453,6 +497,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_except_decl(self, cmd: list[str]) -> None:
+        """设置 catch 语句的异常声明。"""
         self.__check_type(self._stack[-1], [expression.TypeRef])
         self.__check_type(self._stack[-2], [statement.CatchStmt])
         # noinspection PyUnresolvedReferences
@@ -460,6 +505,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_expr(self) -> None:
+        """设置运算符语句或转换操作的表达式。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [
             statement.OpStmt, statement.ThrowStmt, statement.CastOp, expression.UnaryOperator, expression.UnpackExpr
@@ -469,6 +515,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_expr_cond(self) -> None:
+        """设置条件运算符的条件表达式。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.ConditionalOp])
         # noinspection PyUnresolvedReferences
@@ -476,6 +523,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_expr_else(self) -> None:
+        """设置条件运算符的 else 分支表达式。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.ConditionalOp])
         # noinspection PyUnresolvedReferences
@@ -483,6 +531,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_expr_left(self) -> None:
+        """设置双目运算符的左操作数。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.BinaryOperator, expression.ItemOp])
         # noinspection PyUnresolvedReferences
@@ -490,6 +539,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_expr_right(self) -> None:
+        """设置双目运算符的右操作数。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.BinaryOperator])
         # noinspection PyUnresolvedReferences
@@ -497,6 +547,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_expr_then(self) -> None:
+        """设置条件运算符的 then 分支表达式。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.ConditionalOp])
         # noinspection PyUnresolvedReferences
@@ -504,6 +555,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_func(self) -> None:
+        """设置调用操作的函数表达式。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.CallOp])
         # noinspection PyUnresolvedReferences
@@ -511,6 +563,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_generic_expr(self) -> None:
+        """设置泛型调用的泛型表达式。"""
         self.__check_type(self._stack[-1], [expression.VariableRef, expression.AttrOp, expression.ClassRef])
         self.__check_type(self._stack[-2], [definition.GenericCall])
         # noinspection PyUnresolvedReferences
@@ -518,6 +571,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_return_types(self) -> None:
+        """为函数类型引用设置返回值类型。"""
         self.__check_type(self._stack[-1], [expression.TupleTypeRef])
         self.__check_type(self._stack[-2], [expression.FunctionTypeRef])
         # noinspection PyUnresolvedReferences
@@ -525,6 +579,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_start(self) -> None:
+        """设置切片引用的起始位置。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.SliceRef])
         # noinspection PyUnresolvedReferences
@@ -532,6 +587,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_step(self) -> None:
+        """设置切片引用的步长。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.SliceRef])
         # noinspection PyUnresolvedReferences
@@ -539,6 +595,7 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_stmt(self) -> None:
+        """为常量定义或条件语句设置语句。"""
         self.__check_type(self._stack[-2], [
             definition.ConstDef, statement.CondStmt, statement.CatchStmt, statement.FinallyStmt
         ])
@@ -548,12 +605,14 @@ class CompilerVM:
         self.__pop()
 
     def __call_set_type(self) -> None:
+        """为类型转换或类型定义语句设置类型。"""
         self.__check_type(self._stack[-1], [expression.TypeRef])
         self.__check_type(self._stack[-2], [statement.CastOp, statement.TypeDefStmt, expression.ArrayTypeRef])
         # noinspection PyUnresolvedReferences
         self._stack[-2].set_type(self._stack[-1])
 
     def __call_set_vars(self, cmd: list[str]) -> None:
+        """为声明语句设置变量列表（类型和名称交替）。"""
         self.__check_type(self._stack[-1], [statement.DeclStmt])
         var_type_names: list[str] = cmd[::2]
         var_names: list[str] = cmd[1::2]
@@ -562,6 +621,7 @@ class CompilerVM:
         self._stack[-1].set_vars_by_name(var_names, var_type_names, is_global)
 
     def __call_set_var_value(self) -> None:
+        """为声明或赋值语句设置变量的值表达式。"""
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [statement.DeclStmt, statement.AssignStmt])
         # noinspection PyUnresolvedReferences
@@ -569,6 +629,7 @@ class CompilerVM:
         self.__pop()
 
     def __check_type(self, obj: CompilingItem, types: list[type]) -> None:
+        """检查编译项是否为指定的类型之一，若不是则抛出异常。"""
         for t in types:
             if isinstance(obj, t):
                 return
@@ -578,11 +639,13 @@ class CompilerVM:
         )
 
     def __make(self, obj: CompilingItem) -> CompilingItem:
+        """将一个编译项压入栈管理机制中，更新执行模式和作用域计数。"""
         self._exec_mode_stack.append(self._exec_mode_stack[-1])
         self._scope_count_stack.append(_ScopeCount.HOLD)
         return obj
 
     def __make_class(self, cmd: list[str]) -> definition.ClassDef:
+        """创建类的定义并添加新的作用域。"""
         result = definition.ClassDef(self._src_info, self._symbol_table, self._symbol_table.namespace, cmd[0], self._var_state_table)
         self._symbol_table.add_scope()
         self._var_state_table.add_scope()
@@ -592,6 +655,7 @@ class CompilerVM:
         return result
 
     def __make_def_constructor(self, cmd: list[str]) -> definition.ConstructorDef:
+        """创建构造函数的定义并添加新的作用域。"""
         construct_def: definition.ConstructorDef = definition.ConstructorDef(
             self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0], cmd[1:]
         )
@@ -602,6 +666,7 @@ class CompilerVM:
         return construct_def
 
     def __make_def_destructor(self, cmd: list[str]) -> definition.DestructorDef:
+        """创建析构函数的定义并添加新的作用域。"""
         destructor_def: definition.DestructorDef = definition.DestructorDef(
             self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0]
         )
@@ -612,6 +677,7 @@ class CompilerVM:
         return destructor_def
 
     def __make_def_fn(self, cmd: list[str]) -> definition.FnDef:
+        """创建函数（fn）的定义并添加新的作用域。"""
         fn_def: definition.FnDef = definition.FnDef(
             self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0], cmd[1:]
         )
@@ -622,6 +688,7 @@ class CompilerVM:
         return fn_def
 
     def __make_def_sq(self, cmd: list[str]) -> definition.SqDef:
+        """创建函数（sq，语句函数）的定义并添加新的作用域。"""
         sq_def: definition.SqDef = definition.SqDef(
             self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0], cmd[1:]
         )
@@ -632,6 +699,7 @@ class CompilerVM:
         return sq_def
 
     def __make_stmt_block(self) -> statement.BlockStmt:
+        """创建语句块（普通块或函数块）并添加新的作用域。"""
         self._exec_mode_stack.append(self._exec_mode_stack[-1])
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
@@ -641,6 +709,7 @@ class CompilerVM:
         return statement.BlockStmt(self._src_info, self._symbol_table, self._var_state_table)
 
     def __make_variable_ref(self, cmd: list[str]) -> expression.VariableRef:
+        """创建变量引用表达式，根据作用域级别决定是全局变量还是局部变量。"""
         # noinspection PyTypeChecker
         # noinspection PyUnresolvedReferences
         var_type: symbol.TypeName = self._symbol_table[cmd[0]] if cmd[0] != "auto" else self._symbol_table[cmd[1]].type
@@ -654,6 +723,7 @@ class CompilerVM:
         return expr
 
     def __pop(self) -> None:
+        """从编译栈中弹出栈顶元素，恢复执行模式和作用域状态。"""
         self._stack.pop()
         self._exec_mode_stack.pop()
         scope = self._scope_count_stack.pop()
@@ -665,5 +735,6 @@ class CompilerVM:
 
     @property
     def __scope_level(self) -> int:
+        """获取当前作用域级别。"""
         return sum(map(lambda x: x.value, self._scope_count_stack))
         

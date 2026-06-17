@@ -34,9 +34,16 @@ THREAD_INFO_T: str = "viola$lang$thread$ThreadInfo"
 
 
 class _Mark:
+    """调试标记，用于在生成的代码中插入源代码位置信息。"""
+
     _mark_counter: int = 0
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
+        """
+        初始化调试标记。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        """
         self._text: StringLiteral = StringLiteral(src_info, symbol_table, src_info.traceback_no_location + "\tat ")
         self._lineno: int = src_info.lineno
         self._mark_name: str = f"$$_MARK_{_Mark._mark_counter}"
@@ -45,10 +52,12 @@ class _Mark:
 
     @property
     def mark_declare(self) -> str:
+        """获取标记变量的声明代码。"""
         return f"{MARK_T} *{self._mark_name};"
 
     @property
     def mark_init(self) -> str:
+        """获取标记的初始化代码。"""
         result = [
             self._text.head_text,
             f"{self._mark_name} = ({MARK_T} *)malloc(sizeof({MARK_T}));",
@@ -61,32 +70,45 @@ class _Mark:
 
     @property
     def mark_init_head(self) -> str:
+        """获取标记初始化的头代码。"""
         return self._text.head_text
 
     @property
     def mark_insert(self) -> str:
+        """获取插入标记到栈中的代码。"""
         if self._is_const_def:
             return f"{STACK_A_PUSH_FUNC}(0, {self._mark_name});"
         return f"{STACK_A_PUSH_FUNC}(listener->currentThreadId, {self._mark_name});"
 
     @property
     def mark_pop(self) -> str:
+        """获取从栈中弹出标记的代码。"""
         if self._is_const_def:
             return f"{STACK_A_PUSH_FUNC}(0);"
         return f"{STACK_A_POP_FUNC}(listener->currentThreadId);"
 
     def set_as_const_def(self) -> None:
+        """将当前标记设置为常量定义标记。"""
         self._is_const_def = True
 
 
 class Statement(CompilingItem, ABC):
+    """语句基类，所有语句类型的抽象基类。"""
 
-    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, single_stmt: bool = True) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 single_stmt: bool = True, with_mark: bool = True) -> None:
+        """
+        初始化语句对象。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        :param single_stmt: 是否为单条语句（默认为 True）。
+        """
         super().__init__(src_info)
         self._indent: int = 0
         self._is_async: bool = False
         self._inline_mapping: dict[str, str] = {}
-        if single_stmt:
+        if single_stmt and with_mark:
             self._mark: Optional[_Mark] = _Mark(src_info, symbol_table)
             self._jump_mark: str = "$$cleanup"
         else:
@@ -99,102 +121,125 @@ class Statement(CompilingItem, ABC):
 
     @abstractmethod
     def as_async(self) -> "Statement":
+        """将语句转换为异步版本。"""
         new_stmt = deepcopy(self)
         new_stmt._is_async = True
         return new_stmt
 
     @abstractmethod
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
+        """将语句转换为内联版本。"""
         pass
 
     @abstractmethod
     def check_tail_recursive(self, func_name: str) -> "Statement":
+        """检查并处理尾递归优化。"""
         pass
 
     @property
     def drop_out(self) -> bool:
+        """获取该语句是否会导致函数退出。"""
         return False
 
     @property
     @abstractmethod
     def global_init_text(self) -> str:
+        """获取全局初始化代码文本（包含标记初始化）。"""
         return self._mark.mark_init if self._mark is not None else ""
 
     @property
     @abstractmethod
     def head_text(self) -> Optional[str]:
+        """获取语句的头代码（变量声明等）。"""
         pass
 
     def indent(self) -> None:
+        """增加语句的缩进级别。"""
         self._indent += 1
 
     @property
     def inline_mapping(self) -> dict[str, str]:
+        """获取内联变量映射。"""
         return self._inline_mapping
 
     @property
     @abstractmethod
     def input_variables(self) -> set[VariableName]:
+        """获取语句作为输入使用的变量集合。"""
         pass
 
     @abstractmethod
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
+        """对语句进行泛型实例化。"""
         pass
 
     @abstractmethod
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
+        """插入 finally 语句以进行资源清理。"""
         pass
 
     @property
     @abstractmethod
     def is_finished(self) -> bool:
+        """获取语句是否已完成。"""
         pass
 
     @property
     @abstractmethod
     def new_listeners(self) -> dict[VariableName, str]:
+        """获取语句创建的新监听器映射。"""
         pass
 
     @property
     @abstractmethod
     def new_variables(self) -> set[VariableName]:
+        """获取语句创建的新变量集合。"""
         pass
 
     @abstractmethod
     def optimize(self) -> "Statement":
+        """优化语句。"""
         pass
 
     @property
     @abstractmethod
     def outer_text(self) -> Optional[str]:
+        """获取语句的外层代码文本（包含标记声明）。"""
         if self._mark is not None:
             return self._mark.mark_declare
         return None
 
     def remove_mark(self) -> None:
+        """移除调试标记。"""
         self._mark = None
 
     def set_as_const_def(self) -> None:
+        """将当前语句标记为常量定义。"""
         self._is_const_def = True
         if self._mark is not None:
             self._mark.set_as_const_def()
 
     def set_jump_mark(self, jump_mark: str) -> None:
+        """设置语句的跳转目标标记。"""
         self._jump_mark = jump_mark
 
     @property
     def src_info(self) -> SourceInfo:
+        """获取源代码信息。"""
         return self._src_info
 
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        """用常量值替换语句中的变量引用。"""
         return self
 
     @property
     def tail_recursive_mark(self) -> Optional[str]:
+        """获取尾递归优化标记。"""
         return self._tail_recursive_mark
 
     @property
     def text(self) -> str:
+        """获取语句的完整 C 代码文本（含标记和缩进）。"""
         if self._mark is None:
             return self._indent_text(self._inner_text)
         result: list[str] = [
@@ -206,14 +251,17 @@ class Statement(CompilingItem, ABC):
         return self._indent_text("\n".join(result))
 
     def update_const_vars(self, const_vars: dict[VariableName, Expression]) -> dict[VariableName, Expression]:
+        """更新语句中的常量变量映射。"""
         return const_vars
 
     @property
     @abstractmethod
     def variables_states(self) -> dict[VariableName, VariableState]:
+        """获取语句修改变量的状态映射。"""
         pass
 
     def _indent_text(self, text: str) -> str:
+        """为每行代码添加缩进前缀。"""
         lines: list[str] = text.split("\n")
         lines = list(map(lambda line: "\t" * self._indent + line, lines))
         return "\n".join(lines)
@@ -221,15 +269,25 @@ class Statement(CompilingItem, ABC):
     @property
     @abstractmethod
     def _inner_text(self) -> str:
+        """获取语句的内部文本（不含标记和缩进）。"""
         pass
 
 
 class _StmtList(Statement):
+    """语句列表容器，用于优化时合并多条语句。"""
 
     def __getitem__(self, item: int) -> Statement:
+        """获取指定索引处的语句。"""
         return self._stmts[item]
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, stmts: list[Statement]) -> None:
+        """
+        初始化语句列表容器。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        :param stmts: 语句列表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._stmts: list[Statement] = stmts
 
@@ -281,6 +339,7 @@ class _StmtList(Statement):
 
     @property
     def stmts(self) -> list[Statement]:
+        """获取内部的语句列表。"""
         return self._stmts
 
     @property
@@ -288,6 +347,7 @@ class _StmtList(Statement):
         raise InternalCompilerException("Not implemented", self._src_info)
 
     def update_const_vars(self, const_vars: dict[VariableName, Expression]) -> dict[VariableName, Expression]:
+        """更新所有子语句的常量变量映射。"""
         for stmt in self._stmts:
             const_vars = stmt.update_const_vars(const_vars)
         return const_vars
@@ -298,8 +358,16 @@ class _StmtList(Statement):
 
 
 class DeclStmt(Statement):
+    """变量声明语句。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, namespace: list[NamespaceName]) -> None:
+        """
+        初始化变量声明语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        :param namespace: 命名空间路径。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._var_value: Optional[Expression] = None
         self._var: list[VariableName] = []
@@ -308,6 +376,7 @@ class DeclStmt(Statement):
         self._const_vars: dict[VariableName, Expression] = {}
 
     def add_var(self, var_name: str, var_type_ref: TypeRef, is_global: bool) -> None:
+        """添加一个变量声明。"""
         if not is_global:
             var = LocalVariableName(self._src_info, var_name, var_type_ref.return_type)
         else:
@@ -347,6 +416,7 @@ class DeclStmt(Statement):
         return result + "\n" + self._var_value.global_init_text if self._var_value.global_init_text is not None else result
 
     def finish(self) -> None:
+        """完成变量声明，进行类型检查和收包处理。"""
         expr_type = self._var_value.return_type
         var_names_num: int = len(self._var)
         if var_names_num > 1 and self._var_value is not None:
@@ -489,12 +559,14 @@ class DeclStmt(Statement):
         return super().outer_text
 
     def set_var_value(self, var_value: Expression) -> None:
+        """设置变量的初始值表达式。"""
         var_value.validate()
         self._var_value = var_value
         self._var_states.set_assigned(self._var)
 
     def set_vars_with_known_type(self, var_name_list: list[str], var_type_name_list: list[TypeName],
                                  is_global_list: list[bool]):
+        """使用已知类型设置声明的变量列表。"""
         if not len(var_name_list) == len(var_type_name_list) or not len(var_type_name_list) == len(is_global_list):
             raise CompilerException("Invalid variable declaration.", self._src_info)
         var_names_num: int = len(var_name_list)
@@ -527,6 +599,7 @@ class DeclStmt(Statement):
 
     @property
     def var_types(self) -> TypeName:
+        """获取声明的变量类型。"""
         if not self._is_finished:
             raise InternalCompilerException("Statement is not finished.", self._src_info)
         if len(self._var) > 1:
@@ -534,6 +607,7 @@ class DeclStmt(Statement):
         return self._var[0].type
 
     def _add_var_object(self, var: VariableName) -> None:
+        """添加变量对象到内部列表。"""
         self._var.append(var)
 
     @property
@@ -549,8 +623,16 @@ class DeclStmt(Statement):
 
 
 class AssignStmt(Statement):
+    """赋值语句。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, this_cls: Optional[ClassName] = None) -> None:
+        """
+        初始化赋值语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        :param this_cls: 当前类的类名（可选）。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._var: list[VariableName] = []
         self._var_value: Optional[Expression] = None
@@ -561,6 +643,7 @@ class AssignStmt(Statement):
         self._this_cls: Optional[ClassName] = this_cls
 
     def add_var_name(self, var_name: str) -> None:
+        """添加赋值目标变量名。"""
         if self._this_cls is not None and var_name.startswith("this."):
             var_name = var_name[len("this."):]
             if var_name not in self._this_cls.properties:
@@ -603,6 +686,7 @@ class AssignStmt(Statement):
         return result + "\n" + self._var_value.global_init_text if self._var_value.global_init_text is not None else result
 
     def finish(self) -> None:
+        """完成赋值语句，进行类型检查和收包处理。"""
         expr_type = self._var_value.return_type
         if isinstance(expr_type, TupleTypeName):
             if len(self._var) > len(expr_type.types):
@@ -706,6 +790,7 @@ class AssignStmt(Statement):
         return result
 
     def set_var_value(self, var_value: Expression) -> None:
+        """设置赋值表达式的值。"""
         var_value.validate()
         self._var_value = var_value
 
@@ -726,6 +811,7 @@ class AssignStmt(Statement):
         return dict(map(lambda var: (var, state), self._var))
 
     def _add_var_object(self, var: VariableName) -> None:
+        """添加赋值目标变量对象到内部列表。"""
         self._var.append(var)
 
     @property
@@ -735,8 +821,15 @@ class AssignStmt(Statement):
 
 
 class OpStmt(Statement):
+    """操作语句（表达式语句）。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化操作语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._expr: Optional[Expression] = None
 
@@ -806,6 +899,7 @@ class OpStmt(Statement):
         return result
 
     def set_expr(self, expr: Expression) -> None:
+        """设置操作语句的表达式。"""
         expr.validate()
         self._expr = expr
 
@@ -824,8 +918,15 @@ class OpStmt(Statement):
 
 
 class ReturnStmt(Statement):
+    """返回语句。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化返回语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._finally_stmt_list: list[Statement] = []
 
@@ -900,8 +1001,15 @@ class ReturnStmt(Statement):
 
 
 class ThrowStmt(Statement):
+    """抛出异常语句。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化抛出异常语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._to_throw_expr: Optional[Expression] = None
         self._finally_stmt_list: list[Statement] = []
@@ -976,6 +1084,7 @@ class ThrowStmt(Statement):
         return result
 
     def set_expr(self, expr: Expression) -> None:
+        """设置抛出的异常表达式。"""
         expr.validate()
         # noinspection PyTypeChecker
         if not expr.return_type.convertable_to(self._symbol_table["exception"], self._symbol_table.symbols):
@@ -1003,12 +1112,20 @@ class ThrowStmt(Statement):
 
 
 class CStmt(Statement):
+    """原生 C 代码语句，用于直接嵌入 C 代码片段。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化原生 C 代码语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._text: Optional[str] = None
 
     def add_text(self, text: str) -> None:
+        """追加 C 代码文本。"""
         if self._text is None:
             self._text = text
         else:
@@ -1063,6 +1180,7 @@ class CStmt(Statement):
         return super().outer_text
 
     def set_text(self, text: str) -> None:
+        """设置 C 代码文本。"""
         self._text = text
 
     @property
@@ -1075,14 +1193,23 @@ class CStmt(Statement):
 
 
 class _CondKw(Enum):
+    """条件关键字枚举，表示 if、elif 和 else。"""
     IF = "if"
     ELIF = "else if"
     ELSE = "else"
 
 
 class CondStmt(Statement):
+    """条件语句基类，表示 if、elif 或 else 分支。"""
 
     def __init__(self, kw: _CondKw, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化条件语句。
+        :param kw: 条件关键字。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._cond_expr: Optional[Expression] = None
         self._stmt: Optional[Statement] = None
@@ -1109,6 +1236,7 @@ class CondStmt(Statement):
 
     @property
     def cond_kw(self) -> _CondKw:
+        """获取条件关键字（if、elif 或 else）。"""
         return self._cond_kw
 
     @property
@@ -1160,10 +1288,12 @@ class CondStmt(Statement):
         return result
 
     def set_cond_expr(self, expr: Expression) -> None:
+        """设置条件表达式。"""
         expr.validate()
         self._cond_expr = expr
 
     def set_stmt(self, stmt: Statement) -> None:
+        """设置条件分支内的语句。"""
         stmt.indent()
         self._stmt = stmt
 
@@ -1192,27 +1322,50 @@ class CondStmt(Statement):
 
 
 class ElifStmt(CondStmt):
+    """Elif 分支语句。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化 elif 分支语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(_CondKw.ELIF, src_info, symbol_table, var_states)
 
 
 class ElseStmt(CondStmt):
+    """Else 分支语句。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化 else 分支语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(_CondKw.ELSE, src_info, symbol_table, var_states)
 
     def set_cond_expr(self, expr: Expression) -> None:
+        """重写父类方法，else 分支不能有条件表达式。"""
         raise CompilerException("ElseStmt can't have a condition.", self._src_info)
 
 
 class IfStmt(CondStmt):
+    """If 条件分支语句，可包含多条 elif 和 else 分支。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化 if 语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(_CondKw.IF, src_info, symbol_table, var_states)
         self._branches: list[CondStmt] = []
 
     def add_branch(self, branch: CondStmt) -> None:
+        """添加 elif 或 else 分支。"""
         self._branches.append(branch)
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
@@ -1228,8 +1381,15 @@ class IfStmt(CondStmt):
 
 
 class CatchStmt(Statement):
+    """异常捕获语句（catch 块）。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化异常捕获语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._except_decl: Optional[VariableName] = None
         self._stmt: Optional[Statement] = None
@@ -1298,16 +1458,23 @@ class CatchStmt(Statement):
             return None
         return result
 
+    def remove_mark(self) -> None:
+        super().remove_mark()
+        self._stmt.remove_mark()
+
     def set_except_decl(self, except_decl: VariableName) -> None:
+        """设置异常捕获变量声明。"""
         self._except_decl = except_decl
         self._symbol_table.add(except_decl, except_decl.name, None)
         self._var_states.set_assigned([except_decl])
 
     def set_stmt(self, stmt: Statement) -> None:
+        """设置 catch 块内的语句。"""
         stmt.indent()
         self._stmt = stmt
 
     def set_success_jump_to(self, jump_to: str) -> None:
+        """设置异常处理成功后的跳转目标标签。"""
         self._success_jump_to = jump_to
 
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
@@ -1334,8 +1501,15 @@ class CatchStmt(Statement):
 
 
 class FinallyStmt(Statement):
+    """Finally 语句（资源清理块）。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化 finally 语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._stmt: Optional[Statement] = None
 
@@ -1396,7 +1570,12 @@ class FinallyStmt(Statement):
             return None
         return result
 
+    def remove_mark(self) -> None:
+        super().remove_mark()
+        self._stmt.remove_mark()
+
     def set_stmt(self, stmt: Statement) -> None:
+        """设置 finally 块内的语句。"""
         stmt.indent()
         self._stmt = stmt
 
@@ -1419,8 +1598,15 @@ class FinallyStmt(Statement):
 
 
 class TryStmt(Statement):
+    """Try 异常处理语句，包含 try、catch 和 finally 块。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化 try 语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._try_stmt: Optional[Statement] = None
         self._except_stmt: list[CatchStmt] = []
@@ -1430,6 +1616,7 @@ class TryStmt(Statement):
         self._is_finished: bool = False
 
     def add_except_stmt(self, except_stmt: CatchStmt) -> None:
+        """添加一个 catch 异常捕获子句。"""
         except_stmt.indent()
         except_stmt.indent()
         self._except_stmt.append(except_stmt)
@@ -1471,6 +1658,7 @@ class TryStmt(Statement):
         return self._try_stmt.global_init_text
 
     def finish(self) -> None:
+        """完成 try 语句的设置，配置跳转标签。"""
         if self._is_finished:
             raise CompilerException("TryStmt is already finished.", self._src_info)
         if len(self._except_stmt) == 0:
@@ -1527,12 +1715,22 @@ class TryStmt(Statement):
             *map(lambda except_stmt: except_stmt.outer_text, self._except_stmt)
         ]))
 
+    def remove_mark(self) -> None:
+        super().remove_mark()
+        self._try_stmt.remove_mark()
+        for except_stmt in self._except_stmt:
+            except_stmt.remove_mark()
+        if self._finally_stmt is not None:
+            self._finally_stmt.remove_mark()
+
     def set_finally_stmt(self, finally_stmt: "Statement") -> None:
+        """设置 finally 块语句。"""
         if not isinstance(finally_stmt, FinallyStmt):
             raise CompilerException("The statement should to be a finally statement.", self._src_info)
         self._finally_stmt = finally_stmt
 
     def set_try_stmt(self, stmt: Statement) -> None:
+        """设置 try 块内的语句。"""
         stmt.indent()
         self._try_stmt = stmt
 
@@ -1568,8 +1766,16 @@ class TryStmt(Statement):
 
 
 class TypeDefStmt(Statement):
+    """类型定义语句（typedef）。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, dst_type_name: str) -> None:
+        """
+        初始化类型定义语句。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        :param dst_type_name: 目标类型名称。
+        """
         super().__init__(src_info, symbol_table, var_states)
         # noinspection PyTypeChecker
         self._src_type_decl: Optional[TypeName] = None
@@ -1626,6 +1832,7 @@ class TypeDefStmt(Statement):
         return None
 
     def set_type(self, t: TypeRef) -> None:
+        """设置要定义的源类型。"""
         self._src_type_decl = t.return_type
         self._symbol_table.add(t.return_type, self._dst_type_name, None)
 
@@ -1641,14 +1848,22 @@ class TypeDefStmt(Statement):
 
 
 class _ProcessingMode(Enum):
+    """语句块处理模式枚举，表示普通、条件分支或异常处理模式。"""
     NORMAL = 0
     CONDITIONAL = 1
     TRY_CATCH = 2
 
 
 class BlockStmt(Statement):
+    """语句块，包含多条子语句。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化语句块。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states, single_stmt=False)
         self._stmt: list[Statement] = []
         self._release_stmt_list: list[Statement] = []
@@ -1667,6 +1882,7 @@ class BlockStmt(Statement):
         self._after_cleanup_mark_name: str = self._cleanup_mark_name + "_after"
 
     def add_stmt(self, stmt: Statement) -> None:
+        """向语句块中添加一条子语句。"""
         if not stmt.is_finished:
             raise CompilerException("Statement is not finished.", stmt.src_info)
         if isinstance(stmt, _StmtList):
@@ -1740,9 +1956,11 @@ class BlockStmt(Statement):
 
     @property
     def closure_struct_setting_code(self) -> str:
+        """获取闭包结构体设置代码。"""
         return self._closure_struct_setting_code
 
     def finish(self) -> None:
+        """完成语句块的设置，进行变量清理和代码生成。"""
         self._stmt.reverse()
         used_variables: set[VariableName] = set()
         new_stmt_list: list[Statement] = []
@@ -1840,7 +2058,13 @@ class BlockStmt(Statement):
         result: str = "\n\n".join(list(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._stmt))))
         return result if result != "" else None
 
+    def remove_mark(self) -> None:
+        super().remove_mark()
+        for stmt in self._stmt:
+            stmt.remove_mark()
+
     def set_as_closure(self, closure_name: str, args: list[VariableName]) -> None:
+        """将当前语句块设置为闭包，生成捕获结构体代码。"""
         self._is_closure = True
         self._used_outer_variables -= args
         struct_name: str = f"struct {closure_name}$Capture"
@@ -1918,14 +2142,22 @@ class BlockStmt(Statement):
 
 
 class FnBlockStmt(BlockStmt):
+    """函数体语句块，支持变量依赖排序和条件语句缓冲。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化函数体语句块。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table, var_states)
         self._stmt_set: set[Statement] = set()
         self._variable_dependencies: dict[VariableName, Statement] = {}
         self._cond_stmt_buffer: list[Statement] = []
 
     def add_stmt(self, stmt: Statement) -> None:
+        """向函数体中添加一条语句，处理条件分支缓冲和变量依赖。"""
         if isinstance(stmt, CondStmt):
             if stmt.cond_kw in (_CondKw.ELIF, _CondKw.ELSE):
                 if len(self._stmt) == 0:
@@ -1966,6 +2198,7 @@ class FnBlockStmt(BlockStmt):
         self._variable_dependencies.update(map(lambda var: (var, stmt), stmt.new_variables))
 
     def finish(self) -> None:
+        """完成函数体的设置，进行语句排序和条件分支处理。"""
         if len(self._cond_stmt_buffer) > 0:
             new_stmt = BlockStmt(self._cond_stmt_buffer[0].src_info, self._symbol_table, self._var_states, self._outer_variables)
             for buffer_stmt in self._cond_stmt_buffer:
@@ -2007,8 +2240,15 @@ class FnBlockStmt(BlockStmt):
 
 
 class CastOp(Expression):
+    """类型转换表达式（包括静态转换和动态转换）。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+        """
+        初始化类型转换表达式。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        """
         super().__init__(src_info, symbol_table)
         self._type_name: Optional[TypeName] = None
         self._expr: Optional[Expression] = None
@@ -2087,11 +2327,13 @@ class CastOp(Expression):
         return self._type_name
 
     def set_expr(self, expr: Expression) -> None:
+        """设置要转换的表达式。"""
         self._expr = expr
         if self._type_name is not None:
             self._is_dynamic_cast = self.__check_dynamic_cast()
 
     def set_type(self, type_name: TypeRef) -> None:
+        """设置转换的目标类型。"""
         self._type_name = type_name.return_type
         if self._expr is not None:
             self._is_dynamic_cast = self.__check_dynamic_cast()
@@ -2118,6 +2360,7 @@ class CastOp(Expression):
         self._expr.validate()
 
     def __check_dynamic_cast(self) -> bool:
+        """检查是否需要进行动态类型转换。"""
         result = not self._expr.return_type.convertable_to(self._type_name, self._symbol_table.symbols)
         if result:
             self._temp_var_name = self._symbol_table.get_counter()
@@ -2131,6 +2374,7 @@ class CastOp(Expression):
 
     @property
     def __dynamic_cast_front_text(self) -> str:
+        """获取动态类型转换的前置代码。"""
         if not isinstance(self._type_name, ClassName) or not self._expr.return_type.is_object:
             raise CompilerException("Dynamic cast is not allowed on this expression", self._src_info)
         result: list[str] = [

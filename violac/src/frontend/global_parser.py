@@ -15,6 +15,11 @@ __PARSER_UTILS_TYPE = __PARSER_UTILS_WITH_ARGS_TYPE | __PARSER_UTILS_WITHOUT_ARG
 
 
 def _set_loc_command(parse_func: __PARSER_UTILS_TYPE) -> __PARSER_UTILS_TYPE:
+    """
+    装饰器：自动为解析函数注入位置信息和源代码文本，并生成SET_INFO命令。
+    :param parse_func: 被装饰的解析函数。
+    :return: 装饰后的包装函数。
+    """
     def wrapper(self: "GlobalParser", *args, **kwargs) -> Optional[tuple[list[str], list[str]]]:
         start_line, start_col, _, _ = self._src_info.location_tuple
         start_token_count: int = self._current
@@ -41,9 +46,17 @@ _BLANK_TOKEN: Token = Token("", ["_BLANK"])
 
 
 class GlobalParser:
+    """
+    全局解析器基类，负责Viola语言源文件的语法分析。
+    包含预处理、导入解析、定义解析及语句解析等功能。
+    """
     _ENCODING: str = COMPILER_PARAMS["encoding"]
 
     def __init__(self, workspace: str) -> None:
+        """
+        初始化全局解析器。
+        :param workspace: 工作区路径。
+        """
         self._workspace: str = workspace
         self._tokens: list[Token] = []
         self._tokens_num: int = 0
@@ -66,6 +79,11 @@ class GlobalParser:
         self._expr_tokens: list[list[Token]] = []
 
     def parse(self, tokens: list[Token]) -> Optional[ParsingResult]:
+        """
+        解析记号流，返回解析结果。
+        :param tokens: 记号列表。
+        :return: 解析结果对象，失败返回None。
+        """
         self._tasks.clear()
         self._load_tokens(tokens)
         self._move_to_first_token()
@@ -96,6 +114,12 @@ class GlobalParser:
         return ParsingResult(command, symbol, self._expr_tokens, True)
     
     def parse_from_file(self, file_path: str, src_path: str = "") -> Optional[ParsingResult]:
+        """
+        从文件中读取记号流并进行解析。
+        :param file_path: 缓存文件路径。
+        :param src_path: 源文件路径。
+        :return: 解析结果对象，失败返回None。
+        """
         self._set_file_lock(file_path)
         self._logger.info(f"Start parsing {file_path}")
         if not os.path.exists(file_path + TOKEN_POSTFIX):
@@ -115,6 +139,12 @@ class GlobalParser:
         return result
 
     def parse_to_file(self, file_path: str, thread_index: int = 0) -> TaskResult:
+        """
+        解析文件并将结果写入缓存。
+        :param file_path: 源文件路径。
+        :param thread_index: 线程索引。
+        :return: 任务结果。
+        """
         self._logger: Logger = Logger(f"Parser[{thread_index}]")
         file_abs_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_abs_path, self._workspace)
@@ -128,13 +158,26 @@ class GlobalParser:
         return TaskResult(TaskResultState.FAILURE)
 
     def _add_parsing_slice(self, expr_tokens: list[Token]) -> str:
+        """
+        添加表达式切片到表达式列表，并返回其RAW引用。
+        :param expr_tokens: 表达式的记号列表。
+        :return: RAW命令字符串。
+        """
         self._expr_tokens.append(expr_tokens)
         return f"RAW {len(self._expr_tokens) - 1}"
 
     def _add_task(self, task_command: list[str]) -> None:
+        """
+        添加一个待执行的任务。
+        :param task_command: 任务命令列表。
+        """
         self._tasks.append(task_command)
 
     def _back(self, steps: int = 1) -> None:
+        """
+        向后移动指定步数（跳过空白和注释）。
+        :param steps: 移动步数。
+        """
         for _ in range(steps):
             self._current -= 1
             self.__back_loc()
@@ -143,26 +186,52 @@ class GlobalParser:
                 self.__back_loc()
 
     def _back_to(self, pos: int) -> None:
+        """
+        向后移动到指定位置。
+        :param pos: 目标位置。
+        """
         while self._current > pos:
             self._current -= 1
             self.__back_loc()
 
     @staticmethod
     def _buffer_match_types(tokens: list[Token], types: list[str]) -> bool:
+        """
+        判断缓冲区中的记号类型是否与指定类型列表匹配。
+        :param tokens: 记号缓冲区。
+        :param types: 期望的类型列表。
+        :return: 是否匹配。
+        """
         for i, token in enumerate(tokens):
             if token.type != types:
                 return False
         return True
 
     def _change_tokens(self, token: Token, start_pos: int, end_pos: int) -> None:
+        """
+        替换指定范围内的记号为新的记号（其余设为空白）。
+        :param token: 新记号。
+        :param start_pos: 起始位置。
+        :param end_pos: 结束位置。
+        """
         self._tokens[start_pos] = token
         self._tokens[start_pos + 1:end_pos] = [_BLANK_TOKEN] * (end_pos - start_pos - 1)
         
     @staticmethod
     def _check_file_lock(path: str) -> bool:
+        """
+        检查文件解析锁是否存在。
+        :param path: 文件路径。
+        :return: 是否存在锁文件。
+        """
         return os.path.exists(path + PARSING_LOCK_POSTFIX)
 
     def _collect_until(self, end_token_type: str) -> Optional[list[Token]]:
+        """
+        收集记号直到遇到指定类型的结束记号。
+        :param end_token_type: 结束记号类型。
+        :return: 收集的记号列表。
+        """
         tokens: list[Token] = []
         while self._current < self._tokens_num:
             token = self._get_current()
@@ -174,6 +243,10 @@ class GlobalParser:
         return None
 
     def _dump_symbol_type_list(self, file_path: str) -> None:
+        """
+        将符号类型表写入文件。
+        :param file_path: 文件路径（不含后缀）。
+        """
         lines: list[str] = []
         for name, (t, type_args) in self._symbol_types.items():
             if "." in name:
@@ -184,6 +257,11 @@ class GlobalParser:
 
     @staticmethod
     def _filter_blank(tokens: list[Token]) -> list[Token]:
+        """
+        过滤掉空白和注释记号。
+        :param tokens: 原始记号列表。
+        :return: 过滤后的记号列表。
+        """
         return [token for token in tokens if "_BLANK" not in token.type and "_COMMENT" not in token.type]
     
     def _find_import(self, namespace: str) -> Optional[tuple[str, str, str, str]]:
@@ -210,19 +288,35 @@ class GlobalParser:
         return None
 
     def _get_current(self) -> Token:
+        """
+        获取当前位置的记号。
+        :return: 当前记号对象。
+        """
         return self._tokens[self._current]
 
     def _handle_error(self) -> None:
+        """
+        跳过错误记号直到下一个顶层定义（FN/SQ/CLASS/ENUM）。
+        """
         while self._current < self._tokens_num:
             if self._match_types(["FN", "SQ", "CLASS", "ENUM"]):
                 break
 
     def _handle_error_from_import(self) -> None:
+        """
+        跳过导入语句中的错误，直到下一个有效关键字。
+        """
         while self._current < self._tokens_num:
             if self._match_types(["FN", "SQ", "CLASS", "ENUM", "IMPORT", "FROM"]):
                 break
 
     def _load_symbol(self, namespace: str, to_load: Optional[list[str]] = None) -> Optional[list[str]]:
+        """
+        加载指定命名空间的符号表。
+        :param namespace: 命名空间。
+        :param to_load: 需要加载的符号列表，为None则加载全部。
+        :return: 符号列表。
+        """
         file_path = self._find_import(namespace)
         if file_path is None:
             return None
@@ -265,6 +359,12 @@ class GlobalParser:
         return symbols
                 
     def _load_symbol_type_list(self, namespace: str, alias: str, to_load: Optional[list[str]] = None) -> None:
+        """
+        加载指定命名空间的符号类型列表。
+        :param namespace: 命名空间。
+        :param alias: 别名。
+        :param to_load: 需要加载的符号列表。
+        """
         file_path = self._find_import(namespace)
         if file_path is None:
             return
@@ -293,12 +393,21 @@ class GlobalParser:
                     self._parser_generic_table.add(kv_list[0], type_args_count)
 
     def _load_tokens(self, tokens: list[Token]) -> None:
+        """
+        加载记号流到解析器（追加EOF标记）。
+        :param tokens: 记号列表。
+        """
         self._tokens = tokens + [Token("", ["_EOF"])]
         self._tokens_num = len(tokens)
         self._current = 0
         self._exceptions.clear()
 
     def _match_import(self, end_pos: int) -> Optional[list[Token]]:
+        """
+        匹配导入路径并解析为完整记号的序列。
+        :param end_pos: 结束位置。
+        :return: 解析后的记号列表。
+        """
         expect_dot: bool = False
         str_buffer: list[str] = []
         tokens: list[Token] = []
@@ -329,17 +438,35 @@ class GlobalParser:
         return tokens
 
     def _match_type(self, token_type: str) -> bool:
+        """
+        判断当前记号是否包含指定类型。
+        :param token_type: 记号类型。
+        :return: 是否匹配。
+        """
         return token_type in self._get_current().type
 
     def _match_types(self, types: list[str]) -> bool:
+        """
+        判断当前记号是否包含指定类型列表中的任一类型。
+        :param types: 类型列表。
+        :return: 是否匹配。
+        """
         return len(set(types) & set(self._get_current().type)) > 0
 
     def _move_to_first_token(self) -> None:
+        """
+        移动到第一个有效的非空白、非注释记号。
+        """
         while self._current < self._tokens_num and self._get_current().type[0] in ["_COMMENT", "_BLANK"]:
             self._current += 1
             self.__next_loc()
 
     def _next(self, steps: int = 1) -> str:
+        """
+        向前移动指定步数（跳过空白和注释），返回经过的文本。
+        :param steps: 移动步数。
+        :return: 经过的文本内容。
+        """
         output: list[str] = []
         for _ in range(steps):
             self._current += 1
@@ -352,6 +479,11 @@ class GlobalParser:
         return "".join(output)
 
     def _next_no_skip(self, steps: int = 1) -> str:
+        """
+        向前移动指定步数（不跳过空白和注释）。
+        :param steps: 移动步数。
+        :return: 经过的文本内容。
+        """
         output: list[str] = []
         for _ in range(steps):
             self._current += 1
@@ -360,12 +492,17 @@ class GlobalParser:
         return "".join(output)
 
     def _next_to(self, pos: int) -> None:
+        """
+        向前移动到指定位置。
+        :param pos: 目标位置。
+        """
         while self._current < pos:
             self._current += 1
             self.__next_loc()
 
     @_set_loc_command
     def _parse_assign_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析赋值语句（变量 = 表达式）。"""
         if not self._match_type("IDENTIFIER"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -390,6 +527,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_block_stmt(self, new_scope: bool) -> Optional[tuple[list[str], list[str]]]:
+        """解析块语句（花括号内的语句序列）。"""
         command: list[str] = ["MAKE STMT BLOCK"]
         symbol: list[str] = []
         if not self._match_type("L_CURLY_BRACKET"):
@@ -412,6 +550,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_c_part_sq(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """解析C语言片段平方函数（cpart sq）。"""
         if len(prefixes) > 1:
             self._raise(f"Unexpected prefix for C part sq: {' '.join(prefixes)}")
             return None
@@ -432,6 +571,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_c_part_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析C代码片段语句（cpart { ... }）。"""
         self._next()
         if not self._match_type("L_CURLY_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -443,10 +583,11 @@ class GlobalParser:
                 return None
             if self._match_type("ESCAPED_CURLY_BRACKET"):
                 codes.append(self._next()[1:])
+            elif self._match_type("R_CURLY_BRACKET"):
+                break
             else:
                 codes.append(self._next())
-            if self._match_type("R_CURLY_BRACKET"):
-                break
+        self._next()
         codes = "".join(codes).split("\n")
         result = ["MAKE STMT C"]
         for code in codes:
@@ -455,6 +596,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_catch_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析catch语句（异常捕获）。"""
         if not self._match_type("CATCH"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -475,6 +617,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_class(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """解析类定义（class ClassName { ... }）。"""
         if "static" in prefixes:
             self._raise("Unexpected prefix for class: static")
             return None
@@ -535,6 +678,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_class_body(self, class_name: str) -> Optional[tuple[list[str], list[str]]]:
+        """解析类体（成员方法和属性）。"""
         prop_command: list[str] = []
         prop_symbol: list[str] = []
         func_command: list[str] = []
@@ -570,6 +714,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_closure_stmt(self, token_buffer: list[Token]) -> Optional[tuple[list[str], list[str]]]:
+        """解析闭包声明语句。"""
         if len(token_buffer) == 1:
             self._next()
             if not self._match_type("IDENTIFIER"):
@@ -607,6 +752,10 @@ class GlobalParser:
         ], []
 
     def _parse_cond_expr(self) -> Optional[str]:
+        """
+        解析条件表达式（括号括起的条件）。
+        :return: RAW命令字符串。
+        """
         tokens: list[Token] = []
         if not self._match_type("L_BRACKET"):
             self._raise("Expected \"(\". Unexpected token: " + self._get_current().text)
@@ -629,6 +778,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_cond_stmt(self, keyword: str) -> Optional[tuple[list[str], list[str]]]:
+        """解析条件语句（if/elif/else）。"""
         if keyword not in ["IF", "ELIF", "ELSE"]:
             self._raise(f"Expected \"IF\", \"ELIF\", or \"ELSE\". Unexpected keyword: {keyword}")
             return None
@@ -655,6 +805,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_const_def(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """解析常量定义。"""
         if len(prefixes) > 0:
             self._raise(f"Unexpected prefix: {' '.join(prefixes)}")
         command: list[str] = ["MAKE DEF CONST"]
@@ -668,6 +819,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_decl_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析变量声明语句（类型 名称 = 表达式;）。"""
         name_results = self._parse_type_name_list(["ASSIGN", "SEMICOLON"])
         if name_results is None:
             return None
@@ -688,6 +840,8 @@ class GlobalParser:
     @_set_loc_command
     def _parse_decl_assign_op_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         """
+        解析语句（声明/赋值/操作语句的统合入口）。
+
         pure_decl_stmt = type_name_list SEMICOLON; -- 纯声明语句
         decl_stmt = type_name_list ASSIGN expr SEMICOLON; -- 声明语句
         assign_stmt = name_list ASSIGN expr SEMICOLON; -- 赋值语句
@@ -723,6 +877,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_def(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析顶层定义（函数、平方函数、类、枚举、常量）。"""
         prefixes = self._parse_prefixes(["ABSTRACT", "CPART", "EXPORT", "STATIC"])
         if prefixes is None:
             return None
@@ -741,17 +896,19 @@ class GlobalParser:
             command, symbol = self._parse_const_def(prefixes)
         command += ["CALL ADD_DEF"]
         symbol.append("---")
-        self._next()
         return command, symbol
 
     def _parse_elif_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析elif语句。"""
         return self._parse_cond_stmt("ELIF")
 
     def _parse_else_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析else语句。"""
         return self._parse_cond_stmt("ELSE")
 
     @_set_loc_command
     def _parse_enum(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """解析枚举定义。"""
         if len(prefixes) > 0:
             self._raise(f"Unexpected prefix: {' '.join(prefixes)}")
         token: Token = self._get_current()
@@ -784,6 +941,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_enum_body(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析枚举体（枚举项列表）。"""
         command: list[str] = []
         expect_semicolon: bool = False
         while True:
@@ -809,6 +967,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_enum_item(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析枚举项（名称 = 值）。"""
         self._next()
         if not self._match_type("IDENTIFIER"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -829,6 +988,10 @@ class GlobalParser:
         return command, []
 
     def _parse_expr(self) -> Optional[list[str]]:
+        """
+        解析表达式并返回RAW引用。
+        :return: RAW命令列表。
+        """
         result_tokens = self._collect_until("SEMICOLON")
         if result_tokens is None:
             return None
@@ -838,6 +1001,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_finally_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析finally语句。"""
         if not self._match_type("FINALLY"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -849,6 +1013,11 @@ class GlobalParser:
         return ["MAKE STMT FINALLY"] + block_result[0] + ["CALL SET_STMT"], []
 
     def _parse_fn(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """
+        解析fn函数定义。
+        :param prefixes: 前缀修饰符列表。
+        :return: 命令和符号列表。
+        """
         if "cpart" in prefixes:
             self._raise("Unexpected prefix: cpart")
             return None
@@ -856,6 +1025,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_from_import(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析from...import语句。"""
         module_path: Optional[str] = self._parse_name()
         if module_path is None:
             return None
@@ -896,6 +1066,14 @@ class GlobalParser:
     @_set_loc_command
     def _parse_func(self, prefixes: list[str], func_type: str, is_closure: bool = False, without_name: bool = False) -> \
             Optional[tuple[list[str], list[str]]]:
+        """
+        解析函数定义（函数体包括声明和块语句）。
+        :param prefixes: 前缀修饰符列表。
+        :param func_type: 函数类型（FN/SQ）。
+        :param is_closure: 是否为闭包。
+        :param without_name: 是否匿名。
+        :return: 命令和符号列表。
+        """
         decl_result = self._parse_func_decl(func_type, prefixes, is_closure, without_name)
         if decl_result is not None:
             command, symbol = decl_result
@@ -914,6 +1092,14 @@ class GlobalParser:
     @_set_loc_command
     def _parse_func_decl(self, func_type: str, prefixes: list[str], is_closure: bool = False,
                          without_name: bool = False) -> Optional[tuple[list[str], list[str]]]:
+        """
+        解析函数声明（函数名称、泛型参数、参数列表和返回类型）。
+        :param func_type: 函数类型。
+        :param prefixes: 前缀修饰符列表。
+        :param is_closure: 是否为闭包。
+        :param without_name: 是否匿名。
+        :return: 命令和符号列表。
+        """
         if func_type not in ["FN", "SQ"]:
             self._raise(f"Unexpected func type: {func_type}")
             return None
@@ -981,6 +1167,10 @@ class GlobalParser:
         return command, symbol
 
     def _parse_id_list(self) -> Optional[list[str]]:
+        """
+        解析标识符列表（逗号分隔）。
+        :return: 标识符列表。
+        """
         id_list: list[str] = []
         expect_comma: bool = False
         while self._current < self._tokens_num:
@@ -1003,10 +1193,12 @@ class GlobalParser:
         return None
 
     def _parse_if_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析if语句。"""
         return self._parse_cond_stmt("IF")
 
     @_set_loc_command
     def _parse_import(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析import语句。"""
         module_path: Optional[str] = self._parse_name()
         if module_path is None:
             return None
@@ -1026,6 +1218,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_import_line(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析导入行（import或from...import）。"""
         if self._match_type("IMPORT"):
             result: Optional[tuple[list[str], list[str]]] = self._parse_import()
         elif self._match_type("FROM"):
@@ -1039,6 +1232,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_method(self, class_name: str, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """解析类方法定义。"""
         self._next()
         if sum(modifier in prefixes for modifier in ["PUBLIC", "PROTECTED", "PRIVATE"]) > 1:
             self._raise("Unexpected modifiers: " + " ".join(prefixes))
@@ -1063,6 +1257,10 @@ class GlobalParser:
         return None
 
     def _parse_name(self) -> Optional[str]:
+        """
+        解析点分隔的名称（命名空间路径）。
+        :return: 完整的点分隔名称字符串。
+        """
         names: list[str] = []
         expect_dot: bool = False
         while True:
@@ -1082,6 +1280,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_op_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析操作语句（表达式语句）。"""
         expr_result = self._collect_until("SEMICOLON")
         if expr_result is None:
             return None
@@ -1094,6 +1293,11 @@ class GlobalParser:
         return ["MAKE STMT OP", parsing_slice, "CALL SET_EXPR"], []
 
     def _parse_prefixes(self, matches: list[str]) -> Optional[list[str]]:
+        """
+        解析修饰符前缀列表。
+        :param matches: 允许的修饰符列表。
+        :return: 解析到的修饰符列表。
+        """
         prefixes: list[str] = []
         while (token := self._get_current()).type in matches:
             if token in prefixes:
@@ -1107,6 +1311,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_property(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """解析类属性定义。"""
         if sum(modifier in prefixes for modifier in ["PUBLIC", "PROTECTED", "PRIVATE"]) > 1:
             self._raise("Unexpected modifiers: " + " ".join(prefixes))
             return None
@@ -1151,6 +1356,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_return_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析return语句。"""
         if not self._match_type("RETURN"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -1162,10 +1368,12 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_sq(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """解析平方（sq）函数定义。"""
         return self._parse_func(prefixes, "SQ")
 
     @_set_loc_command
     def _parse_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析语句（支持async修饰）。"""
         if self._match_type("ASYNC"):
             self._next()
             result = self._parse_stmt_no_async()
@@ -1178,6 +1386,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_stmt_no_async(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析非async语句（分派到各类具体语句解析器）。"""
         if self._match_type("RETURN"):
             return self._parse_return_stmt()
         if self._match_type("THROW"):
@@ -1204,6 +1413,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_throw_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析throw语句。"""
         if not self._match_type("THROW"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -1220,6 +1430,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_try_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析try语句。"""
         if not self._match_type("TRY"):
             self._raise("Expected try. Unexpected token: " + self._get_current().text)
             return None
@@ -1234,6 +1445,10 @@ class GlobalParser:
         return ["MAKE STMT TRY"] + block_result[0] + ["CALL SET_STMT"], []
 
     def _parse_type(self) -> Optional[str]:
+        """
+        解析类型表达式（返回类型名称字符串）。
+        :return: 类型名称字符串。
+        """
         l_bracket_count: int = 0
         l_angle_bracket_count: int = 0
         l_square_bracket_count: int = 0
@@ -1290,6 +1505,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_typedef_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析类型别名定义语句（using）。"""
         if not self._match_type("USING"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -1310,6 +1526,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_type_name_list(self, end_symbols: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """解析类型-名称列表（类型声明中的参数列表）。"""
         expect_comma: bool = False
         command: list[str] = []
         symbol: list[str] = []
@@ -1337,19 +1554,34 @@ class GlobalParser:
         return command, symbol
 
     def _raise(self, message: str) -> None:
+        """
+        记录解析错误日志。
+        :param message: 错误消息。
+        """
         self._logger.error(str(CompilerException(message, self._src_info)))
         
     @staticmethod
     def _remove_file_lock(path: str) -> None:
+        """
+        移除文件解析锁。
+        :param path: 文件路径。
+        """
         os.remove(path + PARSING_LOCK_POSTFIX)
         
     @staticmethod
     def _set_file_lock(path: str) -> None:
+        """
+        设置文件解析锁（防止并发解析）。
+        :param path: 文件路径。
+        """
         os.makedirs(os.path.dirname(path + PARSING_LOCK_POSTFIX), exist_ok=True)
         with open(path + PARSING_LOCK_POSTFIX, "w") as file:
             file.write("")
 
     def __back_loc(self) -> None:
+        """
+        向后更新源代码位置信息。
+        """
         token: Token = self._get_current()
         self._end_line = self._start_line
         self._end_col = self._start_col
@@ -1359,6 +1591,11 @@ class GlobalParser:
         self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
 
     def __get_import_prefix(self, id_list: list[str]) -> list[str]:
+        """
+        获取标识符中匹配导入路径的前缀部分。
+        :param id_list: 标识符分段列表。
+        :return: 替换后的标识符列表。
+        """
         for i in range(len(id_list), 0, -1):
             prefix: str = ".".join(id_list[:i])
             if prefix in self._imports:
@@ -1366,6 +1603,11 @@ class GlobalParser:
         return id_list
 
     def __get_segments_num(self, token_buffer: list[Token]) -> Optional[int]:
+        """
+        计算记号缓冲区中的类型-名称段数量。
+        :param token_buffer: 记号缓冲区。
+        :return: 段数量。
+        """
         bracket_level: int = 0
         segments_num: int = 0
         local_token_buffer: list[Token] = []
@@ -1397,6 +1639,10 @@ class GlobalParser:
         return segments_num
 
     def __next_loc(self, token: Optional[Token] = None) -> None:
+        """
+        向前更新源代码位置信息。
+        :param token: 可选的记号对象，为None则使用当前记号。
+        """
         token: Token = self._get_current() if token is None else token
         self._start_line = self._end_line
         self._start_col = self._end_col

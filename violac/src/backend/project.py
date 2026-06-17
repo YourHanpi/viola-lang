@@ -10,9 +10,19 @@ from typing import Optional
 
 
 class SourceFile(CompilingItem):
+    """源文件对象，管理一个源文件的所有定义、实例化和代码生成。"""
 
     def __init__(self, source_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
                  src_path: str, dst_path: str, namespace: list[NamespaceName]) -> None:
+        """
+        初始化源文件对象。
+        :param source_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param var_states: 变量状态表。
+        :param src_path: 源文件路径。
+        :param dst_path: 输出文件路径（不含扩展名）。
+        :param namespace: 命名空间路径。
+        """
         super().__init__(source_info)
         self._src_path = src_path
         self._dst_code_path = dst_path + ".c"
@@ -26,6 +36,7 @@ class SourceFile(CompilingItem):
         self._var_states: VariableStateTable = var_states
 
     def add_def(self, definition: Definition) -> None:
+        """向源文件中添加一个定义。"""
         self._definitions.append(definition)
         if definition.global_init_text is not None:
             global_stmt = CStmt(VIOLA_INIT, self._symbol_table, self._var_states)
@@ -33,8 +44,7 @@ class SourceFile(CompilingItem):
             self._global_stmt.append(global_stmt)
 
     def finish(self) -> None:
-        if self._is_finished:
-            raise InternalCompilerException(f"SourceFile {self._src_path} is already finished", self._src_info)
+        """完成源文件，生成全局初始化函数并进行泛型实例化。"""
         global_sq: GlobalDef = GlobalDef(self._src_info, self._symbol_table, self._var_states, self._namespace)
         for stmt in self._global_stmt:
             global_sq.add_stmt(stmt)
@@ -45,6 +55,7 @@ class SourceFile(CompilingItem):
         self._is_finished = True
 
     def get_main_func(self) -> Definition:
+        """获取源文件中的主函数定义。"""
         results = list(filter(lambda x: x.is_main, self._definitions))
         if len(results) == 1:
             return results[0]
@@ -54,6 +65,7 @@ class SourceFile(CompilingItem):
             raise InternalCompilerException(f"SourceFile {self._src_path} has more than one main function", self._src_info)
 
     def optimize(self) -> "SourceFile":
+        """优化源文件中的所有定义和实例。"""
         for i, d in enumerate(self._definitions):
             self._definitions[i] = d.optimize()
         for i, d in enumerate(self._instances):
@@ -62,9 +74,11 @@ class SourceFile(CompilingItem):
 
     @property
     def src_path(self) -> str:
+        """获取源文件路径。"""
         return self._src_path
 
     def write(self) -> None:
+        """将源文件写入磁盘，生成 .c 和 .h 文件。"""
         if not self._is_finished:
             raise InternalCompilerException(f"SourceFile {self._src_path} is not finished", self._src_info)
         instance_sources: list[str] = list(map(lambda x: x.source, self._instances))
@@ -80,28 +94,45 @@ class SourceFile(CompilingItem):
             f.write("\n\n".join(headers))
 
     def _initialize_all_symbols(self) -> None:
+        """初始化所有泛型符号的实例化。"""
         generics: list[Definition] = list(filter(lambda x: x.is_generic, self._definitions))
         for g in generics:
             self._instances.extend(g.instantiation_full_all())
 
 
 class ImportDef(FromImportDef):
+    """模块导入定义，封装 import 语句。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, root_path: str, module_path: str) -> None:
+        """
+        初始化 import 导入定义。
+        :param src_info: 源代码信息。
+        :param symbol_table: 符号表。
+        :param root_path: 项目根路径。
+        :param module_path: 模块路径。
+        """
         super().__init__(src_info, symbol_table, root_path, module_path, ["__module__"])
 
     @property
     def outer_text(self) -> Optional[str]:
+        """导入定义没有外层代码文本。"""
         return None
 
     @property
     def source(self) -> str:
+        """获取 import 语句的源代码文本。"""
         return f"// import {self._module_path}"
 
 
 class _MainFile:
+    """主入口文件，生成 C 语言的 main 函数。"""
 
     def __init__(self, src_info: SourceInfo, output_path: str) -> None:
+        """
+        初始化主入口文件。
+        :param src_info: 源代码信息。
+        :param output_path: 输出目录路径。
+        """
         self._src_info: SourceInfo = src_info
         self._dst_path: str = os.path.join(output_path, "__main__.c")
         self._global_calls: list[str] = []
@@ -110,10 +141,12 @@ class _MainFile:
         self._text: str = ""
 
     def add_global_call(self, namespace: list[NamespaceName]) -> None:
+        """添加一个全局初始化函数的调用。"""
         call_name: str = "$".join(list(map(lambda x: x.name, namespace))) + "$__global__();"
         self._global_calls.append(call_name)
 
     def finish(self) -> None:
+        """完成主入口文件的生成，组装 argv 处理和 main 函数体。"""
         if self._entry_call == "":
             raise InternalCompilerException("Entry point is not set", self._src_info)
         # noinspection PyTypeChecker
@@ -132,12 +165,14 @@ class _MainFile:
         self._text = f"{self._entry_include}\n\nint main(int argc, char **argv) {{\n{text}\n}}"
 
     def set_entry(self, namespace: list[NamespaceName]) -> None:
+        """设置程序入口点（main 函数调用）。"""
         entry = "$".join(list(map(lambda x: x.name, namespace)))
         call_name: str = entry + "$main_0(argvArray);"
         self._entry_call = call_name
         self._entry_include = f"#define _VIOLA_IMPORT_{entry}$main\n#include \"{entry}.vla.h\""
 
     def write(self) -> None:
+        """将主入口文件写入磁盘。"""
         if self._text == "":
             raise InternalCompilerException("Main file is not finished", self._src_info)
         with open(self._dst_path, "w", encoding=COMPILER_PARAMS["encoding"]) as f:
@@ -145,8 +180,15 @@ class _MainFile:
 
 
 class Project:
+    """项目对象，管理源文件集合、编译输出和主入口文件。"""
 
     def __init__(self, root_path: str, entry_path: str, output_path: str) -> None:
+        """
+        初始化项目。
+        :param root_path: 项目根路径。
+        :param entry_path: 入口文件路径。
+        :param output_path: 输出目录路径。
+        """
         self._root_path: str = os.path.abspath(root_path)
         self._output_path: str = os.path.abspath(output_path)
         self._source_files: dict[str, SourceFile] = {}
@@ -157,24 +199,30 @@ class Project:
         self._main_file.set_entry(self._entry_namespace)
 
     def add_source_file(self, source_file: SourceFile) -> None:
+        """添加一个源文件到项目中。"""
         if source_file.src_path in self._source_files:
             raise InternalCompilerException(f"SourceFile {source_file.src_path} is already added", self._src_info)
         self._source_files[source_file.src_path] = source_file
         self._main_file.add_global_call(self._get_namespace(source_file.src_path))
 
     def finish(self) -> None:
+        """完成项目构建，完成主入口文件的生成。"""
         self._main_file.finish()
 
     @property
     def output_path(self) -> str:
+        """获取项目输出路径。"""
         return self._output_path
 
     @property
     def root_path(self) -> str:
+        """获取项目根路径。"""
         return self._root_path
 
     def write(self) -> None:
+        """将所有生成的文件写入磁盘。"""
         self._main_file.write()
 
     def _get_namespace(self, src_path: str) -> list[NamespaceName]:
+        """根据源文件路径获取对应的命名空间列表。"""
         return list(map(lambda x: NamespaceName(x), os.path.relpath(src_path[:-4], self._root_path).split(os.sep)))

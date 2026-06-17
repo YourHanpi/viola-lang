@@ -11,8 +11,15 @@ from typing import Optional
 
 
 class Lexer(FSM):
-    
+    """
+    词法分析器，将源代码文本转换为记号流。
+    """
+
     def __init__(self, workspace: str) -> None:
+        """
+        初始化词法分析器。
+        :param workspace: 工作区路径。
+        """
         super().__init__()
         self._workspace: str = workspace
         self._src_info: SourceInfo = VIOLA_INIT
@@ -25,9 +32,17 @@ class Lexer(FSM):
 
     @property
     def exceptions(self) -> list[CompilerException]:
+        """
+        获取词法分析过程中产生的异常列表。
+        """
         return self._exceptions
 
     def lex(self, path: str) -> Optional[list[Token]]:
+        """
+        对指定文件进行词法分析。
+        :param path: 源文件路径。
+        :return: 记号列表，失败返回None。
+        """
         self._src_info = SourceInfo(path)
         with open(path, "r", encoding=COMPILER_PARAMS["encoding"]) as f:
             text: str = f.read()
@@ -72,6 +87,12 @@ class Lexer(FSM):
         return tokens
 
     def lex_with_writer(self, file_path: str, thread_index: int = 0) -> TaskResult:
+        """
+        对文件进行词法分析并将结果写入缓存。
+        :param file_path: 源文件路径。
+        :param thread_index: 线程索引。
+        :return: 任务结果。
+        """
         self._logger = Logger(f"Lexer[{thread_index}]")
         file_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_path, self._workspace)
@@ -90,6 +111,11 @@ class Lexer(FSM):
 
     @staticmethod
     def _get_char_token(char: str) -> Token:
+        """
+        获取字符对应的记号类型。
+        :param char: 输入字符。
+        :return: 记号对象。
+        """
         type_list: list[str] = [char]
         if char in "01":
             type_list.append("BIN_DIGIT")
@@ -109,6 +135,10 @@ class Lexer(FSM):
         return Token(char, type_list)
         
     def _set_states_list(self) -> StateNode:
+        """
+        设置词法分析器的状态列表（DFA状态图）。
+        :return: 起始状态结点。
+        """
         start: StateNode = StateNode()
         start = Lexer.__string_states_list(start, True)
         start = Lexer.__string_states_list(start, False)
@@ -125,6 +155,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __bin_math_op_states_list(first: StateNode) -> StateNode:
+        """
+        构建二元数学运算符的状态列表（+ - * / % @ ->）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         add_op: StateNode = StateNode()
         sub_op: StateNode = StateNode()
         ret_ptr: StateNode = StateNode()
@@ -153,6 +188,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __blank_states_list(first: StateNode) -> StateNode:
+        """
+        构建空白字符的状态列表（空格、换行、制表符）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         first.add_transfer(" ", first)
         first.add_transfer("\n", first)
         first.add_transfer("\t", first)
@@ -161,6 +201,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __brackets_states_list(first: StateNode) -> StateNode:
+        """
+        构建括号类字符的状态列表（()[]{}以及转义花括号）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         l_bracket: StateNode = StateNode()
         r_bracket: StateNode = StateNode()
         l_square_bracket: StateNode = StateNode()
@@ -189,6 +234,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __comment_states_list(div_op: StateNode) -> StateNode:
+        """
+        构建注释的状态列表（// 和 /* */）。
+        :param div_op: 除法运算符状态结点。
+        :return: 更新后的除法运算符状态结点。
+        """
         line_comment2: StateNode = StateNode()
         multi_lines_comment2: StateNode = StateNode()
         multi_lines_comment3: StateNode = StateNode()
@@ -210,6 +260,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __compare_states_list(first: StateNode) -> StateNode:
+        """
+        构建比较运算符的状态列表（= == != < > <= >= << >> ~ !）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         assign: StateNode = StateNode()
         update: StateNode = StateNode()
         eq: StateNode = StateNode()
@@ -249,6 +304,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __identifier_states_list(first: StateNode) -> StateNode:
+        """
+        构建标识符和关键字的状态列表。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         identifier_state: StateNode = StateNode()
         first.add_transfer("LETTER", identifier_state)
         first.add_transfer("_", identifier_state)
@@ -305,6 +365,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __logical_states_list(first: StateNode) -> StateNode:
+        """
+        构建逻辑和位运算符的状态列表（& && | || ^）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         bit_and: StateNode = StateNode()
         logical_and: StateNode = StateNode()
         bit_or: StateNode = StateNode()
@@ -324,6 +389,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __number_states_list(first: StateNode) -> StateNode:
+        """
+        构建数字常量的状态列表（整数、浮点数、十六进制、八进制、二进制等）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         int_state: StateNode = StateNode()
         zero_state: StateNode = StateNode()
         double_float_state: StateNode = StateNode()
@@ -391,6 +461,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __punctuation_states_list(first: StateNode) -> StateNode:
+        """
+        构建标点符号的状态列表（, ; : ::< ?）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         comma: StateNode = StateNode()
         semicolon: StateNode = StateNode()
         generic_start1: StateNode = StateNode()
@@ -412,6 +487,12 @@ class Lexer(FSM):
         
     @staticmethod
     def __string_states_list(first_state: StateNode, double_quote: bool) -> StateNode:
+        """
+        构建字符串常量的状态列表（双引号或单引号字符串）。
+        :param first_state: 起始状态结点。
+        :param double_quote: 是否使用双引号。
+        :return: 更新后的起始状态结点。
+        """
         quote: str = "\"" if double_quote else "\'"
         first: StateNode = StateNode()
         second: StateNode = StateNode()
