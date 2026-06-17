@@ -63,11 +63,12 @@ class Lexer(FSM):
                 self._start_col = self._end_col
                 char_buf.clear()
                 self.reset()
-                self.transfer(token)
+                next_state = self.transfer(token)
+            if self._current.output == "_BLANK" and next_state is not None and next_state.output != "_BLANK":
+                char_buf.clear()
             char_buf.append(char)
+            self._current = next_state if next_state is not None else self._start
             current_loc += 1
-        if error_occurred:
-            return None
         return tokens
 
     def lex_with_writer(self, file_path: str, thread_index: int = 0) -> TaskResult:
@@ -75,7 +76,7 @@ class Lexer(FSM):
         file_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_path, self._workspace)
         cache_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
-        if os.path.exists(file_path) and os.path.getmtime(file_path) < os.path.getmtime(cache_path):
+        if os.path.exists(file_path) and os.path.exists(cache_path + TOKEN_POSTFIX) and os.path.getmtime(file_path) < os.path.getmtime(cache_path + TOKEN_POSTFIX):
             self._logger.info(f"Passed: {file_path}")
             return TaskResult(TaskResultState.SUCCESS)
         self._logger.info(f"Lexing: {file_path}")
@@ -85,7 +86,7 @@ class Lexer(FSM):
             return TaskResult(TaskResultState.FAILURE)
         TokenStreamIO.write(cache_path + TOKEN_POSTFIX, result)
         self._logger.info(f"Successfully lexed: {file_path}")
-        return TaskResult(TaskResultState.SUCCESS)
+        return TaskResult(TaskResultState.SUCCESS, [["violac", "parse", file_path]])
 
     @staticmethod
     def _get_char_token(char: str) -> Token:
@@ -116,6 +117,7 @@ class Lexer(FSM):
         start = Lexer.__blank_states_list(start)
         start = Lexer.__bin_math_op_states_list(start)
         start = Lexer.__compare_states_list(start)
+        start = Lexer.__logical_states_list(start)
         start = Lexer.__brackets_states_list(start)
         start = Lexer.__punctuation_states_list(start)
         start = Lexer.__comment_states_list(start)
@@ -284,34 +286,21 @@ class Lexer(FSM):
             "try",
             "using"
         ]
-        states: list[list[StateNode]] = []
-        buffered_word: str = ""
-        buffered_word_length: int = 0
-        buffered_state: StateNode = StateNode()
-        for i, k in enumerate(keywords):
-            j: int = 0
-            c: str = k[0]
-            kw_length: int = len(k)
-            states.append([])
-            while j < buffered_word_length and j < kw_length and c == buffered_word[j]:
-                buffered_state = states[i - 1][j]
-                j += 1
-                c = k[j]
-            if j == 0:
-                first.add_transfer(c, buffered_state)
-            while j < kw_length:
-                new_node: StateNode = StateNode()
-                buffered_state.add_transfer(c, new_node)
-                buffered_state.add_transfer("LETTER", identifier_state)
-                buffered_state.add_transfer("DIGIT", identifier_state)
-                if j == kw_length - 1:
-                    new_node.set_output(k.upper())
-                else:
-                    new_node.set_output("IDENTIFIER")
-                states[i].append(new_node)
-                buffered_state = new_node
-                j += 1
-                c = k[j]
+        for keyword in keywords:
+            current: StateNode = first
+            kw_len: int = len(keyword)
+            for i, ch in enumerate(keyword):
+                next_state = current.transfer(Token(ch, [ch]))
+                if next_state is None:
+                    next_state = StateNode()
+                    current.add_transfer(ch, next_state)
+                if i < kw_len - 1:
+                    if next_state.output is None:
+                        next_state.set_output("IDENTIFIER")
+                    next_state.add_transfer("LETTER", identifier_state)
+                    next_state.add_transfer("DIGIT", identifier_state)
+                current = next_state
+            current.set_output(keyword.upper())
         return first
 
     @staticmethod
@@ -449,4 +438,4 @@ class Lexer(FSM):
         fifth.add_transfer(quote, sixth)
         fifth.add_transfer("CHAR", third)
         sixth.set_output("LONG_STRING")
-        return first
+        return first_state

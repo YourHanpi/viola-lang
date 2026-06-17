@@ -3,3 +3,15 @@ c_source
 src_old
 project
 .idea
+violac/src_modified
+violac/test_compiled
+*.log
+*.vla.vlacmd
+*.vla.vlacmd0
+*.vla.vlaexpr
+*.vla.vlasymt
+*.vla.vlasymtab
+*.vla.vlatoken
+*.vlamk.toml
+*.vla.c
+*.vla.h

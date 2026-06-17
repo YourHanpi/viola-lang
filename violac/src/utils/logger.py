@@ -3,7 +3,7 @@ from .compiler_exceptions import InternalCompilerException, CommandException
 from .compiler_params import COMPILER_PARAMS
 from .source_info import VIOLA_INIT
 
-from enum import Enum
+from enum import IntEnum
 import os
 from sys import stderr
 from threading import Lock
@@ -11,7 +11,7 @@ import time
 from typing import TextIO, Optional
 
 
-class LogLevel(Enum):
+class LogLevel(IntEnum):
     DEBUG = 0
     INFO = 1
     WARNING = 2
@@ -48,7 +48,7 @@ class FileHandler:
 
     def config_project(self, workspace: str, output_name: str) -> None:
         self._workspace = workspace
-        self._output_name = output_name
+        self._output_name = os.path.basename(output_name.rstrip("/").rstrip("\\")) or output_name
 
     def log(self, message: str) -> None:
         if self._handler is None:
@@ -61,7 +61,7 @@ class FileHandler:
         if not os.path.exists(os.path.join(self._workspace, "__log__")):
             os.mkdir(os.path.join(self._workspace, "__log__"))
         self._path = f"{self._workspace}/__log__/{self._output_name}-{time.strftime('%Y-%m-%d-%H-%M-%S')}.log"
-        self._handler = open(self._path, "a")
+        self._handler = open(self._path, "a", encoding=self._encoding)
 
 
 class LoggerController:

@@ -1,0 +1,5 @@
+fn main(string[] argv) -> () {
+    cpart {
+        printf("Hello World!\n");
+    }
+}

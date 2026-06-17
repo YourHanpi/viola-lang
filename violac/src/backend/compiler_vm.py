@@ -6,12 +6,13 @@ import backend.project as project
 import backend.statement as statement
 import backend.symbol as symbol
 from utils import SourceInfo, InternalCompilerException, VIOLA_INIT, COMPILER_PARAMS, CompilerException
-from utils.file_marks import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX
+from utils.file_marks import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX, CACHE_DIR
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
 from enum import Enum
 import os
+from traceback import format_exc
 from typing import Callable, Optional
 
 
@@ -188,6 +189,7 @@ class CompilerVM:
         self._logger = Logger(f"Compiler VM[{thread_index}]")
         src_path = os.path.abspath(src_path)
         src_relpath = os.path.relpath(src_path, self._workspace)
+        cache_path = os.path.abspath(os.path.join(CACHE_DIR, src_relpath))
         output_path = os.path.join(self._output_path, src_relpath)
         if not os.path.exists(src_path):
             self._logger.error(f"Source file not found: {src_path}")
@@ -196,25 +198,25 @@ class CompilerVM:
         if CompilerVM._check_skip(src_path, output_path):
             self._logger.debug(f"Skipped: {src_path}")
             return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
-        if not os.path.exists(src_path + SYMBOL_TABLE_POSTFIX) or not os.path.exists(src_path + COMMAND_POSTFIX):
-            self._logger.debug(f"Required: {src_path + SYMBOL_TABLE_POSTFIX}")
-            self._logger.debug(f"Required: {src_path + COMMAND_POSTFIX}")
+        if not os.path.exists(cache_path + SYMBOL_TABLE_POSTFIX) or not os.path.exists(cache_path + COMMAND_POSTFIX):
+            self._logger.debug(f"Required: {cache_path + SYMBOL_TABLE_POSTFIX}")
+            self._logger.debug(f"Required: {cache_path + COMMAND_POSTFIX}")
             return TaskResult(TaskResultState.DELAYED, [["violac", "parse", src_path]])
-        self._symbol_table = symbol.SymbolTable.read_from(src_path + SYMBOL_TABLE_POSTFIX)
+        self._symbol_table = symbol.SymbolTable.read_from(cache_path + SYMBOL_TABLE_POSTFIX)
         self._var_state_table = symbol.VariableStateTable(src_path, self._workspace)
         self._stack.clear()
         self._stack.append(project.SourceFile(
             self._src_info, self._symbol_table, self._var_state_table, src_path, output_path,
             self._symbol_table.namespace
         ))
-        with open(src_path + COMMAND_POSTFIX, "r", encoding=CompilerVM._ENCODING) as f:
+        with open(cache_path + COMMAND_POSTFIX, "r", encoding=CompilerVM._ENCODING) as f:
             commands = f.read()
         try:
             self.exec(commands)
-        except CompilerException as e:
-            self._logger.error(str(e))
+            src_file = self.get()
+        except CompilerException:
+            self._logger.error(format_exc())
             return TaskResult(TaskResultState.FAILURE)
-        src_file = self.get()
         self._project.add_source_file(src_file)
         self._logger.info(f"Successfully compiled: {src_path}")
         return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
@@ -242,16 +244,19 @@ class CompilerVM:
         return False
 
     def _exec_line(self, cmd: str) -> None:
-        cmd: list[str] = cmd.split(" ")
-        match cmd[0]:
+        cmd = cmd.strip()
+        if not cmd:
+            return
+        cmd_parts: list[str] = cmd.split(" ")
+        match cmd_parts[0]:
             case "CALL":
-                self._call(cmd)
+                self._call(cmd_parts)
             case "MAKE":
-                self._make(cmd)
+                self._make(cmd_parts)
             case "SET_INFO":
-                self._set_info(cmd)
+                self._set_info(cmd_parts)
             case _:
-                raise InternalCompilerException(f"{cmd[0]} is not a valid command", self._src_info)
+                raise InternalCompilerException(f"{cmd_parts[0]} is not a valid command", self._src_info)
 
     def _make(self, cmd: list[str]) -> None:
         match cmd[1]:
@@ -390,6 +395,13 @@ class CompilerVM:
         ])
         # noinspection PyUnresolvedReferences
         self._stack[-1].finish()
+        if isinstance(self._stack[-1], (statement.DeclStmt, statement.AssignStmt)):
+            self.__pop()
+        elif isinstance(self._stack[-1], statement.BlockStmt):
+            blk = self._stack[-1]
+            self.__pop()
+            if len(self._stack) >= 2 and isinstance(self._stack[-1], definition.SqDef):
+                self._stack[-1].add_stmt(blk)
 
     def __call_finish_generic(self) -> None:
         self.__check_type(self._stack[-1], [definition.GenericCall])

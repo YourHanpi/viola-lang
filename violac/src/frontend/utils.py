@@ -190,6 +190,7 @@ class TokenStreamIO:
         tokens: list[Token] = []
         buffer = buffer[4:]
         token_count: int = int.from_bytes(buffer[:4], "little")
+        buffer = buffer[4:]
         for _ in range(token_count):
             token, buffer = TokenStreamIO._load_single_token_bytes(buffer)
             tokens.append(token)
@@ -245,8 +246,18 @@ class ParsingResult:
 
     def write(self, path: str) -> None:
         with open(path + (GLOBAL_COMMAND_POSTFIX if self._from_global_parser else COMMAND_POSTFIX), "w") as f:
-            f.writelines(self._command)
+            for cmd in self._command:
+                f.write(str(cmd) if not isinstance(cmd, str) else cmd)
+                if not (isinstance(cmd, str) and cmd.endswith('\n')):
+                    f.write('\n')
         with open(path + SYMBOL_TABLE_POSTFIX, "w") as f:
-            f.writelines(self._symbol)
+            f.write(path + "\n")
+            f.write(os.path.dirname(path) + "\n")
+            f.write("---\n")
+            for sym in self._symbol:
+                s = str(sym) if not isinstance(sym, str) else sym
+                f.write(s)
+                if not s.endswith('\n'):
+                    f.write('\n')
         if self._from_global_parser:
             TokenStreamIO.write_lists(path + EXPR_TOKENS_POSTFIX, self._expr_tokens)
