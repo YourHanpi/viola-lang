@@ -95,11 +95,11 @@ class GlobalParser:
             return None
         return ParsingResult(command, symbol, self._expr_tokens, True)
     
-    def parse_from_file(self, file_path: str) -> Optional[ParsingResult]:
+    def parse_from_file(self, file_path: str, src_path: str = "") -> Optional[ParsingResult]:
         self._set_file_lock(file_path)
         self._logger.info(f"Start parsing {file_path}")
         if not os.path.exists(file_path + TOKEN_POSTFIX):
-            self._add_task(["violac", "lex", file_path])
+            self._add_task(["violac", "lex", src_path if src_path else file_path])
             return None
         tokens: list[Token] = TokenStreamIO.read(file_path + TOKEN_POSTFIX)
         result = self.parse(tokens)
@@ -116,9 +116,10 @@ class GlobalParser:
 
     def parse_to_file(self, file_path: str, thread_index: int = 0) -> TaskResult:
         self._logger: Logger = Logger(f"Parser[{thread_index}]")
-        file_relpath = os.path.relpath(os.path.abspath(file_path), self._workspace)
+        file_abs_path = os.path.abspath(file_path)
+        file_relpath = os.path.relpath(file_abs_path, self._workspace)
         cache_file_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
-        result = self.parse_from_file(cache_file_path)
+        result = self.parse_from_file(cache_file_path, file_abs_path)
         if result is not None:
             result.write(cache_file_path)
             return TaskResult(TaskResultState.SUCCESS, [["violac", "parse-expr", file_path]])
@@ -394,18 +395,16 @@ class GlobalParser:
         if not self._match_type("L_CURLY_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
+        self._next()
         if new_scope:
             command += ["MAKE STMT C", "CALL ADD_TEXT do {", "CALL ADD_STMT"]
-        while True:
-            self._next()
-            if self._match_type("R_CURLY_BRACKET"):
-                break
-            self._back()
+        while not self._match_type("R_CURLY_BRACKET"):
             stmt_result = self._parse_stmt()
             if stmt_result is None:
                 return None
             command += stmt_result[0] + ["CALL ADD_STMT"]
             symbol += stmt_result[1]
+        self._next()
         if new_scope:
             command += ["MAKE STMT C", "CALL ADD_TEXT } while(0);", "CALL ADD_STMT"]
         command.append("CALL FINISH")
@@ -449,7 +448,10 @@ class GlobalParser:
             if self._match_type("R_CURLY_BRACKET"):
                 break
         codes = "".join(codes).split("\n")
-        return [f"CALL ADD_TEXT {code}" for code in codes], []
+        result = ["MAKE STMT C"]
+        for code in codes:
+            result.append(f"CALL ADD_TEXT {code}")
+        return result, []
 
     @_set_loc_command
     def _parse_catch_stmt(self) -> Optional[tuple[list[str], list[str]]]:
@@ -796,7 +798,7 @@ class GlobalParser:
                 result = self._parse_enum_item()
                 if result is None:
                     return None
-                command += result
+                command += result[0]
                 expect_semicolon = True
             elif self._match_type("SEMICOLON") and expect_semicolon:
                 expect_semicolon = False
@@ -899,10 +901,10 @@ class GlobalParser:
             command, symbol = decl_result
         else:
             return None
-        self._next()
         body_result = self._parse_block_stmt(False)
         if body_result is not None:
-            command += body_result
+            command += body_result[0]
+            symbol += body_result[1]
         else:
             return None
         command += ["CALL FINISH"]
@@ -951,11 +953,11 @@ class GlobalParser:
         if not self._match_type("L_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
+        self._next()
         args_result = self._parse_type_name_list(["R_BRACKET"])
         if args_result is None:
             return None
         symbol += args_result[1]
-        self._next()
         if not self._match_type("R_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -967,6 +969,7 @@ class GlobalParser:
         if not self._match_type("L_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
+        self._next()
         rets_result = self._parse_type_name_list(["R_BRACKET"])
         if rets_result is None:
             return None
@@ -1098,7 +1101,8 @@ class GlobalParser:
                 return None
             prefixes.append(token.text)
             self._next()
-        self._back()
+        if prefixes:
+            self._back()
         return prefixes
 
     @_set_loc_command
@@ -1232,6 +1236,7 @@ class GlobalParser:
     def _parse_type(self) -> Optional[str]:
         l_bracket_count: int = 0
         l_angle_bracket_count: int = 0
+        l_square_bracket_count: int = 0
         is_tuple: bool = False
         result: list[str] = []
         while self._current < self._tokens_num:
@@ -1248,8 +1253,14 @@ class GlobalParser:
                 l_angle_bracket_count -= 1
             elif "R_SHIFT" in token.type:
                 l_angle_bracket_count -= 2
-            if l_bracket_count == 0 and l_angle_bracket_count == 0:
+            elif "L_SQUARE_BRACKET" in token.type:
+                l_square_bracket_count += 1
+            elif "R_SQUARE_BRACKET" in token.type:
+                l_square_bracket_count -= 1
+            if l_bracket_count == 0 and l_angle_bracket_count == 0 and l_square_bracket_count == 0:
                 self._next()
+                if self._match_type("L_SQUARE_BRACKET"):
+                    continue
                 if self._match_type("ARROW"):
                     if not is_tuple:
                         self._raise("Unexpected token: " + token.text)
@@ -1270,7 +1281,7 @@ class GlobalParser:
                     self._next()
                     result.append(dst_type)
                 return "".join(result)
-            if l_bracket_count < 0 or l_angle_bracket_count < 0:
+            if l_bracket_count < 0 or l_angle_bracket_count < 0 or l_square_bracket_count < 0:
                 self._raise(f"Unexpected token {token.text}")
                 return None
             self._next()
@@ -1334,6 +1345,7 @@ class GlobalParser:
         
     @staticmethod
     def _set_file_lock(path: str) -> None:
+        os.makedirs(os.path.dirname(path + PARSING_LOCK_POSTFIX), exist_ok=True)
         with open(path + PARSING_LOCK_POSTFIX, "w") as file:
             file.write("")
 

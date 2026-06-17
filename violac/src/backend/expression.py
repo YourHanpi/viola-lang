@@ -452,7 +452,9 @@ class UnpackExpr(Expression):
                     f"Type mismatch: {ret.type.raw_name} can not convert to {expected_type.raw_name}.",
                     self._src_info
                 )
-        last_expected_type: TupleTypeName = TupleTypeName(self._src_info, expr_type.types[-1:])
+        last_expected_type = TupleTypeName(self._src_info, expr_type.types[-1:])
+        if len(last_expected_type.types) == 1:
+            last_expected_type = last_expected_type.types[0]
         if not returns[-1].type.convertable_to(last_expected_type, self._symbol_table.symbols):
             raise CompilerException(
                 f"Type mismatch: {returns[-1].type.raw_name} can not convert to {last_expected_type.raw_name}.",
@@ -530,13 +532,14 @@ class ValueRef(Expression, ABC):
 
     @property
     def outer_text(self) -> Optional[str]:
-        return self._unpack_expr.outer_text
+        if self._unpack_expr is not None:
+            return self._unpack_expr.outer_text
+        return None
 
     def set_returns(self, returns: list[VariableName]) -> bool:
         self._returns = returns
-        if len(returns) > 1:
-            self._unpack_expr = UnpackExpr(self._src_info, self._symbol_table, self)
-            self._unpack_expr.set_returns(returns)
+        self._unpack_expr = UnpackExpr(self._src_info, self._symbol_table, self)
+        self._unpack_expr.set_returns(returns)
         return True
 
     @property
@@ -777,12 +780,12 @@ class StringLiteral(Literal):
         ]
         lines: list[str] = [
             f"{self._var_name} = ({self._type.c_calling_name})malloc(sizeof({self._type.c_alloc_name}));",
-            f"{self._var_name}->data = (uint16_t *)malloc(sizeof(uint16_t) * {len(self._value) - 2});",
+            f"{self._var_name}->data = (uint16_t *)malloc(sizeof(uint16_t) * {len(self._value)});",
             f"if (!{self._var_name}->data) raise(SIGSEGV);",
-            f"{self._var_name}->size = {len(self._value) - 2};",
+            f"{self._var_name}->size = {len(self._value)};",
             "\n".join(chunks_copy_string)
         ]
-        if len(self._value) == 2:
+        if len(self._value) == 0:
             lines[1] = f"{self._var_name}->data = NULL;"
         return "\n".join(lines)
 
@@ -2225,9 +2228,8 @@ class CallOp(Expression):
                     self._arg_list.append(self._kwarg_dict[n])
                 else:
                     default_value: Optional[GlobalVariableName] = self._func.default_params[n]
-                    if default_value is None:
-                        raise CompilerException(f"Missing argument: {n}", self._src_info)
-                    self._arg_list.append(VariableRef(self._src_info, self._symbol_table, default_value))
+                    if default_value is not None:
+                        self._arg_list.append(VariableRef(self._src_info, self._symbol_table, default_value))
 
     def set_returns(self, returns: Optional[list[VariableName]]) -> bool:
         self._returns_list = returns
@@ -2256,6 +2258,8 @@ class CallOp(Expression):
     def text(self) -> str:
         return_types: TypeName = self.return_type
         if not isinstance(return_types, TupleTypeName):
+            if len(self._returns_list) == 0:
+                return "NULL"
             return self._returns_list[0].name
         if len(return_types.types) == 0:
             return "NULL"

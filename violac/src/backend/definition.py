@@ -137,7 +137,10 @@ class SqDef(Definition):
             if not isinstance(arg_type, TypeName):
                 raise CompilerException(f"Argument {arg_type} is not a type.", src_info)
             arg_types_decl.append(arg_type)
-        decl = self._symbol_table[name, tuple(arg_types_decl)]
+        if len(arg_types_decl) == 0:
+            decl = self._symbol_table[name, None]
+        else:
+            decl = self._symbol_table[name, tuple(arg_types_decl)]
         if not isinstance(decl, FunctionName):
             raise CompilerException(f"Name {name} is not a function.", src_info)
         self._self_name: str = decl.self_name
@@ -157,6 +160,7 @@ class SqDef(Definition):
         self._is_finished: bool = False
         self._is_from_generic: bool = False
         self._is_main: bool = name == "main"
+        self._async_body = None
 
     def add_stmt(self, stmt: Statement) -> None:
         self._body.add_stmt(stmt)
@@ -168,13 +172,15 @@ class SqDef(Definition):
     def finish(self) -> None:
         if self._is_finished:
             raise CompilerException("Function is already finished.", self._src_info)
+        self._async_body = self.__get_async_body()
         self._body.indent()
         self._body.finish()
         self._is_finished = True
 
     @property
     def global_init_text(self) -> Optional[str]:
-        return self._body.global_init_text
+        results = list(filter(lambda x: x is not None, [self._body.global_init_text, self._async_body.global_init_text]))
+        return "\n".join(results)
 
     @property
     def header(self) -> str:
@@ -260,7 +266,8 @@ class SqDef(Definition):
 
     @property
     def outer_text(self) -> Optional[str]:
-        return self._body.outer_text
+        results = list(filter(lambda x: x is not None, [self._body.outer_text, self._async_body.outer_text]))
+        return "\n".join(results)
 
     @property
     def self_name(self) -> str:
@@ -295,20 +302,31 @@ class SqDef(Definition):
             self._body.text,
             "}"
         ]
+        async_text: list[str] = [
+            self._decl.as_async().as_declare() + " {",
+            self._async_body.text,
+            "}"
+        ]
+        text = [*sync_text, "", *async_text]
+        return "\n".join(text)
+
+    def __get_async_body(self) -> TryStmt:
         arg_tuple_name: TupleTypeName = TupleTypeName(self._src_info, self._decl.arg_types)
         ret_tuple_name: TupleTypeName = TupleTypeName(self._src_info, self._decl.ret_types)
-        arg_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, self._symbol_table, VariableRef(self._src_info, self._symbol_table, LocalVariableName(
-            self._src_info, "params", arg_tuple_name
-        )))
+        arg_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, self._symbol_table,
+                                                 VariableRef(self._src_info, self._symbol_table, LocalVariableName(
+                                                     self._src_info, "params", arg_tuple_name
+                                                 )))
         arg_unpack_stmt: DeclStmt = DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)
         arg_unpack_stmt.set_var_value(arg_unpack_expr)
         arg_unpack_stmt.set_vars_with_known_type(self._decl.arg_names, self._decl.arg_types,
                                                  [False] * len(self._decl.arg_names))
         arg_unpack_stmt.finish()
         arg_unpack_stmt.indent()
-        ret_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, self._symbol_table, VariableRef(self._src_info, self._symbol_table, LocalVariableName(
-            self._src_info, "returns", ret_tuple_name
-        )))
+        ret_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, self._symbol_table,
+                                                 VariableRef(self._src_info, self._symbol_table, LocalVariableName(
+                                                     self._src_info, "returns", ret_tuple_name
+                                                 )))
         ret_unpack_stmt: DeclStmt = DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)
         ret_unpack_stmt.set_var_value(ret_unpack_expr)
         ret_unpack_stmt.set_vars_with_known_type(self._decl.ret_names, self._decl.ret_types,
@@ -351,7 +369,8 @@ class SqDef(Definition):
         catch_inner_print_call.add_arg(catch_inner_what_call, None)
         # noinspection PyTypeChecker
         catch_inner_print_func: VariableRef = VariableRef(self._src_info, self._symbol_table, self._symbol_table[
-            PERROR_FUNC_NAME, (ArrayTypeName(self._src_info, StringTypeName),)])
+            PERROR_FUNC_NAME, (StringTypeName,)
+        ])
         catch_inner_print_call.set_func(catch_inner_print_func)
         catch_inner_print.set_expr(catch_inner_print_call)
         catch_inner.add_stmt(catch_inner_print)
@@ -363,13 +382,7 @@ class SqDef(Definition):
         try_stmt.add_except_stmt(catch_stmt)
         try_stmt.finish()
         try_stmt.indent()
-        async_text: list[str] = [
-            self._decl.as_async().as_declare() + " {",
-            try_stmt.text,
-            "}"
-        ]
-        text = [*sync_text, "", *async_text]
-        return "\n".join(text)
+        return try_stmt
 
 
 class ConstructorDef(SqDef):

@@ -34,8 +34,6 @@ def _get_params(command: list[str]) -> tuple[list[str], dict[str, str]]:
 
 
 def _set_default(args: list[str], kwargs: dict[str, str]) -> tuple[list[str], dict[str, str]]:
-    if len(args) == 0:
-        args.append(os.getcwd())
     if "o" not in kwargs:
         kwargs["o"] = os.path.join(args[0], "viola-compiled")
     if "j" not in kwargs:
@@ -46,13 +44,14 @@ def _set_default(args: list[str], kwargs: dict[str, str]) -> tuple[list[str], di
 
 
 def main() -> None:
-    args, kwargs = _get_params(sys.argv)
+    args, kwargs = _get_params(sys.argv[1:])
     args, kwargs = _set_default(args, kwargs)
     if kwargs["j"].isdecimal():
         threads_num: int = int(kwargs["j"])
     else:
         raise CommandException("Parameter '-j' should be integer")
-    MainController(args[0], kwargs["i"], kwargs["o"], threads_num).run()
+    if args[0] == "compile":
+        MainController(args[1], kwargs["i"], kwargs["o"], threads_num, kwargs).run()
 
 
 if __name__ == "__main__":

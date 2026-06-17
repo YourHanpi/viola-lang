@@ -35,7 +35,7 @@ class SourceFile(CompilingItem):
     def finish(self) -> None:
         if self._is_finished:
             raise InternalCompilerException(f"SourceFile {self._src_path} is already finished", self._src_info)
-        global_sq: GlobalDef = GlobalDef(self._src_info, self._symbol_table, self._namespace)
+        global_sq: GlobalDef = GlobalDef(self._src_info, self._symbol_table, self._var_states, self._namespace)
         for stmt in self._global_stmt:
             global_sq.add_stmt(stmt)
         global_sq.finish()
@@ -101,11 +101,12 @@ class ImportDef(FromImportDef):
 
 class _MainFile:
 
-    def __init__(self, src_info: SourceInfo, root_path: str) -> None:
+    def __init__(self, src_info: SourceInfo, output_path: str) -> None:
         self._src_info: SourceInfo = src_info
-        self._dst_path: str = os.path.join(root_path, "__main__.c")
+        self._dst_path: str = os.path.join(output_path, "__main__.c")
         self._global_calls: list[str] = []
         self._entry_call: str = ""
+        self._entry_include: str = ""
         self._text: str = ""
 
     def add_global_call(self, namespace: list[NamespaceName]) -> None:
@@ -128,11 +129,13 @@ class _MainFile:
         ]
         text = "\n".join(argv_setting_text) + "\n" + "\n".join(self._global_calls) + "\n" + self._entry_call + "\nreturn 0;"
         text = "\n".join(list(map(lambda x: f"\t{x}", text.split("\n"))))
-        self._text = f"int main(int argc, char **argv) {{\n{text}\n}}"
+        self._text = f"{self._entry_include}\n\nint main(int argc, char **argv) {{\n{text}\n}}"
 
     def set_entry(self, namespace: list[NamespaceName]) -> None:
-        call_name: str = "$".join(list(map(lambda x: x.name, namespace))) + "$main(argvArray);"
+        entry = "$".join(list(map(lambda x: x.name, namespace)))
+        call_name: str = entry + "$main_0(argvArray);"
         self._entry_call = call_name
+        self._entry_include = f"#define _VIOLA_IMPORT_{entry}$main\n#include \"{entry}.vla.h\""
 
     def write(self) -> None:
         if self._text == "":
@@ -150,7 +153,7 @@ class Project:
         self._src_info: SourceInfo = VIOLA_INIT
         self._entry_path: str = os.path.abspath(entry_path)
         self._entry_namespace: list[NamespaceName] = self._get_namespace(entry_path)
-        self._main_file: _MainFile = _MainFile(self._src_info, self._root_path)
+        self._main_file: _MainFile = _MainFile(self._src_info, output_path)
         self._main_file.set_entry(self._entry_namespace)
 
     def add_source_file(self, source_file: SourceFile) -> None:
@@ -160,8 +163,6 @@ class Project:
         self._main_file.add_global_call(self._get_namespace(source_file.src_path))
 
     def finish(self) -> None:
-        for k in self._source_files:
-            self._source_files[k].finish()
         self._main_file.finish()
 
     @property
@@ -176,4 +177,4 @@ class Project:
         self._main_file.write()
 
     def _get_namespace(self, src_path: str) -> list[NamespaceName]:
-        return list(map(lambda x: NamespaceName(x), os.path.relpath(src_path, self._root_path).split(os.sep)))
+        return list(map(lambda x: NamespaceName(x), os.path.relpath(src_path[:-4], self._root_path).split(os.sep)))

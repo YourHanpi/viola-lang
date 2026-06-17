@@ -114,7 +114,9 @@ class NamespaceName(Identifier):
 
 
 VIOLA_LANG: list[NamespaceName] = [NamespaceName("viola"), NamespaceName("lang")]
+VIOLA_LANG_EXCEPTION: list[NamespaceName] = [NamespaceName("viola"), NamespaceName("lang"), NamespaceName("exception")]
 VIOLA_COLLECTIONS: list[NamespaceName] = [NamespaceName("viola"), NamespaceName("collections")]
+VIOLA_IO: list[NamespaceName] = [NamespaceName("viola"), NamespaceName("io")]
 GENERIC_CLASS: list[NamespaceName] = [NamespaceName("__generic"), NamespaceName("class")]
 GENERIC_FUNC: list[NamespaceName] = [NamespaceName("__generic"), NamespaceName("function")]
 
@@ -1608,14 +1610,13 @@ class MethodName(PropertyVariableName):
             arg_types: list[TypeName] = [cls] + t.args
             t = FunctionTypeName(src_info, arg_types, t.returns, cls_generic_args + t_generic_args)
             arg_names: list[str] = ["_this"] + arg_names
-        function_name: FunctionName = FunctionName(src_info, [NamespaceName(cls.raw_name)], name, t, arg_names,
+        function_name: FunctionName = FunctionName(src_info, [], name, t, arg_names,
                                                    ret_names, export, True)
-        super().__init__(src_info, cls.namespace, function_name.name, t, modifier, is_static)
-        func_type_name: str = "$".join(list(map(lambda ty: ty.name, t.args)))
+        super().__init__(src_info, cls.as_namespace(), function_name.name, t, modifier, is_static)
         self._cls: ClassName = cls
         self._is_abstract: bool = is_abstract
         self._modifier: Modifier = modifier
-        self._method_name: str = name + "$" + func_type_name
+        self._method_name: str = name
         self._function_name: FunctionName = function_name
         self._function_name._kw_type = SymbolType.METHOD
         self._kw_type = SymbolType.METHOD
@@ -1776,6 +1777,52 @@ StringTypeName.add_method(
         Modifier.PUBLIC,
         True
     )
+)
+
+ExceptionTypeName = ClassName(VIOLA_INIT, VIOLA_LANG_EXCEPTION, "Exception", None, False, False)
+ExceptionTypeName.add_method(
+    "__new__",
+    MethodName(
+        VIOLA_INIT,
+        ExceptionTypeName,
+        "__new__",
+        FunctionTypeName(
+            VIOLA_INIT, [StringTypeName], [ExceptionTypeName]
+        ),
+        False,
+        False,
+        ["message"],
+        ["this"],
+        Modifier.PUBLIC,
+        True
+    )
+)
+_exception_what = MethodName(
+    VIOLA_INIT,
+    ExceptionTypeName,
+    "$what",
+    FunctionTypeName(
+        VIOLA_INIT, [ExceptionTypeName], [StringTypeName]
+    ),
+    False,
+    False,
+    ["this"],
+    ["this"],
+    Modifier.PUBLIC,
+    True
+)
+ExceptionTypeName.add_method(
+    "what",
+    _exception_what
+)
+_perror = FunctionName(
+    VIOLA_INIT,
+    VIOLA_IO,
+    "perror",
+    FunctionTypeName(VIOLA_INIT, [StringTypeName], []),
+    ["text"],
+    [],
+    True
 )
 
 
@@ -2128,6 +2175,8 @@ class SymbolTable:
         """
         判断一个符号是否存在于表中。
         """
+        if isinstance(item, TypeName):
+            return all((t.name, None) in self.symbols for t in item.used_types)
         if isinstance(item[0], TypeName):
             return all(t in self.symbols for t in item[0].used_types)
         if isinstance(item[0], NamedSymbol):
@@ -2135,7 +2184,8 @@ class SymbolTable:
                 return (item[0].name[len(self._namespace_name) + 1:], item[1]) in self.symbols
             return item[0] in self.symbols.values()
         if item[0].startswith(self._namespace_name + "$"):
-            return (item[0][len(self._namespace_name + "$"):], item[1]) in self
+            item_name: str = item[0].replace(".", "$")
+            return (item_name[len(self._namespace_name + "$"):], item[1]) in self
         return item in self.symbols
 
     def __delitem__(self, key: tuple[str, Optional[tuple[TypeName, ...]]]) -> None:
@@ -2150,7 +2200,7 @@ class SymbolTable:
         item: 符号名称。
         types: 符号的参数类型列表（如果不是函数则为None）。
         """
-        item: str = items[0]
+        item: str = items[0].replace(".", "$")
         types: Optional[tuple[TypeName, ...]] = items[1]
         if item.startswith(self._namespace_name + "$"):
             return self[item[len(self._namespace_name + "$"):], types]
@@ -2159,12 +2209,15 @@ class SymbolTable:
             result = list(map(lambda x: self[x], it))
             # noinspection PyTypeChecker
             return TupleTypeName(self._src_info, result)
-        if items not in self.symbols and types is None:
-            result = self._type_name_parser.parse(self._src_info, item)
-            for t in result.used_types:
-                if (t.name, None) not in self:
-                    raise CompilerException(f"Type {t.name} not found", self._src_info)
-            return result
+        if (item, types) not in self.symbols:
+            if types is None and (item, ()) in self.symbols:
+                return self.symbols[item, ()]
+            if types is None:
+                result = self._type_name_parser.parse(self._src_info, item)
+                for t in result.used_types:
+                    if (t.name, None) not in self:
+                        raise CompilerException(f"Type {t.name} not found", self._src_info)
+                return result
         return self.symbols[item, types]
 
     def __init__(self, src_path: str = "", workspace: str = "") -> None:
@@ -2186,6 +2239,7 @@ class SymbolTable:
         self._class_info_list_name: str = "$".join(map(lambda x: x.name, self._namespace)) + "$classInfoList"
         self._src_info: SourceInfo = SourceInfo(src_path)
         self._generic_table: GenericTable = GenericTable(self._src_info, self._namespace)
+        self._init_builtin_types()
 
         def __real_type_getter(name: str) -> TypeName:
             if (name, None) in self:
@@ -2193,6 +2247,27 @@ class SymbolTable:
             raise CompilerException(f"Type {name} not found.", self._src_info)
 
         self._type_name_parser: _TypeNameParser = _TypeNameParser(__real_type_getter, self._generic_table)
+
+    def _init_builtin_types(self) -> None:
+        builtin_types = [
+            BOOL,
+            INT, INT8, INT16, INT32, INT64,
+            UINT, UINT8, UINT16, UINT32, UINT64,
+            SIZE_T,
+            FLOAT, FLOAT32, FLOAT64, FLOAT128,
+            DOUBLE, LONG_DOUBLE,
+            VOID_PTR,
+        ]
+        for t in builtin_types:
+            self.add(t, t.self_name, None)
+            if t.name != t.self_name:
+                self.add(t, t.name, None)
+        self.add(StringTypeName, StringTypeName.self_name, None)
+        self.add(StringTypeName, StringTypeName.name, None)
+        self.add(ExceptionTypeName, ExceptionTypeName.self_name, None)
+        self.add(ExceptionTypeName, ExceptionTypeName.name, None)
+        self.add(_exception_what, _exception_what.name, [])
+        self.add(_perror, _perror.name, [StringTypeName])
 
     def add(self, symbol: NamedSymbol, name: str, types: Optional[list[TypeName]]) -> None:
         """
@@ -2204,9 +2279,7 @@ class SymbolTable:
         if types is not None:
             if (symbol.name, tuple(types)) in self.symbols:
                 raise CompilerException(f"Symbol {name} already exists.", self._src_info)
-        if (symbol.kw_type == SymbolType.FUNCTION or symbol.kw_type == SymbolType.METHOD) and types is None:
-            raise InternalCompilerException("Function must have types.", self._src_info)
-        elif symbol.kw_type != SymbolType.FUNCTION and symbol.kw_type != SymbolType.METHOD and types is not None:
+        if symbol.kw_type != SymbolType.FUNCTION and symbol.kw_type != SymbolType.METHOD and types is not None:
             raise InternalCompilerException("Symbol must not have types.", self._src_info)
         self._symbols[-1][name, tuple(types) if types is not None else None] = symbol
 
@@ -2259,6 +2332,7 @@ class SymbolTable:
         find_method: 如果为True，则只搜索方法，否则只搜索普通函数。
         """
         # noinspection PyTypeChecker
+        name = name.replace(".", "$")
         args_declaration: list[TypeName] = list(map(lambda x: self[x, None], args))
         # noinspection PyTypeChecker
         kwargs_declaration: dict[str, TypeName] = dict(map(lambda x: (x, self[kwargs[x], None]), kwargs.keys()))
@@ -2401,7 +2475,8 @@ class SymbolTable:
         metadata: list[str] = data[0].split("\n")
         self = cls(metadata[0], metadata[1])
         for item in data[1:]:
-            self._read_item(item)
+            if item.strip():
+                self._read_item(item)
         self.add(FunctionName(
             self._src_info,
             self.namespace,
@@ -2433,15 +2508,19 @@ class SymbolTable:
         item: 符号的文本。
         """
         item_args: list[str] = item.split("\n")[1:]
-        item_type: str = item_args[0].split(" ")[0]
-        loc_str: list[str] = item_args[0].split(" ")[1].split(":")
-        loc_tuple: tuple[int, int, int, int] = int(loc_str[0]), int(loc_str[1]), int(loc_str[2]), int(loc_str[3])
-        self._src_info.set_loc(*loc_tuple)
+        item_type_parts = item_args[0].split(" ")
+        item_type: str = item_type_parts[0]
+        if len(item_type_parts) > 1 and ":" in item_type_parts[1]:
+            loc_str: list[str] = item_type_parts[1].split(":")
+            loc_tuple: tuple[int, int, int, int] = int(loc_str[0]), int(loc_str[1]), int(loc_str[2]), int(loc_str[3])
+            self._src_info.set_loc(*loc_tuple)
         item_args = item_args[1:]
+        while len(item_args) < 5:
+            item_args.append("")
         match item_type:
             case "BASE":
                 self._read_base_type_def(item_args)
-            case "FUNC":
+            case "FUNC" | "FUNCTION":
                 self._read_func_decl(item_args)
             case "CLASS":
                 self._read_class_decl(item_args)
@@ -2478,10 +2557,16 @@ class SymbolTable:
         """
         item_name: str = item[0].split(" ")[0]
         export: bool = "export" in item[0].split(" ")[1:]
-        generic_args: list[str] = item[1].split(" ")
-        item_args: list[str] = item[2].split("%")
-        item_returns: list[str] = item[3].split("%")
-        item_default_args: list[str] = item[4].split(" ")
+        if "%" in item[1]:
+            generic_args: list[str] = []
+            item_args: list[str] = item[1].split("%")
+            item_returns: list[str] = item[2].split("%") if len(item) > 2 else []
+            item_default_args: list[str] = item[3].split(" ") if len(item) > 3 else []
+        else:
+            generic_args: list[str] = item[1].split(" ")
+            item_args: list[str] = item[2].split("%") if len(item) > 2 else []
+            item_returns: list[str] = item[3].split("%") if len(item) > 3 else []
+            item_default_args: list[str] = item[4].split(" ") if len(item) > 4 else []
         # noinspection PyTypeChecker
         args = list(map(lambda arg: self[arg, None], item_args[::2])) if len(item_args) > 1 else []
         if any(map(lambda arg: not isinstance(arg, TypeName), args)):
@@ -2709,7 +2794,10 @@ class VariableStateTable:
         workspace: 根目录。
         """
         self._path: str = path
-        dir_list: list[str] = os.path.relpath(path, workspace).replace("-", "_").split(os.sep)
+        if path and workspace:
+            dir_list: list[str] = os.path.relpath(path, workspace).replace("-", "_").split(os.sep)
+        else:
+            dir_list: list[str] = []
         self._namespace: list[NamespaceName] = list(map(lambda x: NamespaceName(x), dir_list))
         self._state: list[dict[VariableName, VariableState]] = [{}]
 

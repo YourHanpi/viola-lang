@@ -105,10 +105,13 @@ class ExprParser(GlobalParser):
         expr_tokens: list[list[Token]] = parsing_result.expr_tokens
         expr_commands: list[list[str]] = []
         for expr_token in expr_tokens:
-            result = self.parse_single_expr(expr_token)
-            if result is None:
-                return None
-            expr_commands.append(result)
+            if len(expr_token) == 0:
+                expr_commands.append([])
+            else:
+                result = self.parse_single_expr(expr_token)
+                if result is None:
+                    return None
+                expr_commands.append(result)
         current_command_count: int = 0
         command_count: int = len(command)
         while current_command_count < command_count:
@@ -123,18 +126,23 @@ class ExprParser(GlobalParser):
 
     def parse_expr_to_file(self, file_path: str, thread_index: int = 0) -> TaskResult:
         self._logger = Logger(f"Expression Parser[{thread_index}]")
-        file_relpath = os.path.relpath(os.path.abspath(file_path), self._workspace)
-        cache_file_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath + COMMAND_POSTFIX))
-        parsing_result: ParsingResult = ParsingResult.read(file_path)
+        file_abs_path = os.path.abspath(file_path)
+        file_relpath = os.path.relpath(file_abs_path, self._workspace)
+        cache_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
+        cache_file_path = cache_path + COMMAND_POSTFIX
+        parsing_result: ParsingResult = ParsingResult.read(cache_path)
         command = self.parse_all_expr(parsing_result)
         if command is None:
             return TaskResult(TaskResultState.FAILURE)
+        os.makedirs(os.path.dirname(cache_file_path), exist_ok=True)
         with open(cache_file_path, "w", encoding=self._ENCODING) as f:
             f.writelines(command)
         return TaskResult(TaskResultState.SUCCESS, [["violac", "run-vm", file_path]])
 
     def parse_single_expr(self, expr_tokens: list[Token]) -> Optional[list[str]]:
         self._load_tokens(expr_tokens)
+        self._lex_unary_op()
+        self._back_to(0)
         return self._parse_expr(len(expr_tokens))
 
     def _lex_unary_op(self) -> None:

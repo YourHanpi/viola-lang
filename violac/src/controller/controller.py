@@ -103,3 +103,16 @@ class SingleController(Controller, ABC):
     @abstractmethod
     def _handle(self, args: list[str], kwargs: dict[str, str]) -> None:
         pass
+
+
+class EmptyController(SingleController):
+
+    def __init__(self) -> None:
+        super().__init__("\0")
+
+    @property
+    def is_busy(self) -> bool:
+        return False
+
+    def _handle(self, args: list[str], kwargs: dict[str, str]) -> None:
+        pass
