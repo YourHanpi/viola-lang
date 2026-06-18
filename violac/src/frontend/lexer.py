@@ -52,10 +52,9 @@ class Lexer(FSM):
         char_buf: list[str] = []
         current_loc: int = 0
         text_length: int = len(text)
-        error_occurred: bool = False
         while current_loc < text_length:
             char: str = text[current_loc]
-            token: Token = Lexer._get_char_token(char)
+            token: Token = self._get_char_token(char)
             if char == "\n":
                 self._end_line += 1
                 self._end_col = 1
@@ -63,23 +62,25 @@ class Lexer(FSM):
                 self._end_col += 1
             next_state = self.transfer(token)
             if next_state is None:
+                self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
                 if self._current.output is None:
-                    self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
                     self._src_info.set_text("".join(char_buf))
                     self._logger.error(str(CompilerException(f"Unexpected character {char}", self._src_info.copy())))
-                    error_occurred = True
                     while current_loc < text_length and char not in " \n\t":
                         current_loc += 1
                         char = text[current_loc]
-                    tokens.append(Token("", ["_ERROR"], self._start_col))
+                    tokens.append(Token("", ["_ERROR"], self._src_info.copy()))
                 else:
-                    tokens.append(Token("".join(char_buf), [self._current.output], self._start_col))
+                    tokens.append(Token("".join(char_buf), [self._current.output], self._src_info.copy()))
                 self._start_line = self._end_line
                 self._start_col = self._end_col
                 char_buf.clear()
                 self.reset()
                 next_state = self.transfer(token)
             if self._current.output == "_BLANK" and next_state is not None and next_state.output != "_BLANK":
+                tokens.append(Token("".join(char_buf), ["_BLANK"], self._src_info.copy()))
+                self._start_line = self._end_line
+                self._start_col = self._end_col
                 char_buf.clear()
             char_buf.append(char)
             self._current = next_state if next_state is not None else self._start
@@ -109,8 +110,7 @@ class Lexer(FSM):
         self._logger.info(f"Successfully lexed: {file_path}")
         return TaskResult(TaskResultState.SUCCESS, [["violac", "parse", file_path]])
 
-    @staticmethod
-    def _get_char_token(char: str) -> Token:
+    def _get_char_token(self, char: str) -> Token:
         """
         获取字符对应的记号类型。
         :param char: 输入字符。
@@ -132,7 +132,7 @@ class Lexer(FSM):
             type_list.append("HEX_DIGIT")
         if char != "\n":
             type_list.append("CHAR")
-        return Token(char, type_list)
+        return Token(char, type_list, self._start_col)
         
     def _set_states_list(self) -> StateNode:
         """
@@ -472,10 +472,12 @@ class Lexer(FSM):
         generic_start2: StateNode = StateNode()
         colon: StateNode = StateNode()
         question: StateNode = StateNode()
+        dot: StateNode = StateNode()
         first.add_transfer(",", comma)
         first.add_transfer(";", semicolon)
         first.add_transfer(":", colon)
         first.add_transfer("?", question)
+        first.add_transfer(".", dot)
         comma.set_output("COMMA")
         semicolon.set_output("SEMICOLON")
         colon.add_transfer(":", generic_start1)
@@ -483,6 +485,7 @@ class Lexer(FSM):
         colon.set_output("COLON")
         question.set_output("QUESTION")
         generic_start2.set_output("GENERIC_START")
+        dot.set_output("DOT")
         return first
         
     @staticmethod

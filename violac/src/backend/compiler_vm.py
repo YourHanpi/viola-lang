@@ -128,7 +128,7 @@ class CompilerVM:
         # noinspection PyTypeChecker
         self._STMT_MAKER_DICT: dict[str, Callable[[list[str]], statement.Statement]] = {
             "DECL": lambda cmd: self.__make(
-                statement.DeclStmt(self._src_info, self._symbol_table, self._symbol_table.namespace, self._var_state_table)),
+                statement.DeclStmt(self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace)),
             "ASSIGN": lambda cmd: self.__make(
                 statement.AssignStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "OP": lambda cmd: self.__make(statement.OpStmt(self._src_info, self._symbol_table, self._var_state_table)),
@@ -184,6 +184,7 @@ class CompilerVM:
             "SET_FUNC": lambda cmd: self.__call_set_func(),
             "SET_GENERIC_EXPR": lambda cmd: self.__call_set_generic_expr(),
             "SET_RETURN_TYPES": lambda cmd: self.__call_set_return_types(),
+            "SET_SRC_EXPR": lambda cmd: self.__call_set_src_expr(),
             "SET_START": lambda cmd: self.__call_set_start(),
             "SET_STEP": lambda cmd: self.__call_set_step(),
             "SET_STMT": lambda cmd: self.__call_set_stmt(),
@@ -201,6 +202,7 @@ class CompilerVM:
         :return: 包含编译结果的任务结果对象。
         """
         self._logger = Logger(f"Compiler VM[{thread_index}]")
+        self._src_info = SourceInfo(src_path)
         src_path = os.path.abspath(src_path)
         src_relpath = os.path.relpath(src_path, self._workspace)
         cache_path = os.path.join(self._workspace, CACHE_DIR, src_relpath)
@@ -231,6 +233,9 @@ class CompilerVM:
         except CompilerException:
             self._logger.error(format_exc())
             return TaskResult(TaskResultState.FAILURE)
+        except Exception as e:
+            self._logger.error(format_exc())
+            raise e
         self._project.add_source_file(src_file)
         self._logger.info(f"Successfully compiled: {src_path}")
         return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
@@ -334,9 +339,9 @@ class CompilerVM:
         selected_expr = self._stack[-1 - target_index:-1]
         for expr in selected_expr:
             self.__check_type(expr, [expression.Expression])
-        self.__check_type(selected_expr[-2 - target_index], [expression.UpdateExpr])
+        self.__check_type(self._stack[-2 - target_index], [expression.UpdateExpr])
         # noinspection PyUnresolvedReferences
-        selected_expr[-2 - target_index].add_item(selected_expr, value_expr)
+        self._stack[-2 - target_index].add_item(selected_expr, value_expr)
         self.__pop()
         for _ in selected_expr:
             self.__pop()
@@ -432,9 +437,7 @@ class CompilerVM:
         ])
         # noinspection PyUnresolvedReferences
         self._stack[-1].finish()
-        if isinstance(self._stack[-1], (statement.DeclStmt, statement.AssignStmt)):
-            self.__pop()
-        elif isinstance(self._stack[-1], statement.BlockStmt):
+        if isinstance(self._stack[-1], statement.BlockStmt):
             blk = self._stack[-1]
             self.__pop()
             if len(self._stack) >= 2 and isinstance(self._stack[-1], definition.SqDef):
@@ -469,7 +472,7 @@ class CompilerVM:
         self.__check_type(self._stack[-1], [expression.Expression])
         self.__check_type(self._stack[-2], [expression.AttrOp])
         # noinspection PyUnresolvedReferences
-        self._stack[-1].set_caller(self._stack[-2])
+        self._stack[-2].set_caller(self._stack[-1])
         self.__pop()
 
     def __call_set_cond_expr(self) -> None:
@@ -578,6 +581,14 @@ class CompilerVM:
         self._stack[-2].set_return_types(self._stack[-1])
         self.__pop()
 
+    def __call_set_src_expr(self) -> None:
+        """设置对象更新的源表达式。"""
+        self.__check_type(self._stack[-1], [expression.Expression])
+        self.__check_type(self._stack[-2], [expression.UpdateExpr])
+        # noinspection PyUnresolvedReferences
+        self._stack[-2].set_src_expr(self._stack[-1])
+        self.__pop()
+
     def __call_set_start(self) -> None:
         """设置切片引用的起始位置。"""
         self.__check_type(self._stack[-1], [expression.Expression])
@@ -634,7 +645,7 @@ class CompilerVM:
             if isinstance(obj, t):
                 return
         raise InternalCompilerException(
-            f"{obj.__class__.__name__} is not expected types: {', '.join(t.__name__ for t in types)}",
+            f"{obj.__class__.__name__} is not in expected types: {', '.join(t.__name__ for t in types)}",
             self._src_info
         )
 
@@ -712,8 +723,13 @@ class CompilerVM:
         """创建变量引用表达式，根据作用域级别决定是全局变量还是局部变量。"""
         # noinspection PyTypeChecker
         # noinspection PyUnresolvedReferences
-        var_type: symbol.TypeName = self._symbol_table[cmd[0]] if cmd[0] != "auto" else self._symbol_table[cmd[1]].type
+        var_type: symbol.TypeName = self._symbol_table[cmd[0], None] if cmd[0] != "auto" else self._symbol_table[cmd[1], None].type
         var_name: str = cmd[1]
+        if (var_name, None) in self._symbol_table:
+            # noinspection PyTypeChecker
+            expr = expression.VariableRef(self._src_info, self._symbol_table, self._symbol_table[var_name, None])
+            self.__make(expr)
+            return expr
         if self.__scope_level == 0:
             var: symbol.VariableName = symbol.GlobalVariableName(self._src_info, self._symbol_table.namespace, var_name, var_type)
         else:

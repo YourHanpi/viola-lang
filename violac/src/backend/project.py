@@ -85,6 +85,8 @@ class SourceFile(CompilingItem):
         outer_texts: list[str] = list(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._definitions)))
         sources: list[str] = instance_sources + list(map(lambda x: x.source, self._definitions))
         headers: list[str] = list(map(lambda x: x.header, self._definitions))
+        if not os.path.exists(os.path.dirname(self._dst_code_path)):
+            os.makedirs(os.path.dirname(self._dst_code_path))
         with open(self._dst_code_path, "w", encoding=COMPILER_PARAMS["encoding"]) as f:
             f.write(f"#define _VIOLA_IMPORT_{'$'.join(map(lambda x: x.name, self._namespace))}$__all__\n")
             f.write(f"#include \"{os.path.basename(self._dst_header_path)}\"\n\n")

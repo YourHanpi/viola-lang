@@ -121,7 +121,6 @@ class GlobalParser:
         :return: 解析结果对象，失败返回None。
         """
         self._set_file_lock(file_path)
-        self._logger.info(f"Start parsing {file_path}")
         if not os.path.exists(file_path + TOKEN_POSTFIX):
             self._add_task(["violac", "lex", src_path if src_path else file_path])
             return None
@@ -129,13 +128,6 @@ class GlobalParser:
         result = self.parse(tokens)
         self._dump_symbol_type_list(file_path)
         self._remove_file_lock(file_path)
-        if result is None:
-            if len(self._tasks) == 0:
-                self._logger.error(f"Failed to parse {file_path}")
-            else:
-                self._logger.debug("Required some other modules")
-        else:
-            self._logger.info(f"Successfully parsed {file_path}")
         return result
 
     def parse_to_file(self, file_path: str, thread_index: int = 0) -> TaskResult:
@@ -149,7 +141,15 @@ class GlobalParser:
         file_abs_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_abs_path, self._workspace)
         cache_file_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
+        self._logger.info(f"Start parsing {file_path}")
         result = self.parse_from_file(cache_file_path, file_abs_path)
+        if result is None:
+            if len(self._tasks) == 0:
+                self._logger.error(f"Failed to parse {file_path}")
+            else:
+                self._logger.debug("Required some other modules")
+        else:
+            self._logger.info(f"Successfully parsed {file_path}")
         if result is not None:
             result.write(cache_file_path)
             return TaskResult(TaskResultState.SUCCESS, [["violac", "parse-expr", file_path]])
@@ -164,7 +164,7 @@ class GlobalParser:
         :return: RAW命令字符串。
         """
         self._expr_tokens.append(expr_tokens)
-        return f"RAW {len(self._expr_tokens) - 1}"
+        return f"RAW {len(self._expr_tokens) - 1} {self._src_info.location} {''.join([token.text for token in expr_tokens]).replace('\n', ' ').replace('\t', ' ')}"
 
     def _add_task(self, task_command: list[str]) -> None:
         """
@@ -202,8 +202,10 @@ class GlobalParser:
         :param types: 期望的类型列表。
         :return: 是否匹配。
         """
+        if len(tokens) != len(types):
+            return False
         for i, token in enumerate(tokens):
-            if token.type != types:
+            if types[i] not in token.type:
                 return False
         return True
 
@@ -228,14 +230,14 @@ class GlobalParser:
 
     def _collect_until(self, end_token_type: str) -> Optional[list[Token]]:
         """
-        收集记号直到遇到指定类型的结束记号。
+        收集记号直到遇到指定类型的结束记号（跳过空白和注释）。
         :param end_token_type: 结束记号类型。
         :return: 收集的记号列表。
         """
         tokens: list[Token] = []
         while self._current < self._tokens_num:
             token = self._get_current()
-            if token.type == end_token_type:
+            if end_token_type in token.type:
                 return tokens
             tokens.append(token)
             self._next_no_skip()
@@ -397,7 +399,7 @@ class GlobalParser:
         加载记号流到解析器（追加EOF标记）。
         :param tokens: 记号列表。
         """
-        self._tokens = tokens + [Token("", ["_EOF"])]
+        self._tokens = tokens + [Token("", ["_EOF"], tokens[-1].src_info)]
         self._tokens_num = len(tokens)
         self._current = 0
         self._exceptions.clear()
@@ -433,7 +435,7 @@ class GlobalParser:
             if prefix_string in self._imports:
                 return [Token(
                     self._imports[prefix_string] + "." + tokens[i].text, ["IDENTIFIER", "OPERAND"],
-                    tokens[0].start_col
+                    SourceInfo.concat([tokens[0].src_info, tokens[i].src_info])
                 )] + tokens[2 * i + 1:]
         return tokens
 
@@ -582,16 +584,17 @@ class GlobalParser:
                 self._raise("Unexpected EOF")
                 return None
             if self._match_type("ESCAPED_CURLY_BRACKET"):
-                codes.append(self._next()[1:])
+                codes.append(self._next_no_skip()[1:])
             elif self._match_type("R_CURLY_BRACKET"):
                 break
             else:
-                codes.append(self._next())
+                codes.append(self._next_no_skip())
         self._next()
-        codes = "".join(codes).split("\n")
+        codes = "".join(codes).rstrip("}").split("\n")
         result = ["MAKE STMT C"]
         for code in codes:
-            result.append(f"CALL ADD_TEXT {code}")
+            if code.strip():
+                result.append(f"CALL ADD_TEXT {code}")
         return result, []
 
     @_set_loc_command
@@ -826,13 +829,17 @@ class GlobalParser:
         name_command, symbol = name_results
         if self._match_type("SEMICOLON"):
             return ["MAKE STMT DECL"] + name_command + ["CALL FINISH"], symbol
-        self._next()
         if not self._match_type("ASSIGN"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
+        self._next()
         expr_results = self._collect_until("SEMICOLON")
         if expr_results is None:
             return None
+        if not self._match_type("SEMICOLON"):
+            self._raise("Unexpected token: " + self._get_current().text)
+            return None
+        self._next()
         expr_commands = self._add_parsing_slice(expr_results)
         self._expr_count += 1
         return ["MAKE STMT DECL", expr_commands, "CALL SET_VAR_VALUE"] + name_command + ["CALL FINISH"], symbol
@@ -847,20 +854,18 @@ class GlobalParser:
         assign_stmt = name_list ASSIGN expr SEMICOLON; -- 赋值语句
         op_stmt = expr SEMICOLON; -- 操作语句
         """
-        token_buffer: list[Token] = [self._get_current()]
+        token_buffer: list[Token] = []
         while not self._match_type("SEMICOLON") and not self._match_type("FN") and not self._match_type("SQ"):
             token_buffer.append(self._get_current())
             self._next()
-        if len(token_buffer) == 1:
+        if len(token_buffer) == 0:
             return [], []
         is_closure: bool = self._get_current().type in ["FN", "SQ"]
         if is_closure:
             return self._parse_closure_stmt(token_buffer)
-        if len(token_buffer) == 0:
-            return [], []
-        if GlobalParser._buffer_match_types(token_buffer, ["IDENTIFIER", "SEMICOLON"]):
-            return ["MAKE STMT OP", f"MAKE EXPR VARIABLE_REF auto {token_buffer[0].text}", "CALL SET_EXPR"], []
         self._back(len(token_buffer))
+        if GlobalParser._buffer_match_types(token_buffer, ["IDENTIFIER"]):
+            return ["MAKE STMT OP", f"MAKE EXPR VARIABLE_REF auto {token_buffer[0].text}", "CALL SET_EXPR"], []
         if GlobalParser._buffer_match_types(token_buffer[:2], ["IDENTIFIER", "IDENTIFIER"]) or \
                 GlobalParser._buffer_match_types(token_buffer[:2], ["IDENTIFIER", "LT"]):
             return self._parse_decl_stmt()
@@ -883,17 +888,20 @@ class GlobalParser:
             return None
         if self._match_type("SQ"):
             if "cpart" in prefixes:
-                command, symbol = self._parse_c_part_sq(prefixes)
+                result = self._parse_c_part_sq(prefixes)
             else:
-                command, symbol = self._parse_sq(prefixes)
+                result = self._parse_sq(prefixes)
         elif self._match_type("FN"):
-            command, symbol = self._parse_fn(prefixes)
+            result = self._parse_fn(prefixes)
         elif self._match_type("CLASS"):
-            command, symbol = self._parse_class(prefixes)
+            result = self._parse_class(prefixes)
         elif self._match_type("ENUM"):
-            command, symbol = self._parse_enum(prefixes)
+            result = self._parse_enum(prefixes)
         else:
-            command, symbol = self._parse_const_def(prefixes)
+            result = self._parse_const_def(prefixes)
+        if result is None:
+            return None
+        command, symbol = result
         command += ["CALL ADD_DEF"]
         symbol.append("---")
         return command, symbol
@@ -1082,7 +1090,6 @@ class GlobalParser:
         body_result = self._parse_block_stmt(False)
         if body_result is not None:
             command += body_result[0]
-            symbol += body_result[1]
         else:
             return None
         command += ["CALL FINISH"]
@@ -1548,7 +1555,7 @@ class GlobalParser:
                     return None
                 symbol.append(type_decl + "%" + self._get_current().text)
                 command.append(f"MAKE EXPR TYPE_REF {type_decl}")
-                command.append(f"CALL ADD_VAR {self._get_current()}")
+                command.append(f"CALL ADD_VAR {self._get_current().text}")
                 expect_comma = True
                 self._next()
         return command, symbol
@@ -1583,14 +1590,9 @@ class GlobalParser:
         向后更新源代码位置信息。
         """
         token: Token = self._get_current()
-        self._end_line = self._start_line
-        self._end_col = self._start_col
-        token_lines: list[str] = token.text.split("\n")
-        self._start_line -= len(token_lines) - 1
-        self._start_col = token.start_col
-        self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
+        self._src_info.set_loc(*token.src_info.location_tuple)
 
-    def __get_import_prefix(self, id_list: list[str]) -> list[str]:
+    def _get_import_prefix(self, id_list: list[str]) -> list[str]:
         """
         获取标识符中匹配导入路径的前缀部分。
         :param id_list: 标识符分段列表。
@@ -1614,12 +1616,12 @@ class GlobalParser:
         for token in token_buffer:
             if bracket_level == 0:
                 if "ARROW" in token.type:
-                    if "R_BRACKET" in local_token_buffer[-1].type:
+                    if local_token_buffer and "R_BRACKET" in local_token_buffer[-1].type:
                         local_token_buffer.append(token)
                     else:
                         local_token_buffer.clear()
                 elif "L_BRACKET" in token.type:
-                    if "ARROW" in local_token_buffer[-1].type:
+                    if local_token_buffer and "ARROW" in local_token_buffer[-1].type:
                         local_token_buffer.append(token)
                     else:
                         local_token_buffer.clear()
@@ -1644,9 +1646,4 @@ class GlobalParser:
         :param token: 可选的记号对象，为None则使用当前记号。
         """
         token: Token = self._get_current() if token is None else token
-        self._start_line = self._end_line
-        self._start_col = self._end_col
-        token_lines: list[str] = token.text.split("\n")
-        self._end_line += len(token_lines) - 1
-        self._end_col = len(token_lines[-1]) + 1
-        self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
+        self._src_info.set_loc(*token.src_info.location_tuple)

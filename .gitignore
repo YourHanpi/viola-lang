@@ -1,10 +1,11 @@
 build_utils
 c_source
 src_old
-project
+./project
 .idea
 violac/src_modified
 violac/test_compiled
+violac/test/template_projects
 .claude
 *.log
 *.vla.vlacmd

@@ -1,48 +1,10 @@
 # -*- coding: utf-8 -*-
-from utils import COMPILER_PARAMS, SourceInfo
+from utils import COMPILER_PARAMS, SourceInfo, VIOLA_INIT, Token
 from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, EXPR_TOKENS_POSTFIX
 
 from abc import ABC, abstractmethod
 import os
 from typing import Optional
-
-
-class Token:
-    """
-    词法记号类，包含文本、类型列表和起始列号。
-    """
-
-    def __init__(self, text: str, token_type: list[str], start_col: int = -1) -> None:
-        """
-        初始化词法记号对象。
-        :param text: 记号文本。
-        :param token_type: 记号类型列表。
-        :param start_col: 起始列号。
-        """
-        self._text: str = text
-        self._type: list[str] = token_type
-        self._start_col: int = start_col
-
-    @property
-    def start_col(self) -> int:
-        """
-        获取起始列号。
-        """
-        return self._start_col
-
-    @property
-    def text(self) -> str:
-        """
-        获取记号文本。
-        """
-        return self._text
-
-    @property
-    def type(self) -> list[str]:
-        """
-        获取记号类型列表。
-        """
-        return self._type
 
 
 class StateNode:
@@ -275,6 +237,9 @@ class TokenStreamIO:
         text_buffer: bytes = token.text.encode(TokenStreamIO._ENCODING)
         text_length_buffer: bytes = len(text_buffer).to_bytes(4, "little")
         text_head: bytes = b"TEXT"
+        start_line, start_col, end_line, end_col = token.src_info.location_tuple
+        text_length_buffer += start_line.to_bytes(4, "little") + start_col.to_bytes(4, "little") + end_line.to_bytes(
+            4, "little") + end_col.to_bytes(4, "little")
         text: bytes = text_head + text_length_buffer + text_buffer + b"TYPE" + len(token.type).to_bytes(2, "little")
         for t in token.type:
             type_length_buffer: bytes = len(t).to_bytes(2, "little")
@@ -315,9 +280,13 @@ class TokenStreamIO:
         :return: 记号对象及剩余字节数据。
         """
         text_length: int = int.from_bytes(buffer[4:8], "little")
-        text_buffer: bytes = buffer[8:8 + text_length]
+        token_location: tuple[int, int, int, int] = (
+            int.from_bytes(buffer[8:12], "little"), int.from_bytes(buffer[12:16], "little"),
+            int.from_bytes(buffer[16:20], "little"), int.from_bytes(buffer[20:24], "little")
+        )
+        text_buffer: bytes = buffer[24:24 + text_length]
         text_data: str = text_buffer.decode(TokenStreamIO._ENCODING)
-        buffer = buffer[8 + text_length:]
+        buffer = buffer[24 + text_length:]
         type_data: list[str] = []
         type_length: int = int.from_bytes(buffer[4:6], "little")
         buffer = buffer[6:]
@@ -325,7 +294,9 @@ class TokenStreamIO:
             type_length: int = int.from_bytes(buffer[:2], "little")
             type_data.append(buffer[2:2 + type_length].decode(TokenStreamIO._ENCODING))
             buffer = buffer[2 + type_length:]
-        return Token(text_data, type_data), buffer
+        src_info = VIOLA_INIT.copy()
+        src_info.set_loc(*token_location)
+        return Token(text_data, type_data, src_info), buffer
 
     @staticmethod
     def _load_token_list_bytes(buffer: bytes) -> list[Token]:
@@ -352,7 +323,7 @@ class TokenStreamIO:
         """
         pos_count: int = int.from_bytes(buffer[4:8], "little")
         buffer = buffer[8:]
-        pos_list: list[int] = [int.from_bytes(buffer[:4], "little") for _ in range(pos_count)]
+        pos_list: list[int] = [int.from_bytes(buffer[4 * i:4 * i + 4], "little") for i in range(pos_count)]
         buffer = buffer[pos_count * 4:]
         data_list: list[bytes] = [buffer[pos:pos_list[i + 1]] for i, pos in enumerate(pos_list[:-1])] + [buffer[pos_list[-1]:]]
         return [TokenStreamIO._load_token_list_bytes(data) for data in data_list]

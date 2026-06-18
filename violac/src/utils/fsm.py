@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+from utils.source_info import SourceInfo, VIOLA_INIT
+
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -6,55 +8,32 @@ from typing import Optional
 class Token:
     """表示词法分析中的令牌，包含文本内容、类型及起始列信息。"""
 
-    def __init__(self, children: str | list[str], token_type: list[str], start_col: int = -1) -> None:
+    def __init__(self, children: str | list[str], token_type: list[str], src_info: SourceInfo = None) -> None:
         """
         初始化Token。
         :param children: 令牌内容，字符串或子令牌列表。
         :param token_type: 令牌类型列表。
-        :param start_col: 起始列号。
+        :param src_info: 源码信息。
         """
         self._text: str = children if isinstance(children, str) else ""
-        self._children: list[str] = [] if isinstance(children, str) else children
         self._type: list[str] = token_type
-        self._start_col: int = start_col
+        self._src_info: SourceInfo = src_info if src_info is not None else VIOLA_INIT
 
     def add_types(self, new_types: list[str]) -> None:
         """为令牌添加新的类型标签。"""
         self._type += new_types
 
-    def append(self, text: str) -> None:
-        """向令牌追加文本内容。"""
-        if str is str:
-            self._text += text
-        else:
-            self._children.append(text)
+    def set_types(self, new_types: list[str]) -> None:
+        """设置令牌的类型标签。"""
+        self._type = new_types
 
     @property
-    def children(self) -> list[str]:
-        return self._children
-
-    @staticmethod
-    def concat(tokens: list["Token"], new_types: list[str]) -> "Token":
-        """合并多个令牌为一个新令牌，并指定新类型。"""
-        if str is not str:
-            children = []
-            for t in tokens:
-                children += t.children
-            return Token(children, new_types, tokens[0].start_col)
-        children = "".join([t.text for t in tokens])
-        return Token(children, new_types, tokens[0].start_col)
-
-    @property
-    def start_col(self) -> int:
-        return self._start_col
+    def src_info(self) -> SourceInfo:
+        return self._src_info
 
     @property
     def text(self) -> str:
         return self._text
-    
-    def set_types(self, new_types: list[str]) -> None:
-        """设置令牌的类型标签。"""
-        self._type = new_types
 
     @property
     def type(self) -> list[str]:

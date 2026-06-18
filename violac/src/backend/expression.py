@@ -9,7 +9,7 @@ from .symbol import (
 from utils import CompilerException, InternalCompilerException, COMPILER_PARAMS, SourceInfo
 
 from abc import ABC, abstractmethod
-from copy import deepcopy
+from copy import copy
 from typing import Optional, Callable
 
 CONVERTIBLE_TO_FUNC = "viola$lang$convertibleTo"
@@ -331,8 +331,6 @@ class UnpackExpr(Expression):
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, to_unpack: Optional[Expression] = None) -> None:
         super().__init__(src_info, symbol_table)
-        if to_unpack is not None and not isinstance(to_unpack.return_type, TupleTypeName):
-            raise CompilerException("Cannot unpack non-tuple.", src_info)
         self._to_unpack: Optional[Expression] = to_unpack
         self._var: Optional[LocalVariableName] = None
         self._returns: list[VariableName] = []
@@ -342,7 +340,7 @@ class UnpackExpr(Expression):
         return self
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._to_unpack = self._to_unpack.as_inline(inline_mapping)
         new_expr._inline_mapping = new_expr._to_unpack.inline_mapping
         for i, ret in enumerate(self._returns):
@@ -395,7 +393,7 @@ class UnpackExpr(Expression):
         return self._inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._to_unpack = self._to_unpack.instantiation(type_args)
         # noinspection PyTypeChecker
         new_expr._var = self._var.instantiation(self._var.name, type_args)
@@ -441,6 +439,8 @@ class UnpackExpr(Expression):
     def set_returns(self, returns: list[VariableName]) -> bool:
         # noinspection PyTypeChecker
         expr_type: TupleTypeName = self._to_unpack.return_type
+        if not isinstance(expr_type, TupleTypeName):
+            return True
         if len(returns) > len(expr_type.types):
             raise CompilerException(
                 f"Too many returns: {len(returns)} > {len(expr_type.types)}.",
@@ -469,7 +469,7 @@ class UnpackExpr(Expression):
         return True
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._to_unpack = self._to_unpack.substitute(expr)
         return new_expr
 
@@ -511,7 +511,7 @@ class ValueRef(Expression, ABC):
         self._inline_mapping: dict[str, str] = {}
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         # noinspection PyTypeChecker
         new_expr._unpack_expr = self.as_inline(self._unpack_expr.inline_mapping)
         new_expr._inline_mapping = new_expr._unpack_expr.inline_mapping
@@ -618,7 +618,7 @@ class VariableRef(ValueRef):
         return None
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: VariableRef = deepcopy(self)
+        new_expr: VariableRef = copy(self)
         new_expr._var = new_expr._var.instantiation(new_expr._var.name, type_args)
         return new_expr
 
@@ -1048,7 +1048,7 @@ class SliceRef(ValueRef):
         self._step = step
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        new_expr: SliceRef = deepcopy(self)
+        new_expr: SliceRef = copy(self)
         new_expr._start = self._start.substitute(expr)
         new_expr._end = self._end.substitute(expr)
         new_expr._step = self._step.substitute(expr)
@@ -1166,7 +1166,7 @@ class ArrayRef(ValueRef):
             lines.append(f"{self._temp_var.name}->size = 0;")
             return "\n".join(lines)
         lines.append(
-            f"{self._temp_var.name}->data = malloc(sizeof({self._type.element_type.c_alloc_name}) * {len(self._values)});"
+            f"{self._temp_var.name}->data = ({self._type.element_type.c_assigning_name})malloc(sizeof({self._type.element_type.c_calling_name}) * {len(self._values)});"
         )
         lines.append(f"{self._temp_var.name}->size = {len(self._values)};")
         for i, value in enumerate(self._values):
@@ -1185,7 +1185,7 @@ class ArrayRef(ValueRef):
         return f"{self._temp_var.type_name_pair_calling};"
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: ArrayRef = deepcopy(self)
+        new_expr: ArrayRef = copy(self)
         new_expr._type = self._type.instantiation(type_args)
         new_expr._values = list(map(lambda x: x.instantiation(type_args), self._values))
         return new_expr
@@ -1220,7 +1220,7 @@ class ArrayRef(ValueRef):
         return self._type
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result: ArrayRef = deepcopy(self)
+        result: ArrayRef = copy(self)
         result._values = list(map(lambda x: x.substitute(expr), self._values))
         return result
 
@@ -1361,7 +1361,7 @@ class TupleRef(ValueRef):
         return f"{self._temp_var.type_name_pair_calling};"
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "TupleRef":
-        new_expr: TupleRef = deepcopy(self)
+        new_expr: TupleRef = copy(self)
         new_expr._type = self._type.instantiation(type_args)
         new_expr._values = list(map(lambda x: x.instantiation(type_args), self._values))
         return new_expr
@@ -1397,7 +1397,7 @@ class TupleRef(ValueRef):
         return self._type
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "TupleRef":
-        result: TupleRef = deepcopy(self)
+        result: TupleRef = copy(self)
         result._values = list(map(lambda x: x.substitute(expr), self._values))
         return result
 
@@ -1477,7 +1477,7 @@ class TypeRef(ValueRef):
         return None
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: TypeRef = deepcopy(self)
+        new_expr: TypeRef = copy(self)
         new_expr._type = self._type.instantiation(type_args)
         return new_expr
 
@@ -1617,7 +1617,7 @@ class Operator(Expression, ABC):
         self._inline_mapping: dict[str, str] = {}
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr: Operator = deepcopy(self)
+        new_expr: Operator = copy(self)
         for i, expr in enumerate(self._expr_list):
             new_expr._expr_list[i] = expr.as_inline(new_expr._inline_mapping)
             new_expr._inline_mapping.update(new_expr._expr_list[i].inline_mapping)
@@ -1655,7 +1655,7 @@ class Operator(Expression, ABC):
         return result if result != "" else None
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result: Operator = deepcopy(self)
+        result: Operator = copy(self)
         result._expr_list = [e.substitute(expr) for e in self._expr_list]
         return result
 
@@ -1737,6 +1737,7 @@ class AttrOp(Expression):
         super().__init__(src_info, symbol_table)
         self._attr: Optional[str] = None
         self._caller: Optional[Expression] = None
+        self._is_static: bool = False
         self._arg_types: Optional[list[str]] = None
         self._kwarg_types: Optional[dict[str, str]] = None
         self._inline_mapping: dict[str, str] = {}
@@ -1747,7 +1748,7 @@ class AttrOp(Expression):
         return self
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr: AttrOp = deepcopy(self)
+        new_expr: AttrOp = copy(self)
         new_expr._caller = self._caller.as_inline(inline_mapping)
         new_expr._inline_mapping.update(self._caller.inline_mapping)
         return new_expr
@@ -1814,10 +1815,10 @@ class AttrOp(Expression):
         """
         dynamic_arg_type_list: list[str] = [self._caller.return_type.name] + arg_type_list
         dynamic_methods: list[MethodName] = self._symbol_table.find_methods(
-            self._caller.return_type.name, self._attr, dynamic_arg_type_list, kwarg_type_dict
+            self._caller.return_type.name, self._attr[1:], dynamic_arg_type_list, kwarg_type_dict
         )
         static_methods: list[MethodName] = self._symbol_table.find_methods(
-            self._caller.return_type.name, self._attr, arg_type_list, kwarg_type_dict
+            self._caller.return_type.name, self._attr[1:], arg_type_list, kwarg_type_dict
         )
         if len(dynamic_methods) == 1:
             return dynamic_methods[0]
@@ -1829,7 +1830,7 @@ class AttrOp(Expression):
                 self._src_info
             )
         raise CompilerException(
-            f"Method not found: {self._caller.return_type.raw_name}.{self._attr}",
+            f"Method not found: {self._caller.return_type.raw_name}.{self._attr}({', '.join(arg_type_list)})",
             self._src_info
         )
 
@@ -1854,7 +1855,7 @@ class AttrOp(Expression):
         return self._inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: AttrOp = deepcopy(self)
+        new_expr: AttrOp = copy(self)
         new_expr._caller = self._caller.instantiation(type_args)
         new_expr._arg_types = list(map(lambda x: x.instantiation(type_args), self._arg_types))
         new_expr._kwarg_types = dict(map(lambda x: (x[0], x[1].instantiation(type_args)), self._kwarg_types.items()))
@@ -1906,7 +1907,7 @@ class AttrOp(Expression):
         self._caller = caller
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result = deepcopy(self)
+        result = copy(self)
         result._caller = result._caller.substitute(expr)
         result._set_expected_type()
         return result
@@ -1920,18 +1921,10 @@ class AttrOp(Expression):
         if not self.is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
         # noinspection PyTypeChecker
-        caller_type: ClassName = self._caller.return_type
-        if self._attr in caller_type.properties:
-            if caller_type.properties[self._attr].is_static:
-                return self._caller.text + "$" + self._attr
-            return f"{self._caller.text}->{self._attr}"
-        return self._symbol_table.find_method(
-            self._src_info,
-            caller_type.raw_name,
-            self._attr,
-            self._arg_types,
-            self._kwarg_types
-        ).name
+        method = self.find_method(self._arg_types, self._kwarg_types)
+        if method.is_static:
+            return f"{self._caller.text}${self._attr}"
+        return f"{self._caller.text}->{self._attr}"
 
     @property
     def used_variables(self) -> set[VariableName]:
@@ -2020,7 +2013,7 @@ class CallOp(Expression):
         return [arg.return_type for arg in self._arg_list]
 
     def as_async(self) -> "Expression":
-        result: CallOp = deepcopy(self)
+        result: CallOp = copy(self)
         result._is_async = True
         result._listener_name = self._symbol_table.get_counter()
         result._call_name = result._listener_name + "$$_call"
@@ -2030,7 +2023,7 @@ class CallOp(Expression):
         return result
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr: CallOp = deepcopy(self)
+        new_expr: CallOp = copy(self)
         new_expr._func_expr = new_expr._func_expr.as_inline(inline_mapping)
         new_expr._inline_mapping = inline_mapping
         for i, arg in enumerate(new_expr._arg_list):
@@ -2079,7 +2072,7 @@ class CallOp(Expression):
             ])
         else:
             args_str: str = ", ".join(map(lambda x: x.text, self._arg_list)) + ", " if len(self._arg_list) > 0 else ""
-            rets_str: str = ", ".join(map(lambda x: x.text, self._returns_list)) + ", " if len(
+            rets_str: str = ", ".join(map(lambda x: x.name, self._returns_list)) + ", " if len(
                 self._returns_list) > 0 else ""
             call = self._func_expr.text + self._get_func_extend + f"({args_str}{rets_str}listener);"
         result.append(call)
@@ -2110,7 +2103,7 @@ class CallOp(Expression):
         return self._inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "CallOp":
-        new_expr: CallOp = deepcopy(self)
+        new_expr: CallOp = copy(self)
         new_expr._func_expr = new_expr._func_expr.instantiation(type_args)
         new_expr._arg_list = list(map(lambda x: x.instantiation(type_args), self._arg_list))
         new_expr._kwarg_dict = {k: v.instantiation(type_args) for k, v in self._kwarg_dict.items()}
@@ -2208,6 +2201,7 @@ class CallOp(Expression):
             self._func = expr.var
             self._func_expr = expr
         elif isinstance(expr, AttrOp):
+            expr.bind_parent(self)
             method = expr.find_method(
                 list(map(lambda x: x.return_type.name, self._arg_list)),
                 dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
@@ -2242,12 +2236,12 @@ class CallOp(Expression):
         return True
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result = deepcopy(self)
+        result = copy(self)
         result._func_expr = result._func_expr.substitute(expr)
         result._arg_list = list(map(lambda x: x.substitute(expr), result._arg_list))
         result._kwarg_dict = dict(map(lambda x: (x[0], x[1].substitute(expr)), result._kwarg_dict.items()))
-        result._args_tuple = result._args_tuple.substitute(expr)
-        result._returns_tuple = result._returns_tuple.substitute(expr)
+        result._args_tuple = result._args_tuple.substitute(expr) if result._args_tuple is not None else None
+        result._returns_tuple = result._returns_tuple.substitute(expr) if result._returns_tuple is not None else None
         return result
 
     @property
@@ -2276,9 +2270,7 @@ class CallOp(Expression):
         return result
 
     def validate(self) -> None:
-        if not isinstance(self._func_expr.return_type, ClassName) and not isinstance(self._func_expr.return_type,
-                                                                                     FunctionTypeName):
-            raise CompilerException("Function call is not allowed on this expression", self._src_info)
+        pass
 
     @property
     def _get_func_extend(self) -> str:
@@ -2406,7 +2398,7 @@ class BinaryMathOp(BinaryOperator):
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
         if self._call_op is not None:
-            new_expr = deepcopy(self)
+            new_expr = copy(self)
             return new_expr._call_op.check_tail_recursive(func_name)
         return self
 
@@ -2433,7 +2425,7 @@ class BinaryMathOp(BinaryOperator):
         return result if result != "" else None
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "BinaryMathOp":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         if self._call_op is not None:
             new_expr._call_op = self._call_op.instantiation(type_args)
         new_expr._expr_list = list(map(lambda expr: expr.instantiation(type_args), self._expr_list))
@@ -2750,14 +2742,25 @@ class ItemOp(CallOp):
             )
         # noinspection PyTypeChecker
         expr_type: ClassName = expr.return_type
-        if "__getitem__" not in expr_type.methods:
+        get_item_methods: dict[tuple[str, tuple[TypeName, ...]], MethodName] = dict(filter(lambda x: x[0][0] == "__getitem__", expr_type.methods.items()))
+        if len(get_item_methods) == 0:
             raise CompilerException(
-                f"Method {expr.return_type}.__getitem__(...) is not defined.", self._src_info
+                f"Method {expr.return_type}.__getitem__({', '.join(list(map(lambda x: x.raw_name, self.arg_types)))}) is not defined.", self._src_info
             )
-        new_expr: AttrOp = AttrOp(self._src_info, self._symbol_table)
-        new_expr.set_caller(expr)
-        new_expr.set_attr("__getitem__")
-        super().set_func(new_expr)
+        arg_tuple_type = TupleTypeName(self._src_info, [expr_type] + self.arg_types)
+        for k, v in get_item_methods.items():
+            if arg_tuple_type.convertable_to(TupleTypeName(self._src_info, list(k[1])), self._symbol_table.symbols):
+                new_expr: AttrOp = AttrOp(self._src_info, self._symbol_table)
+                new_expr.set_caller(expr)
+                new_expr.set_attr("__getitem__")
+                super().set_func(new_expr)
+                return
+        raise CompilerException(
+            f"Method {expr.return_type}.__getitem__({', '.join(list(map(lambda x: x.raw_name, self.arg_types)))}) is not defined.", self._src_info
+        )
+
+    def validate(self) -> None:
+        pass
 
 
 class UnaryOperator(Operator, ABC):
@@ -2796,7 +2799,7 @@ class BracketsOp(UnaryOperator):
         return new_op
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._expr_list[0] = self._expr_list[0].check_tail_recursive(func_name)
         return new_expr
 
@@ -2811,7 +2814,7 @@ class BracketsOp(UnaryOperator):
         return self._expr_list[0].global_init_text
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: BracketsOp = deepcopy(self)
+        new_expr: BracketsOp = copy(self)
         new_expr._expr_list[0] = self._expr_list[0].instantiation(type_args)
         return new_expr
 
@@ -2895,7 +2898,7 @@ class UnaryMathOp(UnaryOperator):
         return super().as_inline(inline_mapping)
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         if self._call_op is not None:
             new_expr._call_op = self._call_op.check_tail_recursive(func_name)
         return new_expr
@@ -2920,7 +2923,7 @@ class UnaryMathOp(UnaryOperator):
         return result if result != "" else None
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: UnaryMathOp = deepcopy(self)
+        new_expr: UnaryMathOp = copy(self)
         new_expr._expr_list[0] = self._expr_list[0].instantiation(type_args)
         if self._call_op is not None:
             new_expr._call_op = self._call_op.instantiation(type_args)
@@ -3089,7 +3092,7 @@ class ConditionalOp(Operator):
         return new_expr
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._expr_list[1] = self._expr_list[1].check_tail_recursive(func_name)
         new_expr._expr_list[2] = self._expr_list[2].check_tail_recursive(func_name)
         return new_expr
@@ -3127,7 +3130,7 @@ class ConditionalOp(Operator):
         return "\n".join(filter(lambda x: x is not None, [temp_name_decl, self._expr_list[0].head_text]))
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._expr_list[0] = self._expr_list[0].instantiation(type_args)
         new_expr._expr_list[1] = self._expr_list[1].instantiation(type_args)
         new_expr._expr_list[2] = self._expr_list[2].instantiation(type_args)
@@ -3293,6 +3296,7 @@ class UpdateExpr(Expression):
         for i in index:
             call_op.add_arg(i, None)
         call_op.add_arg(value, None)
+        call_op.set_func(attr_expr)
         if self._is_async:
             call_op = call_op.as_async()
         self._expr_list.append((None, call_op))
@@ -3326,7 +3330,7 @@ class UpdateExpr(Expression):
         self._expr_loc.append(expr.src_info)
 
     def as_async(self) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._is_async = True
         return new_expr
 
@@ -3354,8 +3358,8 @@ class UpdateExpr(Expression):
     def front_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
-        lines0: list[str] = list(filter(lambda x: x is not None, map(lambda x: x[0].front_text, self._expr_list)))
-        lines1: list[str] = list(filter(lambda x: x is not None, map(lambda x: x[1].front_text, self._expr_list)))
+        lines0: list[str] = list(map(lambda x: x[0].front_text, filter(lambda x: x[0] is not None, self._expr_list)))
+        lines1: list[str] = list(map(lambda x: x[1].front_text, filter(lambda x: x[1] is not None, self._expr_list)))
         new_src_lines: list[str] = [
             f"{self._temp_name} = ({self._src_expr.return_type.c_calling_name})malloc(sizeof({self._src_expr.return_type}));",
             f"memcpy({self._temp_name}, {self._src_expr.text}, sizeof({self._src_expr.return_type}));"
@@ -3365,15 +3369,15 @@ class UpdateExpr(Expression):
             if x[0] is not None else x[1].text + ";"
             for x in self._expr_list
         ]
-        return "\n".join(lines0 + lines1 + new_src_lines + setting_lines)
+        return "\n".join(list(filter(lambda x: x is not None, lines0 + lines1)) + new_src_lines + setting_lines)
 
     @property
     def global_init_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
-        lines0: list[str] = list(filter(lambda x: x is not None, map(lambda x: x[0].global_init_text, self._expr_list)))
-        lines1: list[str] = list(filter(lambda x: x is not None, map(lambda x: x[1].global_init_text, self._expr_list)))
-        return "\n".join(lines0 + lines1)
+        lines0: list[str] = list(map(lambda x: x[0].global_init_text, filter(lambda x: x[0] is not None, self._expr_list)))
+        lines1: list[str] = list(map(lambda x: x[1].global_init_text, filter(lambda x: x[1] is not None, self._expr_list)))
+        return "\n".join(list(filter(lambda x: x is not None, lines0 + lines1)))
 
     @property
     def head_text(self) -> Optional[str]:
@@ -3390,7 +3394,7 @@ class UpdateExpr(Expression):
         return self._inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: UpdateExpr = deepcopy(self)
+        new_expr: UpdateExpr = copy(self)
         new_expr._src_expr = self._src_expr.instantiation(type_args)
         new_expr._expr_list = [
             (x[0].instantiation(type_args) if x[0] is not None else None, x[1].instantiation(type_args))
@@ -3413,7 +3417,7 @@ class UpdateExpr(Expression):
         for i, (expr1, expr2) in enumerate(self._expr_list):
             if expr1 is not None:
                 self._expr_list[i] = (expr1.optimize(), expr2.optimize())
-            self._expr_list[i] = (expr1, expr2.optimize())
+            self._expr_list[i] = (None, expr2.optimize())
         return self
 
     @property
@@ -3451,7 +3455,7 @@ class UpdateExpr(Expression):
         self._src_expr = src_expr
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result = deepcopy(self)
+        result = copy(self)
         result._src_expr = self._src_expr.substitute(expr)
         result._expr_list = [
             (x[0].substitute(expr) if x[0] is not None else None, x[1].substitute(expr))

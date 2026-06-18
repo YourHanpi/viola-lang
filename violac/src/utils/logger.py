@@ -89,7 +89,7 @@ class LoggerController:
         初始化LoggerController。
         默认日志级别为INFO，并创建文件处理器实例。
         """
-        self._log_level: LogLevel = LogLevel.INFO
+        self._log_level: LogLevel = LogLevel.DEBUG
         self._file_handler: FileHandler = FileHandler()
 
     def close(self) -> None:

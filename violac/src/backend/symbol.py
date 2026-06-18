@@ -904,8 +904,54 @@ class ArrayTypeName(ClassName):
         src_info: 源代码信息。
         element_type: 元素类型。
         """
-        super().__init__(src_info, element_type.namespace, element_type.self_name + "$array", None, False, False)
+        super().__init__(src_info, element_type.namespace, element_type.self_name + "[]", None, False, False)
         self._element_type: TypeName = element_type
+        self.add_method("__getitem__", MethodName(
+            src_info, self, "__getitem__", FunctionTypeName(
+                src_info, [SIZE_T], [element_type]
+            ), False, False, ["item"], ["element"], Modifier.PUBLIC, True
+        ))
+        self.add_method("__getitem__", MethodName(
+            src_info, self, "__getitem__", FunctionTypeName(
+                src_info, [SliceTypeName], [self]
+            ), False, False, ["s"], ["subarray"], Modifier.PUBLIC, True
+        ))
+        self.add_method("concat", MethodName(
+            src_info, self, "concat", FunctionTypeName(
+                src_info, [self], [self]
+            ), False, False, ["other"], ["result"], Modifier.PUBLIC, True
+        ))
+        self.add_method("append", MethodName(
+            src_info, self, "append", FunctionTypeName(
+                src_info, [element_type], [self]
+            ), False, False, ["newElement"], ["newArray"], Modifier.PUBLIC, True
+        ))
+        self.add_method("insert", MethodName(
+            src_info, self, "insert", FunctionTypeName(
+                src_info, [INT64, element_type], [self]
+            ), False, False, ["location", "newElement"], ["newArray"], Modifier.PUBLIC, True
+        ))
+        self.add_method("length", MethodName(
+            src_info, self, "length", FunctionTypeName(
+                src_info, [], [SIZE_T]
+            ), False, False, [], ["result"], Modifier.PUBLIC, True
+        ))
+        self.add_method("__setitem__", MethodName(
+            src_info, self, "__setitem__", FunctionTypeName(
+                src_info, [SIZE_T, element_type], [self]
+            ), False, False, ["index", "newElement"], ["newArray"], Modifier.PUBLIC, True
+        ))
+        self.add_method("__setitem__", MethodName(
+            src_info, self, "__setitem__", FunctionTypeName(
+                src_info, [SliceTypeName, self], [self]
+            ), False, False, ["s", "newSubarray"], ["newArray"], Modifier.PUBLIC, True
+        ))
+        self.add_method(
+            "__del__", MethodName(
+                src_info, self, "__del__", FunctionTypeName(src_info, [], []), False,
+                False, [], [], Modifier.PRIVATE, True
+            )
+        )
 
     def convertable_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
@@ -960,7 +1006,7 @@ class TupleTypeName(ClassName):
     """
 
     def __init__(self, src_info: SourceInfo, types: list[TypeName]) -> None:
-        super().__init__(src_info, VIOLA_COLLECTIONS, f"({', '.join(list(map(lambda t: t.name, types)))})", None,
+        super().__init__(src_info, [], f"({', '.join(list(map(lambda t: t.name, types)))})", None,
                          False, False)
         self._type_args: list[TypeName] = types
 
@@ -986,10 +1032,6 @@ class TupleTypeName(ClassName):
 
     def instantiation(self, real_types: dict["GenericArgument", "TypeName"]) -> "TypeName":
         return TupleTypeName(self._src_info, list(map(lambda t: t.instantiation(real_types), self.types)))
-
-    @property
-    def name(self) -> str:
-        return TUPLE_T
 
     @property
     def type_names(self) -> list[str]:
@@ -1386,9 +1428,9 @@ class FunctionName(GlobalVariableName):
         ret_names: 返回值名称。
         export: 是否导出。
         """
+        super().__init__(src_info, namespace, name, t)
         if len(arg_names) != len(t.args):
             raise CompilerException("Invalid number of arguments.", self._src_info)
-        super().__init__(src_info, namespace, name, t)
         self._arg_names: list[str] = arg_names
         self._ret_names: list[str] = ret_names
         self._export: bool = export
@@ -1747,8 +1789,9 @@ class MethodName(PropertyVariableName):
         """
         self._type: FunctionTypeName
         # noinspection PyTypeChecker
-        return MethodName(self._src_info, cls, f"{self._self_name}$_{overloaded_times}", self._type,
-                          self._is_abstract, self._is_static, self._function_name.arg_names,
+        return MethodName(self._src_info, cls, f"{self._self_name}$_{overloaded_times}",
+                          self._type if self._is_static else FunctionTypeName(self._src_info, self._type.args[1:], self._type.returns),
+                          self._is_abstract, self._is_static, self._function_name.arg_names if self._is_static else self._function_name.arg_names[1:],
                           self._function_name.ret_names, self._modifier, self._function_name.export)
 
     def set_default_params(self, default_param_names: list[str]) -> None:
@@ -1787,6 +1830,18 @@ StringTypeName.add_method(
         ["this"],
         Modifier.PUBLIC,
         True
+    )
+)
+StringTypeName.add_method(
+    "__del__", MethodName(
+        VIOLA_INIT, StringTypeName, "__del__", FunctionTypeName(VIOLA_INIT, [], []), False,
+        False, [], [], Modifier.PRIVATE, True
+    )
+)
+SliceTypeName.add_method(
+    "__del__", MethodName(
+        VIOLA_INIT, SliceTypeName, "__del__", FunctionTypeName(VIOLA_INIT, [], []), False,
+        False, [], [], Modifier.PRIVATE, True
     )
 )
 
@@ -1834,6 +1889,10 @@ _perror = FunctionName(
     ["text"],
     [],
     True
+)
+_print = FunctionName(
+    VIOLA_INIT, VIOLA_IO, "print", FunctionTypeName(VIOLA_INIT, [StringTypeName], []),
+    ["text"], [], True
 )
 
 
@@ -1930,6 +1989,8 @@ class GenericTable:
             instances = self._function_instances
         else:
             raise InternalCompilerException("Unexpected type of symbol.", src_info)
+        if symbol not in instances:
+            return []
         return list(instances[symbol].keys())
 
     def get_cls_instance(self, class_name: ClassName, t: tuple[TypeName, ...]) -> ClassName:
@@ -2032,11 +2093,13 @@ class _TypeNameLexer(FSM):
         double_colon: StateNode = StateNode()
         generic_start: StateNode = StateNode()
         r_angle_bracket: StateNode = StateNode()
+        comma: StateNode = StateNode()
         first.add_transfer("-", sub)
         first.add_transfer("[", l_square_bracket)
         first.add_transfer("(", l_bracket)
         first.add_transfer(")", r_bracket)
         first.add_transfer(":", colon)
+        first.add_transfer(",", comma)
         colon.add_transfer(":", double_colon)
         double_colon.add_transfer("<", generic_start)
         first.add_transfer(">", r_angle_bracket)
@@ -2048,6 +2111,7 @@ class _TypeNameLexer(FSM):
         r_bracket.set_output(")")
         generic_start.set_output("::<")
         r_angle_bracket.set_output(">")
+        comma.set_output(",")
         return first
 
 
@@ -2093,7 +2157,7 @@ class _TypeNameParser:
     def parse(self, src_info: SourceInfo, type_str: str) -> TypeName:
         self._src_info = src_info
         self._current: int = -1
-        self._tokens = self._lexer.lex(src_info, type_str)
+        self._tokens = self._lexer.lex(src_info, type_str) + [Token("", ["_EOF"], src_info)]
         self._tokens_num = len(self._tokens)
         result = self._parse_type_name()
         self._tokens.clear()
@@ -2173,7 +2237,7 @@ class _TypeNameParser:
                 result = ArrayTypeName(self._src_info, result)
                 self._next()
             else:
-                raise CompilerException(f"Unexpected token: {self._tokens[self._current]}", self._src_info)
+                return result
         return result
 
 
@@ -2197,6 +2261,17 @@ class SymbolTable:
         if item[0].startswith(self._namespace_name + "$"):
             item_name: str = item[0].replace(".", "$")
             return (item_name[len(self._namespace_name + "$"):], item[1]) in self
+        if item not in self.symbols:
+            if isinstance(item[0], str) and item[1] is None:
+                functions = [k for k in self.symbols.keys() if k[0] == item[0]]
+                if len(functions) > 0:
+                    return True
+                result = self._type_name_parser.parse(self._src_info, item[0])
+                for t in result.used_types:
+                    if (t.name, None) not in self.symbols:
+                        return False
+                return True
+            return (item[0], None) in self.symbols
         return item in self.symbols
 
     def __delitem__(self, key: tuple[str, Optional[tuple[TypeName, ...]]]) -> None:
@@ -2215,20 +2290,19 @@ class SymbolTable:
         types: Optional[tuple[TypeName, ...]] = items[1]
         if item.startswith(self._namespace_name + "$"):
             return self[item[len(self._namespace_name + "$"):], types]
-        if item.startswith("$tuple(") and item.endswith(")"):
-            it = item[7:-1].split(", ")
-            result = list(map(lambda x: self[x], it))
-            # noinspection PyTypeChecker
-            return TupleTypeName(self._src_info, result)
         if (item, types) not in self.symbols:
-            if types is None and (item, ()) in self.symbols:
-                return self.symbols[item, ()]
+            if types is None and (item, None) in self.symbols:
+                return self.symbols[item, None]
             if types is None:
+                functions = [v for k, v in self.symbols.items() if k[0] == item]
+                if len(functions) == 1:
+                    return functions[0]
                 result = self._type_name_parser.parse(self._src_info, item)
                 for t in result.used_types:
                     if (t.name, None) not in self:
                         raise CompilerException(f"Type {t.name} not found", self._src_info)
                 return result
+            raise CompilerException(f"Symbol {item} not found", self._src_info)
         return self.symbols[item, types]
 
     def __init__(self, src_path: str = "", workspace: str = "") -> None:
@@ -2253,8 +2327,9 @@ class SymbolTable:
         self._init_builtin_types()
 
         def __real_type_getter(name: str) -> TypeName:
-            if (name, None) in self:
-                return self[name, None]
+            name = name.strip()
+            if (name, None) in self.symbols:
+                return self.symbols[name, None]
             raise CompilerException(f"Type {name} not found.", self._src_info)
 
         self._type_name_parser: _TypeNameParser = _TypeNameParser(__real_type_getter, self._generic_table)
@@ -2275,10 +2350,14 @@ class SymbolTable:
                 self.add(t, t.name, None)
         self.add(StringTypeName, StringTypeName.self_name, None)
         self.add(StringTypeName, StringTypeName.name, None)
+        self.add(SliceTypeName, SliceTypeName.self_name, None)
+        self.add(SliceTypeName, SliceTypeName.name, None)
         self.add(ExceptionTypeName, ExceptionTypeName.self_name, None)
         self.add(ExceptionTypeName, ExceptionTypeName.name, None)
         self.add(_exception_what, _exception_what.name, [])
         self.add(_perror, _perror.name, [StringTypeName])
+        self.add(_print, _print.name, [StringTypeName])
+        self.add(_print, _print.self_name, [StringTypeName])
 
     def add(self, symbol: NamedSymbol, name: str, types: Optional[list[TypeName]]) -> None:
         """
@@ -2288,7 +2367,7 @@ class SymbolTable:
         types: 符号的参数类型列表（如果不是函数则为None）。
         """
         if types is not None:
-            if (symbol.name, tuple(types)) in self.symbols:
+            if (name, tuple(types)) in self.symbols:
                 raise CompilerException(f"Symbol {name} already exists.", self._src_info)
         if symbol.kw_type != SymbolType.FUNCTION and symbol.kw_type != SymbolType.METHOD and types is not None:
             raise InternalCompilerException("Symbol must not have types.", self._src_info)
@@ -2384,11 +2463,10 @@ class SymbolTable:
         args: 参数类型名称列表。
         kwargs: 关键字参数类型名称列表。
         """
-        if args is None or kwargs is None:
-            result = self.symbols[cls_name + "." + name, None]
-            if not isinstance(result, MethodName):
-                raise CompilerException("Method not found", src_info)
-            return result
+        if args is None:
+            args = []
+        if kwargs is None:
+            kwargs = {}
         results = self.find_methods(cls_name, name, args, kwargs)
         if len(results) > 1:
             raise CompilerException("Ambiguous method symbol", src_info)
@@ -2404,8 +2482,17 @@ class SymbolTable:
         args: 参数类型名称列表。
         kwargs: 关键字参数类型名称列表。
         """
-        func_name: str = cls_name + "." + name
-        return self.find_functions(func_name, args, kwargs, True)
+        cls = self[cls_name, None]
+        if not isinstance(cls, ClassName):
+            raise CompilerException("Class not found", self._src_info)
+        arg_types: list[TypeName] = list(map(lambda x: self[x, None], args))
+        kwargs_types: dict[str, TypeName] = dict(map(lambda x: (x, self[kwargs[x], None]), kwargs.keys()))
+        methods = dict(filter(lambda x: x[0][0] == name, cls.methods.items()))
+        methods = dict(filter(lambda x: len(x[0][1]) >= len(arg_types), methods.items()))
+        methods = dict(filter(lambda x: all(map(lambda i: arg_types[i].convertable_to(x[0][1][i], self.symbols),
+                                                range(len(arg_types)))), methods.items()))
+        methods = dict(filter(lambda x: all(x[1].arg_types_dict[y].convertable_to(kwargs_types[y], self.symbols) for y in kwargs_types.keys()), methods.items()))
+        return list(methods.values())
 
     def get_all_to_instantiate_symbols(self, src_info: SourceInfo,
                                        symbol: ClassName | FunctionName) -> list[tuple[TypeName, ...]]:
