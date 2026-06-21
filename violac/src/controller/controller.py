@@ -131,7 +131,6 @@ class SingleController(Controller, ABC):
 
     def _handle_error(self, exc: Exception) -> None:
         """处理错误。"""
-        print(str(exc))
         self._thread.join()
         self._thread = None
 

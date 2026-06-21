@@ -1,0 +1,56 @@
+// Viola C Compatibility Test Template
+// Tests: cpart functions, cpart imports, and C struct integration
+
+// Import C headers
+import cpart "${C_HEADER_1}";
+import cpart <${C_HEADER_2}>;
+
+// C-style function using cpart
+cpart sq ${CPART_FUNC_NAME}(int a, int b) -> (int) {
+    return a ${CPART_OP} b;
+}
+
+// Class wrapping a C structure
+class ${WRAPPER_CLASS} {
+    cpart ${C_STRUCT_TYPE} ${C_STRUCT_VAR};
+
+    public sq __new__(int ${INIT_PARAM_1}, int ${INIT_PARAM_2}) -> (this) {
+        this.${C_STRUCT_VAR}.${C_FIELD_1} = ${INIT_PARAM_1};
+        this.${C_STRUCT_VAR}.${C_FIELD_2} = ${INIT_PARAM_2};
+    }
+
+    // Accessor methods
+    public fn get${C_FIELD_CAP_1}() -> (int result) {
+        result = this.${C_STRUCT_VAR}.${C_FIELD_1};
+    }
+
+    public fn get${C_FIELD_CAP_2}() -> (int result) {
+        result = this.${C_STRUCT_VAR}.${C_FIELD_2};
+    }
+
+    // Destructor
+    cpart sq __del__() -> () {
+        ${C_STRUCT_VAR}->clean();
+    }
+}
+
+// Another cpart function for math
+cpart fn ${CPART_MATH_FUNC}(double x) -> (double) {
+    return ${CPART_MATH_EXPR};
+}
+
+sq main() -> () {
+    // Call cpart function
+    int ${CPART_RESULT} = ${CPART_FUNC_NAME}(${CPART_ARG_A}, ${CPART_ARG_B});
+
+    // Use wrapper class
+    ${WRAPPER_CLASS} ${WRAPPER_OBJ}(${WRAPPER_ARG_1}, ${WRAPPER_ARG_2});
+    int ${FIELD_VAL_1} = ${WRAPPER_OBJ}.get${C_FIELD_CAP_1}();
+    int ${FIELD_VAL_2} = ${WRAPPER_OBJ}.get${C_FIELD_CAP_2}();
+
+    // Call cpart math function
+    double ${MATH_RESULT} = ${CPART_MATH_FUNC}(${MATH_ARG});
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

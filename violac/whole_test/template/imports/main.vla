@@ -1,0 +1,27 @@
+// Viola Imports Test Template - Main File
+// Tests: import and from...import statements
+
+import ${MODULE_1};
+import ${MODULE_2};
+from ${MODULE_3} import ${IMPORTED_SYMBOL_1}, ${IMPORTED_SYMBOL_2};
+from ${MODULE_4} import *;
+
+sq main() -> () {
+    // Call function from module 1
+    ${MODULE_1_ALIAS}.${MODULE_1_FUNC}(${MODULE_1_ARG});
+
+    // Call function from module 2
+    int ${RESULT_VAR_1} = ${MODULE_2_ALIAS}.${MODULE_2_FUNC}(${MODULE_2_ARG_1}, ${MODULE_2_ARG_2});
+
+    // Call directly imported function from module 3
+    ${IMPORTED_FUNC_1}(${IMPORTED_ARG_1});
+
+    // Call directly imported function from module 3
+    int ${RESULT_VAR_2} = ${IMPORTED_FUNC_2}(${IMPORTED_ARG_2});
+
+    // Call function imported via wildcard from module 4
+    int ${RESULT_VAR_3} = ${WILDCARD_FUNC}(${WILDCARD_ARG});
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

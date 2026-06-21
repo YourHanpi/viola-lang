@@ -1,0 +1,6 @@
+// Viola Hello World Test Template
+// This template tests basic program structure with print output
+
+sq main() -> () {
+    print("${GREETING}, ${TARGET}!");
+}

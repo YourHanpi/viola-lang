@@ -927,6 +927,7 @@ class FloatLiteral(Literal):
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, value: str) -> None:
         if value.endswith("f"):
             t = FLOAT
+            value = value[:-1]
         else:
             t = DOUBLE
         # noinspection PyTypeChecker
@@ -2224,6 +2225,10 @@ class CallOp(Expression):
                     default_value: Optional[GlobalVariableName] = self._func.default_params[n]
                     if default_value is not None:
                         self._arg_list.append(VariableRef(self._src_info, self._symbol_table, default_value))
+        if self._args_tuple is not None:
+            self._args_tuple.finish()
+        if self._returns_tuple is not None:
+            self._returns_tuple.finish()
 
     def set_returns(self, returns: Optional[list[VariableName]]) -> bool:
         self._returns_list = returns
@@ -2506,6 +2511,8 @@ class BinaryMathOp(BinaryOperator):
         super().validate()
         expr_left: Expression = self._expr_list[0]
         expr_right: Expression = self._expr_list[1]
+        if isinstance(expr_left.return_type, BaseTypeName) and isinstance(expr_right.return_type, BaseTypeName):
+            return
         # noinspection PyUnresolvedReferences
         if (not (isinstance(expr_left.return_type,
                             ClassName) and self._left_magic_method in expr_left.return_type.methods) and not (

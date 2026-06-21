@@ -130,7 +130,11 @@ class CompilerVM:
             "DECL": lambda cmd: self.__make(
                 statement.DeclStmt(self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace)),
             "ASSIGN": lambda cmd: self.__make(
-                statement.AssignStmt(self._src_info, self._symbol_table, self._var_state_table)),
+                statement.AssignStmt(self._src_info, self._symbol_table, self._var_state_table)
+            ),
+            "ASSIGN_TO_THIS": lambda cmd: self.__make(
+                statement.AssignStmt(self._src_info, self._symbol_table, self._var_state_table, self._current_class)
+            ),
             "OP": lambda cmd: self.__make(statement.OpStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "RETURN": lambda cmd: self.__make(
                 statement.ReturnStmt(self._src_info, self._symbol_table, self._var_state_table)),
@@ -165,6 +169,7 @@ class CompilerVM:
             "ADD_TYPE_ARG": lambda cmd: self.__call_add_type_arg(),
             "ADD_VALUE": lambda cmd: self.__call_add_value(),
             "ADD_VAR": lambda cmd: self.__call_add_var(cmd),
+            "ADD_VAR_NAME": lambda cmd: self.__call_add_var_name(cmd[0]),
             "AS_ASYNC": lambda cmd: self.__call_as_async(),
             "FINISH": lambda cmd: self.__call_finish(),
             "FINISH_GENERIC": lambda cmd: self.__call_finish_generic(),
@@ -190,7 +195,6 @@ class CompilerVM:
             "SET_STMT": lambda cmd: self.__call_set_stmt(),
             "SET_TYPE": lambda cmd: self.__call_set_type(),
             "SET_VARS": lambda cmd: self.__call_set_vars(cmd),
-            "SET_VAR_NAMES": lambda cmd: self.__call_add_var_name(cmd),
             "SET_VAR_VALUE": lambda cmd: self.__call_set_var_value(),
         }
 
@@ -232,9 +236,11 @@ class CompilerVM:
             src_file = self.get()
         except CompilerException:
             self._logger.error(format_exc())
+            print(self._stack)
             return TaskResult(TaskResultState.FAILURE)
         except Exception as e:
             self._logger.error(format_exc())
+            print(self._stack)
             raise e
         self._project.add_source_file(src_file)
         self._logger.info(f"Successfully compiled: {src_path}")
@@ -243,7 +249,7 @@ class CompilerVM:
     def exec(self, cmd: str) -> None:
         """逐行执行编译命令字符串。"""
         lines: list[str] = cmd.split("\n")
-        for line in lines:
+        for i, line in enumerate(lines):
             self._exec_line(line)
 
     def get(self) -> project.SourceFile:
@@ -416,11 +422,11 @@ class CompilerVM:
         self._stack[-2].add_var(cmd[0], self._stack[-1], self.__scope_level == 0)
         self.__pop()
 
-    def __call_add_var_name(self, cmd: list[str]) -> None:
+    def __call_add_var_name(self, cmd: str) -> None:
         """为赋值语句设置变量名列表。"""
         self.__check_type(self._stack[-1], [statement.AssignStmt])
         # noinspection PyUnresolvedReferences
-        self._stack[-1].set_var_names(cmd)
+        self._stack[-1].add_var_name(cmd)
 
     def __call_as_async(self) -> None:
         """将栈顶语句转换为异步版本。"""
@@ -437,11 +443,11 @@ class CompilerVM:
         ])
         # noinspection PyUnresolvedReferences
         self._stack[-1].finish()
-        if isinstance(self._stack[-1], statement.BlockStmt):
-            blk = self._stack[-1]
-            self.__pop()
-            if len(self._stack) >= 2 and isinstance(self._stack[-1], definition.SqDef):
-                self._stack[-1].add_stmt(blk)
+        # if isinstance(self._stack[-1], statement.BlockStmt):
+        #     blk = self._stack[-1]
+        #     self.__pop()
+        #     if len(self._stack) >= 2 and isinstance(self._stack[-1], definition.SqDef):
+        #         self._stack[-1].add_stmt(blk)
 
     def __call_finish_generic(self) -> None:
         """完成泛型调用，生成实例化后的表达式。"""
@@ -520,7 +526,7 @@ class CompilerVM:
     def __call_set_expr_cond(self) -> None:
         """设置条件运算符的条件表达式。"""
         self.__check_type(self._stack[-1], [expression.Expression])
-        self.__check_type(self._stack[-2], [expression.ConditionalOp])
+        self.__check_type(self._stack[-2], [expression.ConditionalOp, statement.CondStmt])
         # noinspection PyUnresolvedReferences
         self._stack[-2].set_expr_cond(self._stack[-1])
         self.__pop()

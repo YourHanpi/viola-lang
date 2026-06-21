@@ -1,0 +1,35 @@
+// Viola Arrays Test Template
+// Tests: array declaration, initialization, access, slicing, methods, and built-in functions
+
+sq main() -> () {
+    // Array declaration and initialization
+    int[] ${ARR_NAME_1} = [${ARR_VALUES_1}];
+
+    // Array element access (zero-indexed)
+    int ${ELEM_VAR_1} = ${ARR_NAME_1}[${INDEX_1}];
+    int ${ELEM_VAR_2} = ${ARR_NAME_1}[${INDEX_2}];
+
+    // Array slicing
+    int[] ${SLICE_NAME_1} = ${ARR_NAME_1}[${SLICE_START}:${SLICE_END}];
+    int[] ${SLICE_NAME_2} = ${ARR_NAME_1}[${SLICE_FROM}:];
+    int[] ${SLICE_NAME_3} = ${ARR_NAME_1}[:${SLICE_TO}];
+
+    // Array methods
+    int[] ${ARR_NAME_2} = [${ARR_VALUES_2}];
+    int[] ${CONCAT_NAME} = ${ARR_NAME_1}.concat(${ARR_NAME_2});
+    int[] ${APPEND_NAME} = ${ARR_NAME_1}.append(${APPEND_VAL});
+    int[] ${INSERT_NAME} = ${ARR_NAME_1}.insert(${INSERT_IDX}, ${INSERT_VAL});
+    size_t ${LEN_VAR_1} = ${ARR_NAME_1}.length();
+
+    // Object update operator for arrays
+    int[] ${UPDATE_NAME_1} = ${ARR_NAME_1} => {
+        [${UPDATE_IDX_1}] = ${UPDATE_VAL_1}
+    };
+
+    int[] ${UPDATE_NAME_2} = ${ARR_NAME_1} => {
+        [${UPDATE_START}:${UPDATE_END}] = [${UPDATE_VALS}]
+    };
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

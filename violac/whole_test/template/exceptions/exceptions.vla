@@ -1,0 +1,73 @@
+// Viola Exceptions Test Template
+// Tests: try, catch, finally, throw
+
+// Custom exception class
+class ${EXCEPTION_CLASS} extends viola.lang.exception {
+    string ${EXC_PROP};
+
+    public sq __new__(string msg) -> (this) {
+        this.${EXC_PROP} = msg;
+    }
+
+    public fn what() -> (string result) {
+        result = this.${EXC_PROP};
+    }
+}
+
+// Function that may throw an exception
+fn ${DIVIDE_FUNC}(int a, int b) -> (int result) {
+    if (b == 0) {
+        throw ${EXCEPTION_CLASS}("${DIV_BY_ZERO_MSG}");
+    }
+    result = a / b;
+}
+
+// Function that always succeeds
+fn ${SAFE_FUNC}(int x) -> (int result) {
+    result = x * x;
+}
+
+sq main() -> () {
+    int ${RESULT_VAR};
+
+    // Try-catch with expected success
+    try {
+        ${RESULT_VAR} = ${DIVIDE_FUNC}(${NUM_A}, ${NUM_B});
+    } catch ${EXCEPTION_CLASS} e {
+        print("${CATCH_MSG_1}");
+        print(e.what());
+    }
+
+    // Try-catch with expected exception
+    try {
+        ${RESULT_VAR} = ${DIVIDE_FUNC}(${NUM_C}, 0);
+    } catch ${EXCEPTION_CLASS} e {
+        print("${CATCH_MSG_2}");
+        print(e.what());
+    }
+
+    // Try-catch-finally
+    try {
+        ${RESULT_VAR} = ${SAFE_FUNC}(${SAFE_VAL});
+    } catch ${EXCEPTION_CLASS} e {
+        print("${CATCH_MSG_3}");
+    }
+    finally {
+        print("${FINALLY_MSG}");
+    }
+
+    // Nested try-catch
+    try {
+        try {
+            ${RESULT_VAR} = ${DIVIDE_FUNC}(${NESTED_A}, ${NESTED_B});
+        } catch ${EXCEPTION_CLASS} e {
+            print("${INNER_CATCH_MSG}");
+            throw e;
+        }
+    } catch ${EXCEPTION_CLASS} e {
+        print("${OUTER_CATCH_MSG}");
+    }
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

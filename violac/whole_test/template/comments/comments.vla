@@ -1,0 +1,17 @@
+// ${SINGLE_LINE_COMMENT_1}
+// This file tests single-line and multi-line comments
+
+/*
+ * ${MULTI_LINE_COMMENT_LINE1}
+ * ${MULTI_LINE_COMMENT_LINE2}
+ * ${MULTI_LINE_COMMENT_LINE3}
+ */
+
+sq main() -> () {
+    // ${SINGLE_LINE_COMMENT_2}
+    print("${OUTPUT_MESSAGE}");
+
+    /*
+     * ${MULTI_LINE_COMMENT_LINE4}
+     */
+}

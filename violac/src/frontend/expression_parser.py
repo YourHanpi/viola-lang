@@ -29,14 +29,22 @@ class _ExprState(Enum):
     UPDATE_STARTING = ("UPDATE_STARTING", None)
     # 后续按需添加状态
 
+    def __eq__(self, other: _ExprState | tuple[str, Optional[_ExprState]]) -> bool:
+        if isinstance(other, _ExprState):
+            return self.value[0] == other.value[0]
+        elif isinstance(other, tuple):
+            return self.value[0] == other[0]
+        else:
+            return False
 
-def _is_substate(substate: _ExprState | tuple[str, _ExprState], state: _ExprState) -> bool:
+
+def _is_substate(substate: _ExprState | tuple[str, _ExprState], state: _ExprState | tuple[str, _ExprState]) -> bool:
     """
     检查substate是否为state的子状态。
     """
     target_name: str = substate.value[0] if isinstance(substate, _ExprState) else substate[0]
     while state is not None:
-        state_tuple = state.value
+        state_tuple = state.value if isinstance(state, _ExprState) else state
         if target_name == state_tuple[0]:
             return True
         # noinspection PyTypeChecker
@@ -184,7 +192,6 @@ class ExprParser(GlobalParser):
         self._load_tokens(expr_tokens)
         self._lex_unary_op()
         self._current = 0
-        self._start_line, self._start_col, self._end_line, self._end_col = self._src_info.location_tuple
         return self._parse_expr(len(expr_tokens))
 
     def _lex_unary_op(self) -> None:
@@ -256,6 +263,8 @@ class ExprParser(GlobalParser):
                         return None
                     command += result
                     command.append("CALL ADD_ARG" if kwarg_name == "" else f"CALL ADD_ARG {kwarg_name}")
+                    self._next()
+                    start_pos = self._current
                 else:
                     self._back()
                     result = self._parse_attr_expr()
@@ -279,8 +288,9 @@ class ExprParser(GlobalParser):
             elif self._match_type("R_BRACKET"):
                 end_pos: int = self._current
                 self._back_to(start_pos)
+                is_comma: bool = self._match_type("COMMA")
                 self._next()
-                if not self._match_type("R_BRACKET"):
+                if not (self._match_type("R_BRACKET") or is_comma):
                     self._back()
                     expr_result = self._parse_expr(end_pos)
                     if expr_result is None:
@@ -369,8 +379,6 @@ class ExprParser(GlobalParser):
             commands = self._parse_bin_op_left_associativity(op_maker_commands, end_pos, inner_parser)
         else:
             commands = self._parse_bin_op_right_associativity(op_maker_commands, end_pos, inner_parser)
-        if commands is None:
-            return None
         return commands
 
     @_set_loc_command_with_state
@@ -468,11 +476,13 @@ class ExprParser(GlobalParser):
         bracket_count: int = 0
         square_bracket_count: int = 0
         curly_bracket_count: int = 0
+        self._next()
         if self._match_type("R_BRACKET"):
             self._next()
             if _is_substate(_ExprState.CALLABLE_ENDING, current_state):
                 return [], _ExprState.CALLABLE_ENDING
             return ["MAKE EXPR TUPLE_REF", "CALL FINISH"], _ExprState.CALLABLE_ENDING
+        self._back()
         if _is_substate(_ExprState.CALLABLE_ENDING, current_state):
             arg_list_result = self._parse_arg_list()
             if arg_list_result is None:
@@ -487,9 +497,12 @@ class ExprParser(GlobalParser):
                 self._raise("Unexpected token: " + self._get_current().text)
                 return None
             self._next()
-            return ["MAKE EXPR CAST_OP"] + type_name + ["CALL SET_TYPE"], _ExprState.CAST_STARTING
+            operand_result = self._parse_operand()
+            if operand_result is None:
+                return None
+            return (["MAKE EXPR CAST_OP"] + type_name + ["CALL SET_TYPE"] + operand_result[0] + ["CALL SET_EXPR"],
+                    _ExprState.CALLABLE_ENDING)
         while self._current < self._tokens_num and bracket_count >= 0:
-            self._next()
             if self._match_type("L_BRACKET"):
                 bracket_count += 1
             elif self._match_type("R_BRACKET"):
@@ -509,6 +522,7 @@ class ExprParser(GlobalParser):
                 start_pos = end_pos
                 expr_result = self._parse_expr(end_pos)
                 if expr_result is None:
+                    print("expr_result is None")
                     return None
                 command += expr_result + ["CALL ADD_VALUE"]
                 self._next()
@@ -516,9 +530,11 @@ class ExprParser(GlobalParser):
             if square_bracket_count < 0 or curly_bracket_count < 0:
                 self._raise("Unbalanced brackets")
                 return None
+            self._next()
         if self._current >= self._tokens_num:
-            self._raise("Unexpected EOF")
-            return None
+            if is_tuple:
+                return ["MAKE EXPR TUPLE_REF"] + command + ["CALL FINISH"], _ExprState.EXPR_ENDING
+            return ["MAKE EXPR BRACKETS_OP"] + command, _ExprState.EXPR_ENDING
         if square_bracket_count != 0 or curly_bracket_count != 0:
             self._raise("Unbalanced brackets")
             return None

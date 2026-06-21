@@ -1,0 +1,55 @@
+// Viola Literals Test Template
+// Tests: integer literals (decimal, hex, octal, binary, with suffixes),
+//        float literals (decimal, scientific, with suffixes),
+//        string literals (quoted, escaped, raw),
+//        boolean literals
+
+sq main() -> () {
+    // Integer literals - decimal
+    int ${DEC_VAR_1} = ${DEC_VALUE_1};
+    int ${DEC_VAR_2} = ${DEC_VALUE_2};
+
+    // Integer literals - hexadecimal
+    int ${HEX_VAR_1} = ${HEX_VALUE_1};
+    int ${HEX_VAR_2} = ${HEX_VALUE_2};
+
+    // Integer literals - octal
+    int ${OCT_VAR_1} = ${OCT_VALUE_1};
+    int ${OCT_VAR_2} = ${OCT_VALUE_2};
+
+    // Integer literals - binary
+    int ${BIN_VAR_1} = ${BIN_VALUE_1};
+
+    // Integer literals - with type suffix
+    int ${SUFFIX_VAR_1} = ${SUFFIX_VALUE_1};
+    uint ${SUFFIX_VAR_2} = ${SUFFIX_VALUE_2};
+
+    // Float literals - decimal
+    float ${FLOAT_DEC_VAR} = ${FLOAT_DEC_VALUE};
+
+    // Float literals - scientific notation
+    float64 ${FLOAT_SCI_VAR} = ${FLOAT_SCI_VALUE};
+
+    // Float literals - with suffix
+    float ${FLOAT_SUF_VAR_1} = ${FLOAT_SUF_VALUE_1};
+    double ${FLOAT_SUF_VAR_2} = ${FLOAT_SUF_VALUE_2};
+
+    // String literals - double quoted
+    string ${STR_DQ_VAR} = ${STR_DQ_VALUE};
+
+    // String literals - single quoted
+    string ${STR_SQ_VAR} = ${STR_SQ_VALUE};
+
+    // String literals - with escape sequences
+    string ${STR_ESC_VAR} = ${STR_ESC_VALUE};
+
+    // String literals - raw string
+    string ${STR_RAW_VAR} = ${STR_RAW_VALUE};
+
+    // Boolean literals
+    bool ${BOOL_TRUE_VAR} = true;
+    bool ${BOOL_FALSE_VAR} = false;
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

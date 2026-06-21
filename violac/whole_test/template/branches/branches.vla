@@ -1,0 +1,55 @@
+// Viola Branches Test Template
+// Tests: if, elif, else conditional branching
+
+sq main() -> () {
+    int ${TEST_VAR_1} = ${TEST_VALUE_1};
+    int ${TEST_VAR_2} = ${TEST_VALUE_2};
+    string result1;
+    string result2;
+    string result3;
+    string result4;
+
+    // Simple if statement
+    if (${TEST_VAR_1} > ${THRESHOLD_1}) {
+        result1 = "${RESULT_MSG_1}";
+    }
+
+    // if-else statement
+    if (${TEST_VAR_2} < ${THRESHOLD_2}) {
+        result2 = "${RESULT_MSG_2}";
+    }
+    else {
+        result2 = "${RESULT_MSG_3}";
+    }
+
+    // if-elif-else statement
+    int ${COMPARE_VAR} = ${COMPARE_VALUE};
+    if (${COMPARE_VAR} == ${BRANCH_VAL_1}) {
+        result3 = "${RESULT_MSG_4}";
+    }
+    elif (${COMPARE_VAR} == ${BRANCH_VAL_2}) {
+        result3 = "${RESULT_MSG_5}";
+    }
+    elif (${COMPARE_VAR} == ${BRANCH_VAL_3}) {
+        result3 = "${RESULT_MSG_6}";
+    }
+    else {
+        result3 = "${RESULT_MSG_7}";
+    }
+
+    // Nested if statements
+    if (${TEST_VAR_1} >= ${NESTED_THRESHOLD}) {
+        if (${TEST_VAR_2} >= ${NESTED_THRESHOLD}) {
+            result4 = "${RESULT_MSG_8}";
+        }
+        else {
+            result4 = "${RESULT_MSG_9}";
+        }
+    }
+
+    // Print verification
+    print(result1);
+    print(result2);
+    print(result3);
+    print(result4);
+}

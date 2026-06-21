@@ -7,7 +7,6 @@ from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
 import os
-from typing import Optional
 
 
 class Lexer(FSM):
@@ -27,27 +26,21 @@ class Lexer(FSM):
         self._start_col: int = 1
         self._end_line: int = 1
         self._end_col: int = 1
-        self._exceptions: list[CompilerException] = []
         self._logger = Logger(f"Lexer[0]")
+        self._is_error: bool = False
 
-    @property
-    def exceptions(self) -> list[CompilerException]:
-        """
-        获取词法分析过程中产生的异常列表。
-        """
-        return self._exceptions
-
-    def lex(self, path: str) -> Optional[list[Token]]:
+    def lex(self, path: str) -> list[Token]:
         """
         对指定文件进行词法分析。
         :param path: 源文件路径。
         :return: 记号列表，失败返回None。
         """
         self._src_info = SourceInfo(path)
+        self._is_error = False
         with open(path, "r", encoding=COMPILER_PARAMS["encoding"]) as f:
             text: str = f.read()
+        text_lines: list[str] = text.split("\n")
         self.reset()
-        self._exceptions.clear()
         tokens: list[Token] = []
         char_buf: list[str] = []
         current_loc: int = 0
@@ -64,12 +57,13 @@ class Lexer(FSM):
             if next_state is None:
                 self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
                 if self._current.output is None:
-                    self._src_info.set_text("".join(char_buf))
                     self._logger.error(str(CompilerException(f"Unexpected character {char}", self._src_info.copy())))
                     while current_loc < text_length and char not in " \n\t":
                         current_loc += 1
                         char = text[current_loc]
                     tokens.append(Token("", ["_ERROR"], self._src_info.copy()))
+                    self._logger.error(f"Unexpected character: {char}")
+                    self._is_error = True
                 else:
                     tokens.append(Token("".join(char_buf), [self._current.output], self._src_info.copy()))
                 self._start_line = self._end_line
@@ -84,6 +78,7 @@ class Lexer(FSM):
                 char_buf.clear()
             char_buf.append(char)
             self._current = next_state if next_state is not None else self._start
+            self._src_info.set_text(text_lines[self._start_line - 1])
             current_loc += 1
         return tokens
 
@@ -103,7 +98,7 @@ class Lexer(FSM):
             return TaskResult(TaskResultState.SUCCESS)
         self._logger.info(f"Lexing: {file_path}")
         result = self.lex(file_path)
-        if result is None:
+        if self._is_error:
             self._logger.error(f"Failed to lex: {file_path}")
             return TaskResult(TaskResultState.FAILURE)
         TokenStreamIO.write(cache_path + TOKEN_POSTFIX, result)
@@ -132,7 +127,7 @@ class Lexer(FSM):
             type_list.append("HEX_DIGIT")
         if char != "\n":
             type_list.append("CHAR")
-        return Token(char, type_list, self._start_col)
+        return Token(char, type_list, self._src_info.copy())
         
     def _set_states_list(self) -> StateNode:
         """
@@ -359,6 +354,7 @@ class Lexer(FSM):
                         next_state.set_output("IDENTIFIER")
                     next_state.add_transfer("LETTER", identifier_state)
                     next_state.add_transfer("DIGIT", identifier_state)
+                    next_state.add_transfer("_", identifier_state)
                 current = next_state
             current.set_output(keyword.upper())
         return first
@@ -412,13 +408,13 @@ class Lexer(FSM):
         first.add_transfer("DIGIT_NO_ZERO", int_state)
         first.add_transfer("0", zero_state)
         int_state.add_transfer("DIGIT", int_state)
-        int_state.add_transfer("DOT", double_float_state)
+        int_state.add_transfer(".", double_float_state)
         int_state.add_transfer("CHAR_E", exponential_state1)
         int_state.add_transfer("CHAR_U", unsigned_state)
         int_state.add_transfer("CHAR_I", signed_state)
         int_state.add_transfer("CHAR_S", size_state1)
         int_state.set_output("INT32")
-        zero_state.add_transfer("DOT", double_float_state)
+        zero_state.add_transfer(".", double_float_state)
         zero_state.add_transfer("CHAR_X", hex_state)
         zero_state.add_transfer("DIGIT", oct_state)
         zero_state.add_transfer("CHAR_B", bin_state)

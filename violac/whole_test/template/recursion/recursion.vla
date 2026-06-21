@@ -1,0 +1,49 @@
+// Viola Recursion Test Template
+// Tests: recursive functions as loop replacement
+
+// Factorial calculation using recursion
+fn factorial(int n) -> (int result) {
+    if (n <= 1) {
+        result = 1;
+    }
+    else {
+        result = n * factorial(n - 1);
+    }
+}
+
+// Fibonacci sequence using recursion
+fn fibonacci(int n) -> (int result) {
+    if (n <= 0) {
+        result = 0;
+    }
+    elif (n == 1) {
+        result = 1;
+    }
+    else {
+        result = fibonacci(n - 1) + fibonacci(n - 2);
+    }
+}
+
+// Sum of range using recursion
+fn sumRange(int start, int end) -> (int result) {
+    if (start > end) {
+        result = 0;
+    }
+    else {
+        result = start + sumRange(start + 1, end);
+    }
+}
+
+sq main() -> () {
+    // Test factorial
+    int fact_result = factorial(${FACT_N});
+
+    // Test fibonacci
+    int fib_result = fibonacci(${FIB_N});
+
+    // Test sum of range
+    int sum_result = sumRange(${SUM_START}, ${SUM_END});
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

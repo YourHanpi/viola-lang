@@ -1,0 +1,49 @@
+// Viola Operators Test Template
+// Tests: arithmetic, relational, logical, bitwise, and other operators
+
+sq main() -> () {
+    // Operands
+    int a = ${OP_A};
+    int b = ${OP_B};
+    bool t = true;
+    bool f = false;
+
+    // Binary arithmetic operators
+    int add_result = a + b;
+    int sub_result = a - b;
+    int mul_result = a * b;
+    int div_result = a / b;
+    int mod_result = a % b;
+
+    // Unary arithmetic operators
+    int pos_result = +a;
+    int neg_result = -a;
+    int inv_result = ~a;
+
+    // Relational operators
+    bool eq_result = a == b;
+    bool ne_result = a != b;
+    bool gt_result = a > b;
+    bool lt_result = a < b;
+    bool ge_result = a >= b;
+    bool le_result = a <= b;
+
+    // Logical operators
+    bool and_result = t && f;
+    bool or_result = t || f;
+    bool not_result = !t;
+
+    // Bitwise operators
+    int bit_and_result = a & b;
+    int bit_or_result = a | b;
+    int bit_xor_result = a ^ b;
+    int bit_not_result = ~a;
+    int lshift_result = a << ${SHIFT_AMOUNT};
+    int rshift_result = a >> ${SHIFT_AMOUNT};
+
+    // Power operator
+    int pow_result = a ** ${POW_EXP};
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

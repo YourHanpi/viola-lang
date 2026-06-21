@@ -1,11 +1,11 @@
 build_utils
 c_source
 src_old
-./project
+/project
 .idea
 violac/src_modified
-violac/test_compiled
-violac/test/template_projects
+violac/whole_test/test_compiled
+violac/whole_test/template_projects
 .claude
 *.log
 *.vla.vlacmd
@@ -17,3 +17,6 @@ violac/test/template_projects
 *.vlamk.toml
 *.vla.c
 *.vla.h
+env.txt
+!violac/unit_test/test/cache/file.vlasymt
+!violac/unit_test/test/workspace/src/file.vla.vlasymt

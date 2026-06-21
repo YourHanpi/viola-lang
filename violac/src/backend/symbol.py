@@ -2860,6 +2860,12 @@ class VariableState(Enum):
     ASYNC_ASSIGNED: 异步赋值。
     ASSIGNED: 已赋值。
     """
+    def __gt__(self, other: VariableState) -> bool:
+        return self.value > other.value
+
+    def __lt__(self, other: VariableState) -> bool:
+        return self.value < other.value
+
     UNDECLARED = 0
     DECLARED = 1
     ASYNC_ASSIGNED = 2

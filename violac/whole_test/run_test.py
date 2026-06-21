@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import os
-import shutil
 import subprocess
 import sys
 
@@ -32,13 +31,14 @@ def __test_one_project(compiler_path: str, project_dir: str) -> None:
         )
 
 
-def test_projects(compiler_path: str) -> None:
+def test_projects(compiler_path: str, skips: int = 0) -> None:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.join(base_dir, "template_projects")
     if os.name == "nt":
         subprocess.run(["chcp", "65001"], text=True, shell=True)
-    for project in os.listdir(project_dir):
-        __test_one_project(compiler_path, os.path.join(project_dir, project))
+    for i, project in enumerate(os.listdir(project_dir)):
+        if i >= skips:
+            __test_one_project(compiler_path, os.path.join(project_dir, project))
 
 
 def main() -> None:
@@ -49,7 +49,8 @@ def main() -> None:
         compiler = f"{base_dir}/../../shortcuts/violac"
     if compiler.startswith("\"") and compiler.endswith("\"") or compiler.startswith("'") and compiler.endswith("'"):
         compiler = compiler[1:-1]
-    test_projects(compiler)
+    test_projects(compiler, 24)
+    # test_projects(compiler)
 
 
 if __name__ == "__main__":

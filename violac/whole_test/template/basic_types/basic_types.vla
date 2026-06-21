@@ -1,0 +1,33 @@
+// Viola Basic Data Types Test Template
+// Tests: bool, int, int8-int64, uint, uint8-uint64, size_t, float, float32-64, double
+
+sq main() -> () {
+    // Boolean type
+    bool ${BOOL_VAR} = ${BOOL_VALUE};
+
+    // Integer types
+    int ${INT_VAR} = ${INT_VALUE};
+    int8 ${INT8_VAR} = ${INT8_VALUE};
+    int16 ${INT16_VAR} = ${INT16_VALUE};
+    int32 ${INT32_VAR} = ${INT32_VALUE};
+    int64 ${INT64_VAR} = ${INT64_VALUE};
+
+    // Unsigned integer types
+    uint ${UINT_VAR} = ${UINT_VALUE};
+    uint8 ${UINT8_VAR} = ${UINT8_VALUE};
+    uint16 ${UINT16_VAR} = ${UINT16_VALUE};
+    uint32 ${UINT32_VAR} = ${UINT32_VALUE};
+    uint64 ${UINT64_VAR} = ${UINT64_VALUE};
+
+    // Size type
+    size_t ${SIZE_VAR} = ${SIZE_VALUE};
+
+    // Floating point types
+    float ${FLOAT_VAR} = ${FLOAT_VALUE};
+    float32 ${FLOAT32_VAR} = ${FLOAT32_VALUE};
+    float64 ${FLOAT64_VAR} = ${FLOAT64_VALUE};
+    double ${DOUBLE_VAR} = ${DOUBLE_VALUE};
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

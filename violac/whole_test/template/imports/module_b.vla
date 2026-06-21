@@ -1,0 +1,13 @@
+// Module B - ${MODULE_DESC_B}
+// Provides additional utility functions
+
+sq ${WILDCARD_FUNC_A}(int x) -> () {
+    print("${WILDCARD_PREFIX}");
+}
+
+fn ${WILDCARD_FUNC_B}(int x) -> (int result) {
+    result = x * x + ${WILDCARD_OFFSET};
+}
+
+// Exported value
+int ${MODULE_EXPORT_VAR} = ${MODULE_EXPORT_VAL};

@@ -1,0 +1,23 @@
+// Viola Variables Test Template
+// Tests variable declaration, definition, and assignment (single assignment only)
+
+sq main() -> () {
+    // Declaration followed by assignment
+    int ${VAR_DECL_1};
+    ${VAR_DECL_1} = ${VAR_VALUE_1};
+
+    // Definition (declaration + assignment in one)
+    int ${VAR_DEF_1} = ${VAR_VALUE_2};
+
+    // String variable
+    string ${STR_VAR} = "${STR_VALUE}";
+
+    // Float variable
+    float ${FLOAT_VAR} = ${FLOAT_VALUE};
+
+    // Bool variable
+    bool ${BOOL_VAR} = ${BOOL_VALUE};
+
+    // Print results
+    print("${PRINT_MESSAGE}");
+}
