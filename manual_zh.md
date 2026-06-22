@@ -32,11 +32,11 @@ Viola支持面向对象的程序设计，包括封装、继承、多态和抽象
     - `uint32` - 32位无符号整型（相当于C `uint32_t`）
     - `uint64` - 64位无符号整型（相当于C `uint64_t`）
     - `size_t` - 数据长度类型（相当于C `size_t`）
-- `float` - 浮点型（相当于C `float`)
+- `float` - 浮点型（相当于C `float`）
     - `float32` - 32位浮点型（相当于C `float32_t`）
     - `float64` - 64位浮点型（相当于C `float64_t`）
     - `double` - 双精度浮点型（相当于C `double`）
-    - `long double` - 四精度浮点型（相当于C `long double`）
+    - `float128` - 四精度浮点型（相当于C `long double`）
 
 ## 集合数据类型
 

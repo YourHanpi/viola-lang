@@ -62,7 +62,6 @@ class Lexer(FSM):
                         current_loc += 1
                         char = text[current_loc]
                     tokens.append(Token("", ["_ERROR"], self._src_info.copy()))
-                    self._logger.error(f"Unexpected character: {char}")
                     self._is_error = True
                 else:
                     tokens.append(Token("".join(char_buf), [self._current.output], self._src_info.copy()))

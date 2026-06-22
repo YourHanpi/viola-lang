@@ -155,8 +155,8 @@ class _MainFile:
         argv_array_type: TypeName = ArrayTypeName(self._src_info, StringTypeName)
         argv_setting_text: list[str] = [
             f"{argv_array_type.c_calling_name}argvArray = ({argv_array_type.c_calling_name})malloc(sizeof({argv_array_type.c_alloc_name}));",
-            "argvArray->refCount = 1;",
-            "argvArray->parent = NULL;",
+            "argvArray->$refCount = 1;",
+            "argvArray->$parent = NULL;",
             "argvArray->size = argc;",
             "for (int i = 0; i < argc; i++) {",
             f"\targvArray->data[i] = {argv_array_type.name}$decode(argv[i], {COMPILER_PARAMS['runtime-argvEncoding']});",

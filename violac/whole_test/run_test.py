@@ -49,7 +49,7 @@ def main() -> None:
         compiler = f"{base_dir}/../../shortcuts/violac"
     if compiler.startswith("\"") and compiler.endswith("\"") or compiler.startswith("'") and compiler.endswith("'"):
         compiler = compiler[1:-1]
-    test_projects(compiler, 24)
+    test_projects(compiler, 40)
     # test_projects(compiler)
 
 

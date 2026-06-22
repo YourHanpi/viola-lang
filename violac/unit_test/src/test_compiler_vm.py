@@ -234,7 +234,7 @@ class TestCompilerVMExecLine(unittest.TestCase):
             self.vm._exec_line("UNKNOWN_CMD arg1 arg2")
 
     def test_exec_line_make_def_const(self):
-        """MAKE DEF CONST should push to stack and bind parent."""
+        """MAKE DEF CONST should push to stack and bind $parent."""
         # Set up stack with a parent item
         mock_parent = MagicMock(spec=CompilingItem)
         self.vm._stack.append(mock_parent)
@@ -437,7 +437,7 @@ class TestCompilerVMMake(unittest.TestCase):
         self.assertGreater(len(self.vm._stack), 1)
 
     def test_make_binds_parent(self):
-        """After MAKE, the new item should bind to its parent in the stack."""
+        """After MAKE, the new item should bind to its $parent in the stack."""
         mock_parent = MagicMock(spec=project.SourceFile)
         self.vm._stack.clear()
         self.vm._stack.append(MagicMock(spec=project.SourceFile))  # bottom

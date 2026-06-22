@@ -2,10 +2,10 @@
 from .compiling_item import CompilingItem
 from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp, ClassRef, TypeRef
 from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, \
-    STACK_B_POP_FUNC, CleanupBlock, FinallyStmt
+    STACK_B_POP_FUNC, CleanupBlock
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
     ClassName, MethodName, CLOSURE_T, TypeName, EXCEPTION_T_NAME, EnumName, GlobalVariableName, GenericArgument, \
-    StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable
+    StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable, FunctionTypeName
 from utils import CompilerException, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
@@ -176,19 +176,24 @@ class SqDef(Definition):
             if not isinstance(arg_type, TypeName):
                 raise CompilerException(f"Argument {arg_type} is not a type.", src_info)
             arg_types_decl.append(arg_type)
-        if len(arg_types_decl) == 0:
-            decl = self._symbol_table[name, None]
-        else:
-            decl = self._symbol_table[name, tuple(arg_types_decl)]
-        if not isinstance(decl, FunctionName):
+        decl = self._symbol_table[name, tuple(arg_types_decl)]
+        self._method_decl: Optional[MethodName] = decl if isinstance(decl, MethodName) else None
+        if not isinstance(decl, FunctionName | MethodName):
             raise CompilerException(f"Name {name} is not a function.", src_info)
         self._self_name: str = decl.self_name
-        self._decl = decl
+        self._decl = decl if isinstance(decl, FunctionName) else decl.as_function()
         self._var_states: VariableStateTable = var_states
         self._outer_variables: dict[VariableName, VariableState] = var_states.state
         self._args: list[LocalVariableName] = list(
             map(lambda n, t: LocalVariableName(src_info, n, t), self._decl.arg_names, self._decl.arg_types)
         )
+        for arg in self._args:
+            symbol_table.add(arg, arg.name, None)
+        self._rets: list[LocalVariableName] = list(
+            map(lambda n, t: LocalVariableName(src_info, n, t), self._decl.ret_names, self._decl.ret_types)
+        )
+        for ret in self._rets:
+            symbol_table.add(ret, ret.name, None)
         self._outer_variables.update(dict(map(lambda x: (x, VariableState.ASSIGNED), self._args)))
         self._body: BlockStmt = BlockStmt(src_info, self._symbol_table, var_states)
         self._namespace: list[NamespaceName] = namespace
@@ -260,9 +265,10 @@ class SqDef(Definition):
             raise CompilerException("Function is not generic.", self._src_info)
         new_sq = deepcopy(self)
         type_args_tuple: tuple[TypeName, ...] = tuple(map(lambda x: type_args[x], cls_decl.generic_args))
-        new_sq._decl = new_sq._decl.as_method(cls_decl).set_cls(
+        new_sq._method_decl = self._method_decl.set_cls(
             self._symbol_table.get_generic_cls_instance(cls_decl, type_args_tuple), 0
         )
+        new_sq._decl = self._method_decl.as_function()
         new_sq._body = new_sq._body.instantiation(type_args)
         return new_sq
 
@@ -341,7 +347,7 @@ class SqDef(Definition):
         return "\n".join([self._source(True), rename_define])
 
     @property
-    def type(self) -> TypeName:
+    def type(self) -> FunctionTypeName:
         """获取函数的返回类型。"""
         return self._decl.type
 
@@ -507,7 +513,7 @@ class DestructorDef(SqDef):
         :param cls_name: 类名。
         """
         super().__init__(src_info, symbol_table, var_states, namespace, f"{cls_name}.__del__", [])
-        cls = self._symbol_table[cls_name]
+        cls = self._symbol_table[cls_name, None]
         if not isinstance(cls, ClassName):
             raise CompilerException(f"Name {cls_name} is not a class.", src_info)
         self._this_var: LocalVariableName = LocalVariableName(self._src_info, self._decl.arg_names[0],
@@ -528,17 +534,17 @@ class DestructorDef(SqDef):
             free_call_text = list(map(lambda y: "\t\t\t\t" + y, free_call_text))
             free_text_item: str = "\n".join([
                 f"\t\tif ({self._this_var.name}->{x.name}) {{",
-                f"\t\t\t{self._this_var.name}->{x.name}->refCount--;",
-                f"\t\t\tif ({self._this_var.name}->{x.name}->refCount == 0) {{",
+                f"\t\t\t{self._this_var.name}->{x.name}->$refCount--;",
+                f"\t\t\tif ({self._this_var.name}->{x.name}->$refCount == 0) {{",
                 "\n".join(free_call_text),
                 "\t\t\t}"
                 "\t\t}"
             ])
             free_texts.append(free_text_item)
         free_text: list[str] = [
-            f"if ({self._this_var.name}->refCount == 0) {{",
-            f"\tif ({self._this_var.name}->parent) {{",
-            f"\t\t{self._this_var.name}->parent->refCount--;",
+            f"if ({self._this_var.name}->$refCount == 0) {{",
+            f"\tif ({self._this_var.name}->$parent) {{",
+            f"\t\t{self._this_var.name}->$parent->$refCount--;",
             "\t} else {",
             *free_texts,
             f"\t\tfree({self._this_var.name});",
@@ -691,7 +697,7 @@ class ClassDef(Definition):
         self._self_name: str = name
         self._namespace: list[NamespaceName] = namespace
         # noinspection PyTypeChecker
-        self._decl: ClassName = self._symbol_table[name]
+        self._decl: ClassName = self._symbol_table[name, None]
         if not isinstance(self._decl, ClassName):
             raise CompilerException(f"{name} is not a class.", src_info)
         self._global_vars: dict[VariableName, VariableState] = var_states.state
@@ -702,7 +708,11 @@ class ClassDef(Definition):
         self._import_name: str = module_name + "$" + name
         self._import_all: str = module_name + "$__all__"
         self._import_module: str = module_name + "$__module__"
-        self.add_method(DestructorDef(self._src_info, self._symbol_table, var_states, self._namespace, name))
+        # var_states.add_scope()
+        # destructor = DestructorDef(self._src_info, self._symbol_table, var_states, self._namespace, name)
+        # destructor.finish()
+        # self.add_method(destructor)
+        # var_states.pop_scope()
         self._vtable_name: str = self._decl.vtable_name
         self._parent_vtable_name: str = f"{self._decl.parent}$$vtable" if self._decl.parent != "object" else "NULL"
         self._is_finished: bool = False
@@ -713,8 +723,6 @@ class ClassDef(Definition):
         self._decl: ClassName
         if method.self_name in self._methods:
             raise CompilerException(f"{method.self_name} is already defined.", method._src_info)
-        if method.self_name not in self._decl.methods:
-            raise CompilerException(f"{method.self_name} is not a method of {self._self_name}.", method._src_info)
         self._methods[method.self_name] = method
 
     def add_static_prop(self, name: str, value: Expression) -> None:
@@ -764,11 +772,9 @@ class ClassDef(Definition):
         )
         static_props_global_text: list[str] = list(
             filter(lambda x: x is not None, map(lambda x: x.global_init_text, self._static_properties.values()))
-        ) + list(
-            filter(lambda x: x is not None, map(lambda x: x.front_text, self._decl.properties.values()))
         )
         result: list[str] = [
-            f"{self._vtable_name}.parent = {self._parent_vtable_name};",
+            f"{self._vtable_name}.$parent = {self._parent_vtable_name};",
             f"{self._vtable_name}.vfunc = {vfunc_text};",
             *vfunc_assign,
             *static_props_global_text,
@@ -1100,9 +1106,9 @@ class Closure(Expression):
     def release_text(self) -> Optional[str]:
         """获取闭包的释放代码（引用计数减一）。"""
         result: list[str] = [
-            f"if ({self._var_name}->refCount == 0) {{",
-            f"\tif ({self._var_name}->parent) {{",
-            f"\t\t{self._var_name}->parent->refCount--;",
+            f"if ({self._var_name}->$refCount == 0) {{",
+            f"\tif ({self._var_name}->$parent) {{",
+            f"\t\t{self._var_name}->$parent->$refCount--;",
             "\t} else {",
             f"\t\tfree({self._var_name});",
             f"\t\t{self._var_name} = NULL;",

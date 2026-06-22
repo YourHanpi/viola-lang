@@ -138,6 +138,10 @@ class NamedSymbol(Symbol):
         self._namespace: list[NamespaceName] = namespace
         self._self_name: str = name
         self._src_info: SourceInfo = deepcopy(src_info)
+        self._raw_name: str = ".".join(list(map(lambda n: n.name, namespace)) + [name])
+
+    def __str__(self) -> str:
+        return self._raw_name
 
     def as_namespace(self) -> list[NamespaceName]:
         """
@@ -151,6 +155,13 @@ class NamedSymbol(Symbol):
         获取符号的命名空间。
         """
         return self._namespace
+
+    @property
+    def raw_name(self) -> str:
+        """
+        获取编译前的名称。
+        """
+        return self._raw_name
 
     @property
     def src_info(self) -> SourceInfo:
@@ -174,7 +185,6 @@ class TypeName(NamedSymbol, ABC):
         kw_type: 符号类型，SymbolType.BASE_TYPE或SymbolType.CLASS。
         """
         super().__init__(src_info, namespace, name, kw_type)
-        self._raw_name: str = ".".join(list(map(lambda n: n.name, self._namespace)) + [name])
         self._self_name: str = name
 
     @property
@@ -228,13 +238,6 @@ class TypeName(NamedSymbol, ABC):
         获取该类型是否为类类型。
         """
         return False
-
-    @property
-    def raw_name(self) -> str:
-        """
-        获取编译前的名称。
-        """
-        return self._raw_name
 
     @property
     def self_name(self) -> str:
@@ -613,7 +616,7 @@ class PropertyVariableName(VariableName):
 
     @property
     def self_name_with_class(self) -> str:
-        return self._namespace[-1].name + "$" + self._self_name
+        return self._namespace[-1].name + "." + self._self_name
 
 
 class LocalVariableName(VariableName):
@@ -659,8 +662,8 @@ class ClassName(TypeName):
         self._is_c_part: bool = is_c_part
         self._generic_args: Optional[list[str]] = generic_args
         self._generic_real_types: list[TypeName] = []
-        self.add_property(self._src_info, "refCount", UINT32, Modifier.PRIVATE, False)
-        self.add_property(self._src_info, "parent", VOID_PTR, Modifier.PRIVATE, False)
+        self.add_property(self._src_info, "$refCount", UINT32, Modifier.PRIVATE, False)
+        self.add_property(self._src_info, "$parent", VOID_PTR, Modifier.PRIVATE, False)
 
     def add_method(self, name: str, method: "MethodName") -> None:
         """
@@ -726,7 +729,7 @@ class ClassName(TypeName):
                     return True
                 parent = symbol_dict[self_parent_name, None]
                 if not isinstance(parent, ClassName):
-                    raise InternalCompilerException("Parent is not a class.", self._src_info)
+                    raise InternalCompilerException("parent is not a class.", self._src_info)
                 self_parent_name = parent.parent
             return False
         return False
@@ -799,11 +802,11 @@ class ClassName(TypeName):
         result: ClassName = ClassName(self._src_info, GENERIC_CLASS, new_name, self._parent,
                                       self._is_abstract, False, self._generic_args)
         for name, prop in self._properties.items():
-            if name in ["refCount", "parent"]:
+            if name in ["$refCount", "$parent"]:
                 continue
             result.add_property_object(name, prop.instantiation("", generic_dict))
         for (name, _), method in self._methods.items():
-            result.add_method(name, method.instantiation(f"{new_name}${method.name}", generic_dict))
+            result.add_method(name, method.instantiation(f"{new_name}.{method.name}", generic_dict))
         return result
 
     @property
@@ -1144,6 +1147,8 @@ class FunctionTypeName(TypeName):
         self._args_tuple: TupleTypeName = TupleTypeName(SourceInfo(""), args)
         self._returns_tuple: TupleTypeName = TupleTypeName(SourceInfo(""), returns)
         self._generic_args: Optional[list[str]] = generic_args
+        if isinstance(self._generic_args, list):
+            self._generic_args = list(filter(lambda x: x != "", self._generic_args))
 
     @property
     def args(self) -> list[TypeName]:
@@ -1477,8 +1482,8 @@ class FunctionName(GlobalVariableName):
         """
         转换为声明。
         """
-        args_text = ", ".join(list(map(lambda a: a.type_name_pair_calling, self.args)))
-        returns_text = ", ".join(list(map(lambda a: a.type_name_pair_assigning, self.type.returns)))
+        args_text = ", ".join(list(map(lambda t, a: f"{t.c_calling_name} {a}", self.type.args, self._arg_names)))
+        returns_text = ", ".join(list(map(lambda t, r: f"{t.c_assigning_name} {r}", self.type.returns, self._ret_names)))
         return f"void {self.name}({', '.join(filter(lambda x: x != "", [args_text, returns_text, LISTENER_T + ' *listener']))})"
 
     def as_define_name(self) -> str:
@@ -1659,6 +1664,7 @@ class MethodName(PropertyVariableName):
         """
         cls_generic_args: list[str] = cls.generic_args_str if cls.generic_args_str is not None else []
         t_generic_args: list[str] = t.generic_args_str if t.generic_args_str is not None else []
+        is_static = is_static or name == "__new__"
         if not is_static:
             arg_types: list[TypeName] = [cls] + t.args
             t = FunctionTypeName(src_info, arg_types, t.returns, cls_generic_args + t_generic_args)
@@ -1790,8 +1796,12 @@ class MethodName(PropertyVariableName):
         self._type: FunctionTypeName
         # noinspection PyTypeChecker
         return MethodName(self._src_info, cls, f"{self._self_name}$_{overloaded_times}",
-                          self._type if self._is_static else FunctionTypeName(self._src_info, self._type.args[1:], self._type.returns),
-                          self._is_abstract, self._is_static, self._function_name.arg_names if self._is_static else self._function_name.arg_names[1:],
+                          self._type if self._is_static else FunctionTypeName(
+                              self._src_info,
+                              self._type.args if self._is_static else self._type.args[1:], self._type.returns
+                          ),
+                          self._is_abstract, self._is_static,
+                          self._function_name.arg_names if self._is_static else self._function_name.arg_names[1:],
                           self._function_name.ret_names, self._modifier, self._function_name.export)
 
     def set_default_params(self, default_param_names: list[str]) -> None:
@@ -1803,6 +1813,27 @@ class MethodName(PropertyVariableName):
     @property
     def type(self) -> FunctionTypeName:
         return self._function_name.type
+
+
+Object: ClassName = ClassName(VIOLA_INIT, VIOLA_LANG, "object", None, False, False)
+object_destructor: MethodName = MethodName(
+    VIOLA_INIT,
+    Object,
+    "__del__",
+    FunctionTypeName(
+        VIOLA_INIT,
+        [],
+        [],
+        []
+    ),
+    False,
+    False,
+    [],
+    [],
+    Modifier.PUBLIC,
+    True
+)
+Object.add_method("__del__", object_destructor)
 
 
 # 切片类型名称
@@ -1866,7 +1897,7 @@ ExceptionTypeName.add_method(
 _exception_what = MethodName(
     VIOLA_INIT,
     ExceptionTypeName,
-    "$what",
+    "what",
     FunctionTypeName(
         VIOLA_INIT, [ExceptionTypeName], [StringTypeName]
     ),
@@ -2145,16 +2176,16 @@ class _TypeNameParser:
         ;
     """
 
-    def __init__(self, real_type_getter: Callable[[str], TypeName], generic_table: GenericTable) -> None:
+    def __init__(self, real_type_getter: Callable[[str], Optional[TypeName]], generic_table: GenericTable) -> None:
         self._tokens: list[Token] = []
         self._current: int = -1
         self._tokens_num: int = 0
         self._src_info: SourceInfo = VIOLA_INIT
-        self._real_type_getter: Callable[[str], TypeName] = real_type_getter
+        self._real_type_getter: Callable[[str], Optional[TypeName]] = real_type_getter
         self._generic_table: GenericTable = generic_table
         self._lexer: _TypeNameLexer = _TypeNameLexer()
 
-    def parse(self, src_info: SourceInfo, type_str: str) -> TypeName:
+    def parse(self, src_info: SourceInfo, type_str: str) -> Optional[TypeName]:
         self._src_info = src_info
         self._current: int = -1
         self._tokens = self._lexer.lex(src_info, type_str) + [Token("", ["_EOF"], src_info)]
@@ -2176,23 +2207,29 @@ class _TypeNameParser:
         while self._current < self._tokens_num and self._match_type("_BLANK"):
             self._current += 1
 
-    def _parse_function_type_name(self) -> FunctionTypeName | TupleTypeName:
-        args: TupleTypeName = self._parse_tuple_type_name()
+    def _parse_function_type_name(self) -> Optional[FunctionTypeName | TupleTypeName]:
+        args = self._parse_tuple_type_name()
+        if args is None:
+            return None
         self._next()
         if self._match_type("->"):
-            rets: TupleTypeName = self._parse_tuple_type_name()
+            rets = self._parse_tuple_type_name()
+            if rets is None:
+                return None
             return FunctionTypeName(self._src_info, args.types, rets.types)
         self._back()
         return args
 
-    def _parse_tuple_type_name(self) -> TupleTypeName:
+    def _parse_tuple_type_name(self) -> Optional[TupleTypeName]:
         self._next()
         if not self._match_type("("):
             raise CompilerException(f"Unexpected token: {self._tokens[self._current]}", self._src_info)
-        children_types: list[TypeName] = self._parse_type_list(")")
+        children_types: Optional[list[TypeName]] = self._parse_type_list(")")
+        if children_types is None:
+            return None
         return TupleTypeName(self._src_info, children_types)
 
-    def _parse_type_list(self, end_symbol: str) -> list[TypeName]:
+    def _parse_type_list(self, end_symbol: str) -> Optional[list[TypeName]]:
         self._next()
         children_types: list[TypeName] = []
         expect_comma: bool = False
@@ -2207,31 +2244,39 @@ class _TypeNameParser:
             elif not self._match_type(",") and not expect_comma:
                 self._back()
                 child = self._parse_type_name()
+                if child is None:
+                    return None
                 children_types.append(child)
                 expect_comma = True
             else:
-                raise CompilerException(f"Unexpected token: {self._tokens[self._current]}", self._src_info)
+                return None
         return children_types
 
-    def _parse_type_name(self) -> TypeName:
+    def _parse_type_name(self) -> Optional[TypeName]:
         if self._real_type_getter is None:
             raise CompilerException("real_type_getter not set", self._src_info)
         self._next()
         if self._match_type("IDENTIFIER"):
-            result: TypeName = self._real_type_getter(self._tokens[self._current].text)
+            result: Optional[TypeName] = self._real_type_getter(self._tokens[self._current].text)
+            if result is None:
+                return None
             if self._current >= self._tokens_num - 1:
                 return result
             self._next()
             if self._match_type("::<"):
                 if not isinstance(result, ClassName):
-                    raise CompilerException(f"Expected class type, but got {result.raw_name}", self._src_info)
-                type_args: list[TypeName] = self._parse_type_list(">")
+                    return None
+                type_args: Optional[list[TypeName]] = self._parse_type_list(">")
+                if type_args is None:
+                    return None
                 result = self._generic_table.get_cls_instance(result, tuple(type_args))
         elif self._match_type("("):
             self._back()
             result = self._parse_function_type_name()
+            if result is None:
+                return None
         else:
-            raise CompilerException(f"Unexpected token: {self._tokens[self._current].text}", self._src_info)
+            return None
         while self._current < self._tokens_num:
             if self._match_type("[]"):
                 result = ArrayTypeName(self._src_info, result)
@@ -2245,30 +2290,35 @@ class SymbolTable:
     """
     符号表。
     """
+    _NAMESPACES_WITHOUT_IMPORT: tuple[list[NamespaceName], ...] = (
+        VIOLA_LANG_EXCEPTION,
+        VIOLA_LANG,
+        VIOLA_IO,
+        VIOLA_COLLECTIONS
+    )
 
     def __contains__(self, item: tuple[NamedSymbol | str, Optional[tuple[TypeName, ...]]]) -> bool:
         """
         判断一个符号是否存在于表中。
         """
-        if isinstance(item, TypeName):
-            return all((t.name, None) in self.symbols for t in item.used_types)
         if isinstance(item[0], TypeName):
             return all(t in self.symbols for t in item[0].used_types)
         if isinstance(item[0], NamedSymbol):
             if item[0].name.startswith(self._namespace_name + "$"):
-                return (item[0].name[len(self._namespace_name) + 1:], item[1]) in self.symbols
+                return (item[0].name[len(self._namespace_name):], item[1]) in self.symbols
             return item[0] in self.symbols.values()
-        if item[0].startswith(self._namespace_name + "$"):
-            item_name: str = item[0].replace(".", "$")
-            return (item_name[len(self._namespace_name + "$"):], item[1]) in self
+        item = self.clean_namespace(item[0]), item[1]
         if item not in self.symbols:
             if isinstance(item[0], str) and item[1] is None:
                 functions = [k for k in self.symbols.keys() if k[0] == item[0]]
                 if len(functions) > 0:
                     return True
-                result = self._type_name_parser.parse(self._src_info, item[0])
+                item2 = item[0].replace(".", "$")
+                result = self._type_name_parser.parse(self._src_info, item2)
+                if result is None:
+                    return False
                 for t in result.used_types:
-                    if (t.name, None) not in self.symbols:
+                    if (self.clean_namespace(t.name), None) not in self.symbols:
                         return False
                 return True
             return (item[0], None) in self.symbols
@@ -2286,10 +2336,24 @@ class SymbolTable:
         item: 符号名称。
         types: 符号的参数类型列表（如果不是函数则为None）。
         """
-        item: str = items[0].replace(".", "$")
+        item: str = items[0]
         types: Optional[tuple[TypeName, ...]] = items[1]
-        if item.startswith(self._namespace_name + "$"):
-            return self[item[len(self._namespace_name + "$"):], types]
+        item = self.clean_namespace(item)
+        if "." in item and types is not None:
+            names = item.rsplit(".", 1)
+            attr_name = names[1]
+            cls_name = names[0]
+            result = self.find_methods(cls_name, attr_name, [cls_name] + [t.name for t in types], {})
+            if len(result) == 1:
+                return result[0]
+            elif len(result) > 1:
+                raise CompilerException(f"Ambiguous method call: {cls_name}.{attr_name}({', '.join(t.raw_name for t in types)})", self._src_info)
+            result = self.find_methods(cls_name, attr_name, [t.name for t in types], {})
+            if len(result) == 1:
+                return result[0]
+            elif len(result) > 1:
+                raise CompilerException(f"Ambiguous method call: {cls_name}.{attr_name}({', '.join(t.raw_name for t in types)})", self._src_info)
+        # item = item.replace(".", "$")
         if (item, types) not in self.symbols:
             if types is None and (item, None) in self.symbols:
                 return self.symbols[item, None]
@@ -2297,7 +2361,10 @@ class SymbolTable:
                 functions = [v for k, v in self.symbols.items() if k[0] == item]
                 if len(functions) == 1:
                     return functions[0]
-                result = self._type_name_parser.parse(self._src_info, item)
+                item2 = item.replace(".", "$")
+                result = self._type_name_parser.parse(self._src_info, item2)
+                if result is None:
+                    raise CompilerException(f"Type {item} not found", self._src_info)
                 for t in result.used_types:
                     if (t.name, None) not in self:
                         raise CompilerException(f"Type {t.name} not found", self._src_info)
@@ -2324,13 +2391,15 @@ class SymbolTable:
         self._class_info_list_name: str = "$".join(map(lambda x: x.name, self._namespace)) + "$classInfoList"
         self._src_info: SourceInfo = SourceInfo(src_path)
         self._generic_table: GenericTable = GenericTable(self._src_info, self._namespace)
+        self._namespace_without_import: tuple[str, ...] = \
+            tuple([*map(lambda x: ".".join(y.name for y in x) + ".", SymbolTable._NAMESPACES_WITHOUT_IMPORT), self._namespace_name + "."])
         self._init_builtin_types()
 
-        def __real_type_getter(name: str) -> TypeName:
+        def __real_type_getter(name: str) -> Optional[TypeName]:
             name = name.strip()
             if (name, None) in self.symbols:
                 return self.symbols[name, None]
-            raise CompilerException(f"Type {name} not found.", self._src_info)
+            return None
 
         self._type_name_parser: _TypeNameParser = _TypeNameParser(__real_type_getter, self._generic_table)
 
@@ -2346,17 +2415,11 @@ class SymbolTable:
         ]
         for t in builtin_types:
             self.add(t, t.self_name, None)
-            if t.name != t.self_name:
-                self.add(t, t.name, None)
+        self.add(Object, Object.self_name, None)
         self.add(StringTypeName, StringTypeName.self_name, None)
-        self.add(StringTypeName, StringTypeName.name, None)
         self.add(SliceTypeName, SliceTypeName.self_name, None)
-        self.add(SliceTypeName, SliceTypeName.name, None)
         self.add(ExceptionTypeName, ExceptionTypeName.self_name, None)
-        self.add(ExceptionTypeName, ExceptionTypeName.name, None)
-        self.add(_exception_what, _exception_what.name, [])
-        self.add(_perror, _perror.name, [StringTypeName])
-        self.add(_print, _print.name, [StringTypeName])
+        self.add(_perror, _perror.self_name, [StringTypeName])
         self.add(_print, _print.self_name, [StringTypeName])
 
     def add(self, symbol: NamedSymbol, name: str, types: Optional[list[TypeName]]) -> None:
@@ -2378,6 +2441,14 @@ class SymbolTable:
         添加一个作用域。
         """
         self._symbols.append({})
+
+    def clean_namespace(self, name: str) -> str:
+        item = name.replace("$", ".")
+        for namespace in self._namespace_without_import:
+            if item.startswith(namespace):
+                item = item[len(namespace):]
+                return item
+        return item
 
     def clear_temporaries(self) -> None:
         """
@@ -2422,7 +2493,7 @@ class SymbolTable:
         find_method: 如果为True，则只搜索方法，否则只搜索普通函数。
         """
         # noinspection PyTypeChecker
-        name = name.replace(".", "$")
+        name = self.clean_namespace(name)
         args_declaration: list[TypeName] = list(map(lambda x: self[x, None], args))
         # noinspection PyTypeChecker
         kwargs_declaration: dict[str, TypeName] = dict(map(lambda x: (x, self[kwargs[x], None]), kwargs.keys()))
@@ -2483,15 +2554,20 @@ class SymbolTable:
         kwargs: 关键字参数类型名称列表。
         """
         cls = self[cls_name, None]
+        name = self.clean_namespace(name)
+        args = list(map(lambda x: self.clean_namespace(x), args))
+        kwargs = dict(map(lambda k, v: (k, self.clean_namespace(v)), kwargs.items()))
         if not isinstance(cls, ClassName):
-            raise CompilerException("Class not found", self._src_info)
+            raise CompilerException(f"{cls_name} is not a class", self._src_info)
         arg_types: list[TypeName] = list(map(lambda x: self[x, None], args))
         kwargs_types: dict[str, TypeName] = dict(map(lambda x: (x, self[kwargs[x], None]), kwargs.keys()))
         methods = dict(filter(lambda x: x[0][0] == name, cls.methods.items()))
         methods = dict(filter(lambda x: len(x[0][1]) >= len(arg_types), methods.items()))
         methods = dict(filter(lambda x: all(map(lambda i: arg_types[i].convertable_to(x[0][1][i], self.symbols),
                                                 range(len(arg_types)))), methods.items()))
-        methods = dict(filter(lambda x: all(x[1].arg_types_dict[y].convertable_to(kwargs_types[y], self.symbols) for y in kwargs_types.keys()), methods.items()))
+        methods = dict(filter(lambda x: all(
+            x[1].arg_types_dict[y].convertable_to(kwargs_types[y], self.symbols) for y in kwargs_types.keys()
+        ), methods.items()))
         return list(methods.values())
 
     def get_all_to_instantiate_symbols(self, src_info: SourceInfo,
@@ -2724,17 +2800,17 @@ class SymbolTable:
         if not isinstance(cls, ClassName):
             raise CompilerException(f"{cls_name} is not a class.", self._src_info)
         is_abstract: bool = "abstract" in item_name[2:]
-        is_static: bool = "static" in item_name[2:]
+        is_static: bool = "static" in item_name[2:] or method_name.endswith(".__new__")
         export: bool = "export" in item_name[2:]
         item_args: list[str] = item[2].split("%")
         item_returns: list[str] = item[3].split("%")
         item_default_args: list[str] = item[4].split(" ")
         # noinspection PyTypeChecker
-        args = list(map(lambda arg: self[arg], item_args[::2])) if len(item_args) > 1 else []
+        args = list(map(lambda arg: self[arg, None], item_args[::2])) if len(item_args) > 1 else []
         if any(map(lambda arg: not isinstance(arg, TypeName), args)):
             raise CompilerException("Function arguments must be types.", self._src_info)
         # noinspection PyTypeChecker
-        returns = list(map(lambda ret: self[ret], item_returns[::2])) if len(item_returns) > 1 else []
+        returns = list(map(lambda ret: self[ret, None], item_returns[::2])) if len(item_returns) > 1 else []
         if any(map(lambda ret: not isinstance(ret, TypeName), returns)):
             raise CompilerException("Function returns must be types.", self._src_info)
         args: list[TypeName]
@@ -2752,8 +2828,8 @@ class SymbolTable:
         method.set_default_params(item_default_args)
         for k, v in method.default_params.items():
             if v is not None:
-                self.add(v, f"{cls_name}.{method_name}$default$" + k, None)
-        self.add(method, f"{cls_name}.{method_name}", args if is_static else [cls] + args)
+                self.add(v, f"{self.clean_namespace(cls.raw_name)}.{method_name}$default$" + k, None)
+        self.add(method, f"{self.clean_namespace(cls.raw_name)}.{method_name}", args)
         cls.add_method(method_name, method)
 
     def _read_class_decl(self, item: list[str]) -> None:
@@ -2770,12 +2846,12 @@ class SymbolTable:
         if (cls_name, None) in self:
             raise CompilerException(f"Class {cls_name} already exists.", self._src_info)
         parent: Optional[ClassName] = None
-        if item[0].split(" ")[1] != "object":
+        if item[0].split(" ")[0].split("%")[1] != "object":
             parent_name = item[0].split(" ")[0].split("%")[1]
             # noinspection PyTypeChecker
-            parent = self[parent_name]
+            parent = self[parent_name, None]
             if not isinstance(parent, ClassName):
-                raise CompilerException(f"Parent class {parent_name} is not a class.", self._src_info)
+                raise CompilerException(f"$parent class {parent_name} is not a class.", self._src_info)
         else:
             parent_name = None
         is_abstract: bool = "abstract" in item[0].split(" ")[1:]
@@ -2796,22 +2872,23 @@ class SymbolTable:
             loc_tuple: tuple[int, int, int, int] = int(loc_str[0]), int(loc_str[1]), int(loc_str[2]), int(loc_str[3])
             self._src_info.set_loc(*loc_tuple)
             type_name: str = item_text[1].split("%")[0]
-            property_name: str = item_text[1].split("%")[0]
+            property_name: str = item_text[1].split("%")[1]
             # noinspection PyTypeChecker
-            t: TypeName = self[type_name]
-            cls.add_property(self._src_info, property_name, t, self.__get_modifier(item_text[2].split(" ")),
-                             "static" in item_text[2].split(" "))
+            t: TypeName = self[type_name, None]
+            cls.add_property(self._src_info, property_name, t, self.__get_modifier(item_text[2:]),
+                             "static" in item_text[2:])
             if item_loc == len(item) - 1:
                 raise CompilerException(f"Unexpected end of class {cls_name}", self._src_info)
             item_loc += 1
-        if cls_name + ".__del__" not in self and not cls.is_c_part:
-            cls.add_method(
-                "__del__", MethodName(
-                    self._src_info, cls, "__del__", FunctionTypeName(self._src_info, [], []),
-                    False, False, [], [], Modifier.PUBLIC, False
-                )
+        cls_key_name = cls.self_name if cls.raw_name.startswith(self._namespace_without_import) else cls.raw_name
+        if not cls.is_c_part:
+            del_method = MethodName(
+                self._src_info, cls, "__del__", FunctionTypeName(self._src_info, [], []),
+                False, False, [], [], Modifier.PUBLIC, False
             )
-        self.add(cls, cls_name, None)
+            cls.add_method("__del__", del_method)
+            self.add(del_method, cls_key_name + ".__del__", [cls])
+        self.add(cls, cls_key_name, None)
 
     def _read_enum_decl(self, item: list[str]) -> None:
         """

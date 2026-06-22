@@ -236,11 +236,9 @@ class CompilerVM:
             src_file = self.get()
         except CompilerException:
             self._logger.error(format_exc())
-            print(self._stack)
             return TaskResult(TaskResultState.FAILURE)
         except Exception as e:
             self._logger.error(format_exc())
-            print(self._stack)
             raise e
         self._project.add_source_file(src_file)
         self._logger.info(f"Successfully compiled: {src_path}")
@@ -251,6 +249,7 @@ class CompilerVM:
         lines: list[str] = cmd.split("\n")
         for i, line in enumerate(lines):
             self._exec_line(line)
+            # print(i)
 
     def get(self) -> project.SourceFile:
         """获取栈底的源文件对象，完成写入并返回。"""
@@ -663,56 +662,59 @@ class CompilerVM:
 
     def __make_class(self, cmd: list[str]) -> definition.ClassDef:
         """创建类的定义并添加新的作用域。"""
-        result = definition.ClassDef(self._src_info, self._symbol_table, self._symbol_table.namespace, cmd[0], self._var_state_table)
         self._symbol_table.add_scope()
         self._var_state_table.add_scope()
         self._exec_mode_stack.append(_ExecMode.SQ)
         self._scope_count_stack.append(_ScopeCount.INC)
+        result = definition.ClassDef(self._src_info, self._symbol_table, self._symbol_table.namespace, cmd[0], self._var_state_table)
         self._current_class = result.decl
         return result
 
     def __make_def_constructor(self, cmd: list[str]) -> definition.ConstructorDef:
         """创建构造函数的定义并添加新的作用域。"""
-        construct_def: definition.ConstructorDef = definition.ConstructorDef(
-            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0], cmd[1:]
-        )
         self._exec_mode_stack.append(_ExecMode.SQ)
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
         self._var_state_table.add_scope()
+        construct_def: definition.ConstructorDef = definition.ConstructorDef(
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0],
+            cmd[1].split("%") if len(cmd) > 1 else []
+        )
         return construct_def
 
     def __make_def_destructor(self, cmd: list[str]) -> definition.DestructorDef:
         """创建析构函数的定义并添加新的作用域。"""
-        destructor_def: definition.DestructorDef = definition.DestructorDef(
-            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0]
-        )
         self._exec_mode_stack.append(_ExecMode.SQ)
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
         self._var_state_table.add_scope()
+        destructor_def: definition.DestructorDef = definition.DestructorDef(
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0]
+        )
         return destructor_def
 
     def __make_def_fn(self, cmd: list[str]) -> definition.FnDef:
         """创建函数（fn）的定义并添加新的作用域。"""
-        fn_def: definition.FnDef = definition.FnDef(
-            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0], cmd[1:]
-        )
         self._exec_mode_stack.append(_ExecMode.FN)
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
         self._var_state_table.add_scope()
+        fn_def: definition.FnDef = definition.FnDef(
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0],
+            cmd[1].split("%") if len(cmd) > 1 else []
+        )
         return fn_def
 
     def __make_def_sq(self, cmd: list[str]) -> definition.SqDef:
         """创建函数（sq，语句函数）的定义并添加新的作用域。"""
-        sq_def: definition.SqDef = definition.SqDef(
-            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0], cmd[1:]
-        )
         self._exec_mode_stack.append(_ExecMode.SQ)
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
         self._var_state_table.add_scope()
+        sq_def: definition.SqDef = definition.SqDef(
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0],
+            cmd[1].split("%") if len(cmd) > 1 else []
+        )
         return sq_def
 
     def __make_stmt_block(self) -> statement.BlockStmt:
@@ -725,15 +727,28 @@ class CompilerVM:
             return statement.FnBlockStmt(self._src_info, self._symbol_table, self._var_state_table)
         return statement.BlockStmt(self._src_info, self._symbol_table, self._var_state_table)
 
-    def __make_variable_ref(self, cmd: list[str]) -> expression.VariableRef:
+    def __make_variable_ref(self, cmd: list[str]) -> expression.Expression:
         """创建变量引用表达式，根据作用域级别决定是全局变量还是局部变量。"""
+        var_type_name = " ".join(cmd[:-1])
         # noinspection PyTypeChecker
         # noinspection PyUnresolvedReferences
-        var_type: symbol.TypeName = self._symbol_table[cmd[0], None] if cmd[0] != "auto" else self._symbol_table[cmd[1], None].type
-        var_name: str = cmd[1]
+        if var_type_name != "auto":
+            var_type = self._symbol_table[var_type_name, None]
+        else:
+            var_type = self._symbol_table[cmd[-1], None]
+        var_name: str = cmd[-1]
         if (var_name, None) in self._symbol_table:
+            var = self._symbol_table[var_name, None]
             # noinspection PyTypeChecker
-            expr = expression.VariableRef(self._src_info, self._symbol_table, self._symbol_table[var_name, None])
+            if isinstance(var, symbol.VariableName):
+                expr = expression.VariableRef(self._src_info, self._symbol_table, var)
+            elif isinstance(var, symbol.ClassName):
+                expr = expression.ClassRef(self._src_info, self._symbol_table, var)
+            else:
+                raise InternalCompilerException(
+                    f"{var_name} is not a variable name or a class name",
+                    self._src_info
+                )
             self.__make(expr)
             return expr
         if self.__scope_level == 0:

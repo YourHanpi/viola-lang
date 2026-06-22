@@ -7,7 +7,6 @@ from utils.task import TaskResult, TaskResultState
 
 import os
 import time
-import traceback
 from typing import Optional, Callable, Sequence, Mapping, Any
 
 __PARSER_UTILS_WITH_ARGS_TYPE = Callable[["GlobalParser", Sequence[Any], Mapping[Any, Any]], Optional[tuple[list[str], list[str]]]]
@@ -533,7 +532,7 @@ class GlobalParser:
         if expr_results is None:
             return None
         expr_commands = self._add_parsing_slice(expr_results)
-        self._expr_count += 1
+        # self._expr_count += 1
         if not self._match_type("SEMICOLON"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -715,15 +714,13 @@ class GlobalParser:
                 func_command += result[0]
                 func_symbol += result[1]
             elif self._match_type("R_CURLY_BRACKET"):
-                return prop_command + func_command, [*prop_symbol, "---", *func_symbol]
+                return prop_command + func_command, [*prop_symbol, "END CLASS", "---", *func_symbol]
             else:
                 result = self._parse_property(prefixes)
                 if not result:
                     return None
                 prop_command += result[0]
                 prop_symbol += result[1]
-            func_command += result[0]
-            func_symbol += result[1]
         self._raise("Unexpected EOF")
         return None
 
@@ -786,7 +783,7 @@ class GlobalParser:
             if bracket_count == 0:
                 result = self._add_parsing_slice(tokens[1:-1])
                 self._next()
-                self._expr_count += 1
+                # self._expr_count += 1
                 return result
             self._next()
         self._raise("Unexpected EOF")
@@ -837,7 +834,6 @@ class GlobalParser:
         cls_name = self._parse_type()
         if cls_name is None:
             return None
-        self._next()
         if not self._match_type("IDENTIFIER"):
             self._raise("Expected identifier. Unexpected token: " + self._get_current().text)
             return None
@@ -847,11 +843,12 @@ class GlobalParser:
         if expr_tokens is None:
             return None
         expr_tokens = [Token(cls_name, ["IDENTIFIER"], self._src_info.copy())] + expr_tokens
-        self._expr_tokens.append(expr_tokens)
+        raw_command = self._add_parsing_slice(expr_tokens)
         command: list[str] = [
             "MAKE STMT DECL", f"MAKE EXPR TYPE_REF {cls_name}", f"CALL ADD_VAR {var_name}",
-            f"RAW {len(self._expr_tokens)}", "CALL SET_VAR_VALUE", "CALL FINISH"
+            raw_command, "CALL SET_VAR_VALUE", "CALL FINISH"
         ]
+        # self._expr_count += 1
         symbol = [f"{cls_name}%{var_name}"]
         return command, symbol
 
@@ -865,9 +862,9 @@ class GlobalParser:
         name_command, symbol = name_results
         if self._match_type("L_BRACKET"):
             if pure_decl_expected is not None and not pure_decl_expected:
-                self._raise("Unexpected token: " + self._get_current().text)
+                self._raise("Pure declaration expected. Unexpected token: " + self._get_current().text)
                 return None
-            if len(name_command) > 2:
+            if len(name_command) > 3:
                 self._raise("Unexpected token: " + self._get_current().text)
                 return None
             self._back_to(start_pos)
@@ -892,7 +889,7 @@ class GlobalParser:
             return None
         self._next()
         expr_commands = self._add_parsing_slice(expr_results)
-        self._expr_count += 1
+        # self._expr_count += 1
         return ["MAKE STMT DECL", expr_commands, "CALL SET_VAR_VALUE"] + name_command + ["CALL FINISH"], symbol
 
     @_set_loc_command
@@ -908,6 +905,7 @@ class GlobalParser:
         token_buffer: list[Token] = []
         while not self._match_type("SEMICOLON") and not self._match_type("FN") and not self._match_type("SQ"):
             token_buffer.append(self._get_current())
+            print(" ".join([token.text for token in token_buffer]))
             self._next()
         if len(token_buffer) == 0:
             self._next()
@@ -1042,7 +1040,7 @@ class GlobalParser:
         if value is None:
             return None
         result = self._add_parsing_slice(value)
-        self._expr_count += 1
+        # self._expr_count += 1
         command: list[str] = [result] + [f"CALL ADD_ENUM {name}"]
         self._next()
         return command, []
@@ -1056,7 +1054,7 @@ class GlobalParser:
         if result_tokens is None:
             return None
         result = self._add_parsing_slice(result_tokens)
-        self._expr_count += 1
+        # self._expr_count += 1
         return [result]
 
     @_set_loc_command
@@ -1072,16 +1070,16 @@ class GlobalParser:
         self._next()
         return ["MAKE STMT FINALLY"] + block_result[0] + ["CALL SET_STMT"], []
 
-    def _parse_fn(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+    def _parse_fn(self, prefixes: list[str], cls_name: str = "") -> Optional[tuple[list[str], list[str]]]:
         """
-        解析fn函数定义。
+        解析声明式函数定义。
         :param prefixes: 前缀修饰符列表。
         :return: 命令和符号列表。
         """
         if "cpart" in prefixes:
             self._raise("Unexpected prefix: cpart")
             return None
-        return self._parse_func(prefixes, "FN")
+        return self._parse_func(prefixes, "FN", cls_name=cls_name)
 
     @_set_loc_command
     def _parse_from_import(self) -> Optional[tuple[list[str], list[str]]]:
@@ -1125,7 +1123,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_func(self, prefixes: list[str], func_type: str, is_closure: bool = False, without_name: bool = False,
-                    is_method: bool = False) -> Optional[tuple[list[str], list[str]]]:
+                    cls_name: str = "") -> Optional[tuple[list[str], list[str]]]:
         """
         解析函数定义（函数体包括声明和块语句）。
         :param prefixes: 前缀修饰符列表。
@@ -1134,7 +1132,7 @@ class GlobalParser:
         :param without_name: 是否匿名。
         :return: 命令和符号列表。
         """
-        decl_result = self._parse_func_decl(func_type, prefixes, is_closure, without_name, is_method)
+        decl_result = self._parse_func_decl(func_type, prefixes, is_closure, without_name, cls_name)
         if decl_result is not None:
             command, symbol = decl_result
         else:
@@ -1150,7 +1148,7 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_func_decl(self, func_type: str, prefixes: list[str], is_closure: bool = False,
-                         without_name: bool = False, is_method: bool = False) -> Optional[tuple[list[str], list[str]]]:
+                         without_name: bool = False, cls_name: str = "") -> Optional[tuple[list[str], list[str]]]:
         """
         解析函数声明（函数名称、泛型参数、参数列表和返回类型）。
         :param func_type: 函数类型。
@@ -1167,17 +1165,21 @@ class GlobalParser:
             self._raise(f"Unexpected token: {self._get_current().text}")
             return None
         func_name: str = self._get_current().text if not is_closure else "!ANONYMOUS"
+        is_method = cls_name != ""
         if func_type == "SQ" and func_name == "__new__" and is_method:
             func_type = "CONSTRUCTOR"
         elif func_type == "SQ" and func_name == "__del__" and is_method:
             func_type = "DESTRUCTOR"
-        command: list[str] = [" ".join([f"MAKE DEF {func_type} {func_name}"] + prefixes)]
+        if func_type in ["CONSTRUCTOR", "DESTRUCTOR"]:
+            command: list[str] = [f"MAKE DEF {func_type} {cls_name} "]
+        else:
+            command: list[str] = [f"MAKE DEF {func_type} {func_name} " if not is_method else f"MAKE DEF {func_type} {cls_name}.{func_name} "]
         symbol: list[str] = ["FUNCTION", " ".join([func_name] + prefixes)]
         if not without_name:
             self._next()
         if not is_closure:
             generic_names: list[str] = []
-            if self._match_type("LT"):
+            if self._match_type("GENERIC_START"):
                 expect_comma: bool = False
                 while True:
                     if self._current >= self._tokens_num:
@@ -1198,6 +1200,8 @@ class GlobalParser:
                 symbol.append(" ".join(generic_names))
                 self._parser_generic_table.add(func_name, len(generic_names))
                 self._next()
+            else:
+                symbol.append("")
             self._symbol_types[func_name] = "FUNCTION", len(generic_names)
         if not self._match_type("L_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -1206,7 +1210,8 @@ class GlobalParser:
         args_result = self._parse_type_name_list(["R_BRACKET"])
         if args_result is None:
             return None
-        symbol += args_result[1]
+        command[0] += "%".join([t.split("%")[0] for t in args_result[1]]) if len(args_result[1]) > 0 else ""
+        symbol += ["%".join(args_result[1])]
         if not self._match_type("R_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -1222,7 +1227,13 @@ class GlobalParser:
         rets_result = self._parse_type_name_list(["R_BRACKET"])
         if rets_result is None:
             return None
-        symbol += rets_result[1]
+        rets = rets_result[1]
+        if func_name == "__new__":
+            if len(rets) != 1 or rets[0] != "THIS":
+                self._raise("__new__ must return this")
+                return None
+            rets = [f"{cls_name}%_this"]
+        symbol += ["%".join(rets)]
         if not self._match_type("R_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -1301,20 +1312,22 @@ class GlobalParser:
             self._raise("Unexpected modifiers: " + " ".join(prefixes))
             return None
         if self._match_type("SQ"):
-            result = self._parse_sq(prefixes, True)
+            result = self._parse_sq(prefixes, class_name)
             if result is None:
                 return None
             command, symbol = result
             symbol[0] = "METHOD"
             symbol[1] = class_name + " " + symbol[1]
+            command.append("CALL ADD_METHOD")
             return command, symbol
         if self._match_type("FN"):
-            result = self._parse_fn(prefixes)
+            result = self._parse_fn(prefixes, class_name)
             if result is None:
                 return None
             command, symbol = result
             symbol[0] = "METHOD"
             symbol[1] = class_name + " " + symbol[1]
+            command.append("CALL ADD_METHOD")
             return command, symbol
         self._raise("Unexpected token: " + self._get_current().text)
         return None
@@ -1352,7 +1365,7 @@ class GlobalParser:
             return None
         self._next()
         parsing_slice = self._add_parsing_slice(expr_result)
-        self._expr_count += 1
+        # self._expr_count += 1
         return ["MAKE STMT OP", parsing_slice, "CALL SET_EXPR"], []
 
     def _parse_prefixes(self, matches: list[str]) -> Optional[list[str]]:
@@ -1388,12 +1401,12 @@ class GlobalParser:
         result = self._parse_decl_stmt(not is_static)
         if result is None:
             return None
-        command, symbol = result
+        _, symbol = result
         symbol = symbol[0]
         _, _, end_line, end_col = self._src_info.location_tuple
         symbol = f"{start_line}:{start_col}:{end_line}:{end_col} " + " ".join([symbol] + prefixes)
         self._next()
-        return command, [symbol]
+        return [], [symbol]
 
     @_set_loc_command
     def _parse_return_stmt(self) -> Optional[tuple[list[str], list[str]]]:
@@ -1408,9 +1421,9 @@ class GlobalParser:
         return ["MAKE STMT RETURN"], []
 
     @_set_loc_command
-    def _parse_sq(self, prefixes: list[str], is_method: bool = False) -> Optional[tuple[list[str], list[str]]]:
-        """解析平方（sq）函数定义。"""
-        return self._parse_func(prefixes, "SQ", is_method=is_method)
+    def _parse_sq(self, prefixes: list[str], cls_name: str = "") -> Optional[tuple[list[str], list[str]]]:
+        """解析序列（sq）函数定义。"""
+        return self._parse_func(prefixes, "SQ", cls_name=cls_name)
 
     @_set_loc_command
     def _parse_stmt(self) -> Optional[tuple[list[str], list[str]]]:
@@ -1586,6 +1599,7 @@ class GlobalParser:
                         self._raise("Unexpected token: " + self._get_current().text)
                         return None
                     self._next()
+                    symbol.append("THIS")
                     continue
                 type_decl = self._parse_type()
                 if type_decl is None:
@@ -1638,6 +1652,8 @@ class GlobalParser:
         :param id_list: 标识符分段列表。
         :return: 替换后的标识符列表。
         """
+        if len(id_list) == 1:
+            return id_list
         for i in range(len(id_list), 0, -1):
             prefix: str = ".".join(id_list[:i])
             if prefix in self._imports:

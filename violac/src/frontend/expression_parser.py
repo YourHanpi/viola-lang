@@ -192,6 +192,9 @@ class ExprParser(GlobalParser):
         self._load_tokens(expr_tokens)
         self._lex_unary_op()
         self._current = 0
+        if len(expr_tokens) == 1:
+            self._logger.error("Empty expression")
+            return None
         return self._parse_expr(len(expr_tokens))
 
     def _lex_unary_op(self) -> None:
@@ -287,11 +290,10 @@ class ExprParser(GlobalParser):
                 kwarg_name = ""
             elif self._match_type("R_BRACKET"):
                 end_pos: int = self._current
-                self._back_to(start_pos)
+                self._back()
                 is_comma: bool = self._match_type("COMMA")
-                self._next()
-                if not (self._match_type("R_BRACKET") or is_comma):
-                    self._back()
+                self._back_to(start_pos)
+                if not is_comma:
                     expr_result = self._parse_expr(end_pos)
                     if expr_result is None:
                         return None
@@ -313,12 +315,15 @@ class ExprParser(GlobalParser):
         command: list[str] = []
         while self._current < self._tokens_num:
             token = self._get_current()
-            if self._match_type("IDENTIFIER"):
+            if self._match_types(["IDENTIFIER", "THIS"]):
                 if expect_dot:
                     self._raise("Expected dot. Unexpected token: " + self._get_current().text)
                     return None
                 if is_prefix:
-                    id_list.append(token.text)
+                    if self._match_type("THIS") and len(id_list) > 0:
+                        self._raise("Unexpected token: " + self._get_current().text)
+                        return None
+                    id_list.append(token.text if not self._match_type("THIS") else "_this")
                 else:
                     command = ["MAKE EXPR ATTR_OP"] + command + ["CALL SET_CALLER", "CALL SET_ATTR " + token.text]
                 expect_dot = True
@@ -367,6 +372,8 @@ class ExprParser(GlobalParser):
                 if is_prefix:
                     command += self.__handle_id_prefix(id_list)
                 return command, _ExprState.CALLABLE_ENDING
+        if is_prefix:
+            command += self.__handle_id_prefix(id_list)
         return command, _ExprState.CALLABLE_ENDING
 
     def _parse_bin_math_op(
@@ -719,7 +726,7 @@ class ExprParser(GlobalParser):
             result = self._parse_square_bracket_expr(_ExprState.EXPR_STARTING)
         elif self._match_type("L_CURLY_BRACKET"):
             result = self._parse_curly_bracket_expr(_ExprState.EXPR_STARTING)
-        elif self._match_type("IDENTIFIER"):
+        elif self._match_types(["IDENTIFIER", "THIS"]):
             result = self._parse_attr_expr()
         elif self._match_types(["INT32", "UINT32", "INT_N", "UINT_N", "SIZE_T"]):
             result = self._parse_int()

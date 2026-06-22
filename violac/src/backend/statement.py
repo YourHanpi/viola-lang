@@ -451,8 +451,8 @@ class DeclStmt(Statement):
                         raise CompilerException("Too many variables for unpacking.", self._src_info)
                     self._var[i].type.set_real_type(expr_type)
             else:
-                if var.type not in self._symbol_table:
-                    raise CompilerException(f"{var.type.name} is not defined.", self._src_info)
+                if (var.type.name, None) not in self._symbol_table:
+                    raise CompilerException(f"{var.type.raw_name} is not defined.", self._src_info)
         if isinstance(expr_type, TupleTypeName):
             if len(self._var) > len(expr_type.types):
                 raise CompilerException("Too many variables for unpacking.", self._src_info)
@@ -704,8 +704,10 @@ class AssignStmt(Statement):
         """完成赋值语句，进行类型检查和收包处理。"""
         expr_type = self._var_value.return_type
         if isinstance(expr_type, TupleTypeName):
+            if len(expr_type.types) == 0:
+                raise CompilerException("Cannot unpacking an empty tuple.", self._src_info)
             if len(self._var) > len(expr_type.types):
-                raise CompilerException("Too many variables for unpacking.", self._src_info)
+                raise CompilerException("Too many variables to unpacking.", self._src_info)
             elif len(self._var) == len(expr_type.types):
                 type_list: list[TypeName] = list(map(lambda var: var.type, self._var))
                 for i, (t0, t1) in enumerate(zip(type_list, expr_type.types)):
@@ -832,7 +834,7 @@ class AssignStmt(Statement):
     @property
     def _inner_text(self) -> str:
         self._var_value.set_returns(self._var)
-        return self._var_value.front_text
+        return self._var_value.front_text if self._var_value.front_text is not None else ""
 
 
 class OpStmt(Statement):
@@ -1204,7 +1206,7 @@ class CStmt(Statement):
 
     @property
     def _inner_text(self) -> str:
-        return self._text
+        return self._text if self._text is not None else ""
 
 
 class _CondKw(Enum):

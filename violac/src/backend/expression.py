@@ -411,9 +411,9 @@ class UnpackExpr(Expression):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._var.name}->refCount == 0) {{",
-            f"\tif ({self._var.name}->parent) {{",
-            f"\t\t{self._var.name}->parent->refCount--;",
+            f"if ({self._var.name}->$refCount == 0) {{",
+            f"\tif ({self._var.name}->$parent) {{",
+            f"\t\t{self._var.name}->$parent->$refCount--;",
             "\t} else {",
             f"\t\tfree({self._var.name}->data);",
             f"\t\t{self._var.name}->data = NULL;",
@@ -522,7 +522,7 @@ class ValueRef(Expression, ABC):
 
     @property
     def front_text(self) -> Optional[str]:
-        if self._unpack_expr is not None:
+        if self._returns is not None and len(self._returns) > 1:
             return self._unpack_expr.front_text
         return None
 
@@ -635,9 +635,9 @@ class VariableRef(ValueRef):
         if not self.return_type.is_object:
             return None
         result: list[str] = [
-            f"if ({self._var.name}->refCount == 0) {{",
-            f"\tif ({self._var.name}->parent) {{",
-            f"\t\t{self._var.name}->parent->refCount --;",
+            f"if ({self._var.name}->$refCount == 0) {{",
+            f"\tif ({self._var.name}->$parent) {{",
+            f"\t\t{self._var.name}->$parent->$refCount --;",
             "\t} else {",
             f"\t\tfree({self._var.name});",
             f"\t\t{self._var.name} = NULL;"
@@ -800,9 +800,9 @@ class StringLiteral(Literal):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._var_name}->refCount == 0) {{",
-            f"\tif ({self._var_name}->parent) {{",
-            f"\t\t{self._var_name}->parent->refCount --;",
+            f"if ({self._var_name}->$refCount == 0) {{",
+            f"\tif ({self._var_name}->$parent) {{",
+            f"\t\t{self._var_name}->$parent->$refCount --;",
             "\t} else {",
             f"\t\tfree({self._var_name});",
             "\t}"
@@ -1010,9 +1010,9 @@ class SliceRef(ValueRef):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_var.name}->refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->parent) {{",
-            f"\t\t{self._temp_var.name}->parent->refCount --;",
+            f"if ({self._temp_var.name}->$refCount == 0) {{",
+            f"\tif ({self._temp_var.name}->$parent) {{",
+            f"\t\t{self._temp_var.name}->$parent->$refCount --;",
             "\t} else {",
             f"\t\tfree({self._temp_var.name});",
             "\t}"
@@ -1160,8 +1160,8 @@ class ArrayRef(ValueRef):
         if not self._is_finished:
             raise CompilerException("ArrayRef is not finished", self._src_info)
         lines: list[str] = list(filter(lambda x: x is not None, map(lambda x: x.front_text, self._values)))
-        lines.append(f"{self._temp_var.name}->parent = NULL;")
-        lines.append(f"{self._temp_var.name}->refCount = 1;")
+        lines.append(f"{self._temp_var.name}->$parent = NULL;")
+        lines.append(f"{self._temp_var.name}->$refCount = 1;")
         if len(self._values) == 0:
             lines.append(f"{self._temp_var.name}->data = NULL;")
             lines.append(f"{self._temp_var.name}->size = 0;")
@@ -1204,9 +1204,9 @@ class ArrayRef(ValueRef):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_var.name}->refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->parent) {{",
-            f"\t\t{self._temp_var.name}->parent->refCount --;",
+            f"if ({self._temp_var.name}->$refCount == 0) {{",
+            f"\tif ({self._temp_var.name}->$parent) {{",
+            f"\t\t{self._temp_var.name}->$parent->$refCount --;",
             "\t} else {",
             f"\t\tfree({self._temp_var.name});",
             "\t}"
@@ -1380,9 +1380,9 @@ class TupleRef(ValueRef):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_var.name}->refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->parent) {{",
-            f"\t\t{self._temp_var.name}->parent->refCount --;",
+            f"if ({self._temp_var.name}->$refCount == 0) {{",
+            f"\tif ({self._temp_var.name}->$parent) {{",
+            f"\t\t{self._temp_var.name}->$parent->$refCount --;",
             "\t} else {",
             f"\t\tfree({self._temp_var.name});",
             f"\t\t{self._temp_var.name} = NULL;",
@@ -1814,18 +1814,20 @@ class AttrOp(Expression):
         Raises:
             CompilerException: 找不到方法或存在歧义时抛出。
         """
-        dynamic_arg_type_list: list[str] = [self._caller.return_type.name] + arg_type_list
+        arg_type_list = [self._symbol_table.clean_namespace(t.replace("$", ".")) for t in arg_type_list]
+        kwarg_type_dict = {k: self._symbol_table.clean_namespace(v.replace("$", ".")) for k, v in kwarg_type_dict.items()}
+        dynamic_arg_type_list: list[str] = [self._symbol_table.clean_namespace(self._caller.return_type.raw_name)] + arg_type_list
         dynamic_methods: list[MethodName] = self._symbol_table.find_methods(
-            self._caller.return_type.name, self._attr[1:], dynamic_arg_type_list, kwarg_type_dict
+            self._symbol_table.clean_namespace(self._caller.return_type.raw_name), self._attr, dynamic_arg_type_list, kwarg_type_dict
         )
         static_methods: list[MethodName] = self._symbol_table.find_methods(
-            self._caller.return_type.name, self._attr[1:], arg_type_list, kwarg_type_dict
+            self._symbol_table.clean_namespace(self._caller.return_type.raw_name), self._attr, arg_type_list, kwarg_type_dict
         )
         if len(dynamic_methods) == 1:
             return dynamic_methods[0]
         if len(dynamic_methods) == 0 and len(static_methods) == 1:
             return static_methods[0]
-        if len(dynamic_methods) > 1:
+        if len(dynamic_methods) > 1 or len(static_methods) > 1:
             raise CompilerException(
                 f"Ambiguous method call: {self._caller.return_type.raw_name}.{self._attr}",
                 self._src_info
@@ -1897,7 +1899,7 @@ class AttrOp(Expression):
         Args:
             attr: 属性名（不含前缀）。
         """
-        self._attr = "$" + attr
+        self._attr = attr
 
     def set_caller(self, caller: Expression) -> None:
         """设置调用者表达式。
@@ -1921,11 +1923,11 @@ class AttrOp(Expression):
     def text(self) -> str:
         if not self.is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
-        # noinspection PyTypeChecker
-        method = self.find_method(self._arg_types, self._kwarg_types)
-        if method.is_static:
-            return f"{self._caller.text}${self._attr}"
-        return f"{self._caller.text}->{self._attr}"
+        if self._arg_types is None and self._kwarg_types is None:
+            if self._symbol_table.contains_method(self._caller.return_type.name, self._attr, [], {}):
+                return f"{self._caller.text}${self._attr}"
+            return f"{self._caller.text}->{self._attr}"
+        return f"{self._caller.text}${self._attr}"
 
     @property
     def used_variables(self) -> set[VariableName]:
@@ -1937,10 +1939,8 @@ class AttrOp(Expression):
             raise CompilerException("Variable to get attribute is not a class type", self._src_info)
         # noinspection PyTypeChecker
         caller_type: ClassName = self._caller.return_type
-        if self._arg_types is None:
-            raise CompilerException("Unknown method types.", self._src_info)
         if self._attr not in caller_type.properties and not self._symbol_table.contains_method(
-                caller_type.raw_name, self._attr, self._arg_types, self._kwarg_types
+            caller_type.name, self._attr, self._arg_types, self._kwarg_types
         ):
             raise CompilerException("Unknown attribute", self._src_info)
 
@@ -2538,9 +2538,9 @@ class BinaryMathOp(BinaryOperator):
         """
         expr_left: Expression = self._expr_list[0]
         expr_right: Expression = self._expr_list[1]
-        if expr_left.return_type not in self._symbol_table:
+        if (expr_left.return_type.name, None) not in self._symbol_table:
             raise CompilerException(f"Type {expr_left.return_type} is not defined", self._src_info)
-        if expr_right.return_type not in self._symbol_table:
+        if (expr_right.return_type.name, None) not in self._symbol_table:
             raise CompilerException(f"Type {expr_right.return_type} is not defined", self._src_info)
         if isinstance(expr_left.return_type, BaseTypeName) and isinstance(expr_right.return_type, BaseTypeName):
             if self._op is None:
@@ -3161,9 +3161,9 @@ class ConditionalOp(Operator):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_name}->refCount == 0) {{",
-            f"\tif ({self._temp_name}->parent) {{",
-            f"\t\t{self._temp_name}->parent->refCount--;",
+            f"if ({self._temp_name}->$refCount == 0) {{",
+            f"\tif ({self._temp_name}->$parent) {{",
+            f"\t\t{self._temp_name}->$parent->$refCount--;",
             "\t} else {",
             f"\t\tfree({self._temp_name});",
             "\t}"
@@ -3257,7 +3257,7 @@ class ConditionalOp(Operator):
         if isinstance(self._expr_list[1].return_type, ClassName) and \
                 isinstance(self._expr_list[2].return_type, ClassName):
             return self._expr_list[1].return_type.shared_parent(self._expr_list[2].return_type, self._symbol_table)
-        raise CompilerException("The branches of conditional operator have not shared parent type.", self._src_info)
+        raise CompilerException("The branches of conditional operator have not shared $parent type.", self._src_info)
 
 
 class UpdateExpr(Expression):
@@ -3430,9 +3430,9 @@ class UpdateExpr(Expression):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_name}->refCount == 0) {{",
-            f"\tif ({self._temp_name}->parent) {{",
-            f"\t\t{self._temp_name}->parent->refCount --;",
+            f"if ({self._temp_name}->$refCount == 0) {{",
+            f"\tif ({self._temp_name}->$parent) {{",
+            f"\t\t{self._temp_name}->$parent->$refCount --;",
             "\t} else {",
             f"\t\tfree({self._temp_name});",
             "\t}"

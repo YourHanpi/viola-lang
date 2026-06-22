@@ -89,9 +89,9 @@ class TestExprState(unittest.TestCase):
         self.assertTrue(_is_substate(_ExprState.EXPR_ENDING, _ExprState.EXPR_ENDING))
 
     def test_is_substate_parent_match(self):
-        """_is_substate walks state's parent chain, checking against substate's name.
+        """_is_substate walks state's $parent chain, checking against substate's name.
         So _is_substate(EXPR_ENDING, INDEXABLE_ENDING) is True because
-        INDEXABLE_ENDING's parent is EXPR_ENDING, matching substate's name."""
+        INDEXABLE_ENDING's $parent is EXPR_ENDING, matching substate's name."""
         self.assertTrue(_is_substate(_ExprState.EXPR_ENDING, _ExprState.INDEXABLE_ENDING))
 
     def test_is_substate_grandparent_match(self):
@@ -100,19 +100,19 @@ class TestExprState(unittest.TestCase):
         self.assertTrue(_is_substate(_ExprState.EXPR_ENDING, _ExprState.CALLABLE_ENDING))
 
     def test_is_substate_not_related(self):
-        """EXPR_STARTING has no parent chain containing EXPR_ENDING."""
+        """EXPR_STARTING has no $parent chain containing EXPR_ENDING."""
         self.assertFalse(_is_substate(_ExprState.EXPR_ENDING, _ExprState.EXPR_STARTING))
 
     def test_is_substate_cast_starting(self):
-        """_is_substate(EXPR_STARTING, CAST_STARTING): CAST_STARTING parent is EXPR_STARTING -> match."""
+        """_is_substate(EXPR_STARTING, CAST_STARTING): CAST_STARTING $parent is EXPR_STARTING -> match."""
         self.assertTrue(_is_substate(_ExprState.EXPR_STARTING, _ExprState.CAST_STARTING))
 
     def test_is_substate_reverse_not_match(self):
-        """_is_substate(CAST_STARTING, EXPR_STARTING): EXPR_STARTING parent is None, no match."""
+        """_is_substate(CAST_STARTING, EXPR_STARTING): EXPR_STARTING $parent is None, no match."""
         self.assertFalse(_is_substate(_ExprState.CAST_STARTING, _ExprState.EXPR_STARTING))
 
     def test_is_substate_update_unrelated(self):
-        """UPDATE_STARTING parent is None, so no ancestor matches EXPR_ENDING or EXPR_STARTING."""
+        """UPDATE_STARTING $parent is None, so no ancestor matches EXPR_ENDING or EXPR_STARTING."""
         self.assertFalse(_is_substate(_ExprState.EXPR_ENDING, _ExprState.UPDATE_STARTING))
         self.assertFalse(_is_substate(_ExprState.EXPR_STARTING, _ExprState.UPDATE_STARTING))
 
@@ -122,11 +122,11 @@ class TestExprState(unittest.TestCase):
         self.assertIsNone(_ExprState.EXPR_ENDING.value[1])
 
     def test_indexable_ending_parent(self):
-        """INDEXABLE_ENDING's parent should be EXPR_ENDING."""
+        """INDEXABLE_ENDING's $parent should be EXPR_ENDING."""
         self.assertEqual(_ExprState.INDEXABLE_ENDING.value[1], _ExprState.EXPR_ENDING)
 
     def test_callable_ending_parent(self):
-        """CALLABLE_ENDING's parent should be INDEXABLE_ENDING."""
+        """CALLABLE_ENDING's $parent should be INDEXABLE_ENDING."""
         self.assertEqual(_ExprState.CALLABLE_ENDING.value[1], _ExprState.INDEXABLE_ENDING)
 
 
