@@ -14,12 +14,13 @@ from .symbol import (
     EXCEPTION_T,
     ClassName,
     GenericArgument,
-    SymbolTable
+    SymbolTable,
+    ExceptionTypeName
 )
 from utils import CompilerException, unreachable_warning, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
-from copy import deepcopy
+from copy import copy
 from enum import Enum
 from typing import Optional
 
@@ -123,7 +124,7 @@ class Statement(CompilingItem, ABC):
     @abstractmethod
     def as_async(self) -> "Statement":
         """将语句转换为异步版本。"""
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._is_async = True
         return new_stmt
 
@@ -404,7 +405,7 @@ class DeclStmt(Statement):
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         if self._var_value is not None:
             new_stmt._var_value = self._var_value.as_inline(inline_mapping)
             new_stmt._inline_mapping.update(new_stmt._var_value.inline_mapping)
@@ -415,7 +416,7 @@ class DeclStmt(Statement):
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
         if isinstance(self._var_value, CallOp):
-            new_stmt = deepcopy(self)
+            new_stmt = copy(self)
             new_stmt._var_value = self._var_value.check_tail_recursive(func_name)
             new_stmt._tail_recursive_mark = new_stmt._var_value.tail_recursive_mark
             return new_stmt
@@ -494,7 +495,7 @@ class DeclStmt(Statement):
         pass
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._var_value = self._var_value.instantiation(type_args)
         new_stmt._var = list(map(lambda var: var.instantiation(var.name, type_args), self._var))
         return new_stmt
@@ -631,7 +632,10 @@ class DeclStmt(Statement):
             return ""
         if self._var_value is not None:
             self._var_value.set_returns(self._var)
-            front_text: str = self._var_value.front_text + "\n"
+            if self._var_value.front_text is not None:
+                front_text: str = self._var_value.front_text + "\n"
+            else:
+                front_text = ""
         else:
             front_text = ""
         return front_text
@@ -679,7 +683,7 @@ class AssignStmt(Statement):
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._var_value = self._var_value.as_inline(inline_mapping)
         new_stmt._inline_mapping.update(new_stmt._var_value.inline_mapping)
         for i, var in enumerate(self._var):
@@ -689,7 +693,7 @@ class AssignStmt(Statement):
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
         if isinstance(self._var_value, CallOp):
-            new_stmt = deepcopy(self)
+            new_stmt = copy(self)
             new_stmt._var_value = self._var_value.check_tail_recursive(func_name)
             new_stmt._tail_recursive_mark = new_stmt._var_value.tail_recursive_mark
             return new_stmt
@@ -739,7 +743,7 @@ class AssignStmt(Statement):
         pass
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._var_value = self._var_value.instantiation(type_args)
         new_stmt._var = list(map(lambda var: var.instantiation(var.name, type_args), self._var))
         new_stmt._var_types = self._var_types.instantiation(type_args)
@@ -856,14 +860,14 @@ class OpStmt(Statement):
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._expr = self._expr.as_inline(inline_mapping)
         new_stmt._inline_mapping.update(new_stmt._expr.inline_mapping)
         return new_stmt
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
         if isinstance(self._expr, CallOp):
-            new_stmt = deepcopy(self)
+            new_stmt = copy(self)
             new_stmt._var_value = self._expr.check_tail_recursive(func_name)
             new_stmt._tail_recursive_mark = new_stmt._var_value.tail_recursive_mark
             return new_stmt
@@ -886,7 +890,7 @@ class OpStmt(Statement):
         pass
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._expr = self._expr.instantiation(type_args)
         return new_stmt
 
@@ -951,7 +955,7 @@ class ReturnStmt(Statement):
         return super().as_async()
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._inline_mapping = inline_mapping
         for i, finally_stmt in enumerate(self._finally_stmt_list):
             self._finally_stmt_list[i] = finally_stmt.as_inline(new_stmt.inline_mapping)
@@ -981,7 +985,7 @@ class ReturnStmt(Statement):
         self._finally_stmt_list.append(finally_stmt)
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._finally_stmt_list = list(map(lambda finally_stmt: finally_stmt.instantiation(type_args), self._finally_stmt_list))
         return new_stmt
 
@@ -1035,7 +1039,7 @@ class ThrowStmt(Statement):
         return super().as_async()
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._to_throw_expr = self._to_throw_expr.as_inline(inline_mapping)
         new_stmt._inline_mapping.update(new_stmt._to_throw_expr.inline_mapping)
         for i, finally_stmt in enumerate(self._finally_stmt_list):
@@ -1061,14 +1065,15 @@ class ThrowStmt(Statement):
 
     @property
     def input_variables(self) -> set[VariableName]:
-        return self._to_throw_expr.used_variables | set.union(
-            *map(lambda finally_stmt: finally_stmt.input_variables, self._finally_stmt_list))
+        return self._to_throw_expr.used_variables | set(
+            *map(lambda finally_stmt: finally_stmt.input_variables, self._finally_stmt_list)
+        )
 
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
         self._finally_stmt_list.append(finally_stmt)
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "ThrowStmt":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._to_throw_expr = self._to_throw_expr.instantiation(type_args)
         new_stmt._finally_stmt_list = list(map(lambda finally_stmt: finally_stmt.instantiation(type_args), self._finally_stmt_list))
         return new_stmt
@@ -1104,8 +1109,9 @@ class ThrowStmt(Statement):
         """设置抛出的异常表达式。"""
         expr.validate()
         # noinspection PyTypeChecker
-        if not expr.return_type.convertable_to(self._symbol_table["exception"], self._symbol_table.symbols):
+        if not expr.return_type.convertable_to(ExceptionTypeName, self._symbol_table.symbols):
             raise CompilerException(f"Type {expr.return_type.raw_name} cannot be thrown.", self._src_info)
+        self._to_throw_expr = expr
 
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
         self._to_throw_expr = self._to_throw_expr.substitute(const_vars)
@@ -1152,7 +1158,7 @@ class CStmt(Statement):
         return super().as_async()
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._inline_mapping = inline_mapping
         return new_expr
 
@@ -1239,7 +1245,7 @@ class CondStmt(Statement):
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._cond_expr = self._cond_expr.as_inline(inline_mapping)
         new_stmt._inline_mapping.update(new_stmt._cond_expr.inline_mapping)
         new_stmt._stmt = self._stmt.as_inline(new_stmt.inline_mapping)
@@ -1247,7 +1253,7 @@ class CondStmt(Statement):
         return new_stmt
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._stmt = self._stmt.check_tail_recursive(func_name)
         return new_stmt
 
@@ -1273,7 +1279,7 @@ class CondStmt(Statement):
         self._stmt.insert_finally_stmt(finally_stmt)
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._cond_expr = self._cond_expr.instantiation(type_args)
         new_stmt._stmt = self._stmt.instantiation(type_args)
         return new_stmt
@@ -1386,7 +1392,7 @@ class IfStmt(CondStmt):
         self._branches.append(branch)
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._stmt = self._stmt.check_tail_recursive(func_name)
         for i, branch in enumerate(self._branches):
             # noinspection PyTypeChecker
@@ -1395,6 +1401,10 @@ class IfStmt(CondStmt):
         mark: list[str] = list(filter(lambda x: x is not None, marks))
         new_stmt._tail_recursive_mark = mark[0] if len(mark) > 0 else None
         return new_stmt
+
+    @property
+    def input_variables(self) -> set[VariableName]:
+        return self._cond_expr.used_variables | self._stmt.input_variables | set(map(lambda x: x.input_variables, self._branches))
 
 
 class CatchStmt(Statement):
@@ -1419,13 +1429,13 @@ class CatchStmt(Statement):
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._stmt = self._stmt.as_inline(new_stmt.inline_mapping)
         new_stmt._inline_mapping.update(new_stmt._stmt.inline_mapping)
         return new_stmt
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._stmt = self._stmt.check_tail_recursive(func_name)
         new_stmt._tail_recursive_mark = new_stmt._stmt.tail_recursive_mark
         return new_stmt
@@ -1447,7 +1457,7 @@ class CatchStmt(Statement):
         self._stmt.insert_finally_stmt(finally_stmt)
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "CatchStmt":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._stmt = self._stmt.instantiation(type_args)
         new_stmt._except_decl = self._except_decl.instantiation(self._except_decl.name, type_args)
         return new_stmt
@@ -1536,7 +1546,7 @@ class FinallyStmt(Statement):
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._stmt = self._stmt.as_inline(new_stmt.inline_mapping)
         new_stmt._inline_mapping.update(new_stmt._stmt.inline_mapping)
         return new_stmt
@@ -1560,7 +1570,7 @@ class FinallyStmt(Statement):
         pass
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._stmt = self._stmt.instantiation(type_args)
         return new_stmt
 
@@ -1636,6 +1646,8 @@ class TryStmt(Statement):
         """添加一个 catch 异常捕获子句。"""
         except_stmt.indent()
         except_stmt.indent()
+        except_stmt.set_success_jump_to(self._finally_mark_name)
+        except_stmt.set_jump_mark(self._finally_mark_name)
         self._except_stmt.append(except_stmt)
 
     def as_async(self) -> "Statement":
@@ -1645,7 +1657,7 @@ class TryStmt(Statement):
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._try_stmt = self._try_stmt.as_inline(new_stmt.inline_mapping)
         new_stmt._inline_mapping.update(new_stmt._try_stmt.inline_mapping)
         for i, except_stmt in enumerate(new_stmt._except_stmt):
@@ -1659,7 +1671,7 @@ class TryStmt(Statement):
         return new_stmt
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._try_stmt = self._try_stmt.check_tail_recursive(func_name)
         mark: Optional[str] = None
         for i, except_stmt in enumerate(new_stmt._except_stmt):
@@ -1674,26 +1686,15 @@ class TryStmt(Statement):
     def global_init_text(self) -> Optional[str]:
         return self._try_stmt.global_init_text
 
-    def finish(self) -> None:
-        """完成 try 语句的设置，配置跳转标签。"""
-        if self._is_finished:
-            raise CompilerException("TryStmt is already finished.", self._src_info)
-        if len(self._except_stmt) == 0:
-            raise CompilerException("TryStmt must have at least one except clause.", self._src_info)
-        self._try_stmt.set_jump_mark(self._exc_mark_name)
-        for except_stmt in self._except_stmt:
-            except_stmt.set_success_jump_to(self._finally_mark_name)
-            except_stmt.set_jump_mark(self._finally_mark_name)
-        self._is_finished = True
-
     @property
     def head_text(self) -> Optional[str]:
         return None
 
     @property
     def input_variables(self) -> set[VariableName]:
-        return self._try_stmt.input_variables | set.union(
-            *map(lambda except_stmt: except_stmt.input_variables, self._except_stmt))
+        return self._try_stmt.input_variables | set(
+            *map(lambda except_stmt: except_stmt.input_variables, self._except_stmt)
+        )
 
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
         self._try_stmt.insert_finally_stmt(finally_stmt)
@@ -1701,14 +1702,14 @@ class TryStmt(Statement):
             exc.insert_finally_stmt(finally_stmt)
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._try_stmt = self._try_stmt.instantiation(type_args)
         new_stmt._except_stmt = list(map(lambda except_stmt: except_stmt.instantiation(type_args), self._except_stmt))
         return new_stmt
 
     @property
     def is_finished(self) -> bool:
-        return self._is_finished
+        return len(self._except_stmt) > 0
 
     @property
     def new_listeners(self) -> dict[VariableName, str]:
@@ -1746,15 +1747,16 @@ class TryStmt(Statement):
             raise CompilerException("The statement should to be a finally statement.", self._src_info)
         self._finally_stmt = finally_stmt
 
-    def set_try_stmt(self, stmt: Statement) -> None:
+    def set_stmt(self, stmt: Statement) -> None:
         """设置 try 块内的语句。"""
         stmt.indent()
         self._try_stmt = stmt
+        self._try_stmt.set_jump_mark(self._exc_mark_name)
 
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
         self._try_stmt = self._try_stmt.substitute(const_vars)
         self._except_stmt = list(map(lambda except_stmt: except_stmt.substitute(const_vars), self._except_stmt))
-        self._finally_stmt = self._finally_stmt.substitute(const_vars)
+        self._finally_stmt = self._finally_stmt.substitute(const_vars) if self._finally_stmt is not None else None
         return self
 
     @property
@@ -1825,7 +1827,7 @@ class TypeDefStmt(Statement):
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
         if self._src_type_decl is None:
             raise CompilerException("TypeDefStmt must have a type.", self._src_info)
-        result = deepcopy(self)
+        result = copy(self)
         result._src_type_decl = self._src_type_decl.instantiation(type_args)
         return result
 
@@ -1916,7 +1918,8 @@ class BlockStmt(Statement):
     def add_stmt(self, stmt: Statement) -> None:
         """向语句块中添加一条子语句。"""
         if not stmt.is_finished:
-            raise CompilerException("Statement is not finished.", stmt.src_info)
+            if not isinstance(stmt, TryStmt):
+                raise CompilerException("Statement is not finished.", stmt.src_info)
         if isinstance(stmt, CondStmt) and stmt.cond_kw == _CondKw.IF:
             self._processing_mode = _ProcessingMode.CONDITIONAL
         elif isinstance(stmt, TryStmt):
@@ -1974,14 +1977,14 @@ class BlockStmt(Statement):
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         for i, stmt in enumerate(self._stmt):
             new_stmt._stmt[i] = stmt.as_inline(inline_mapping)
             new_stmt._inline_mapping.update(new_stmt._stmt[i].inline_mapping)
         return new_stmt
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._stmt[-1] = self._stmt[-1].check_tail_recursive(func_name)
         return new_stmt
 
@@ -2066,7 +2069,7 @@ class BlockStmt(Statement):
             stmt.insert_finally_stmt(finally_stmt)
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "BlockStmt":
-        new_stmt = deepcopy(self)
+        new_stmt = copy(self)
         new_stmt._stmt = list(map(lambda stmt: stmt.instantiation(type_args), self._stmt))
         return new_stmt
 
@@ -2173,12 +2176,8 @@ class BlockStmt(Statement):
             # noinspection PyTypeChecker
             try_stmt: TryStmt = self._stmt[-1]
             try_stmt.set_finally_stmt(stmt)
-            try_stmt.finish()
             self._processing_mode = _ProcessingMode.NORMAL
         else:
-            # noinspection PyTypeChecker
-            try_stmt: TryStmt = self._stmt[-1]
-            try_stmt.finish()
             self._processing_mode = _ProcessingMode.NORMAL
 
 
@@ -2217,7 +2216,7 @@ class FnBlockStmt(BlockStmt):
                 self._cond_stmt_buffer.append(stmt)
             else:
                 if len(self._cond_stmt_buffer) > 0:
-                    new_stmt = BlockStmt(stmt.src_info, self._symbol_table, self._var_states, self._outer_variables)
+                    new_stmt = BlockStmt(stmt.src_info, self._symbol_table, self._var_states)
                     for buffer_stmt in self._cond_stmt_buffer:
                         new_stmt.add_stmt(buffer_stmt)
                     self._cond_stmt_buffer.clear()
@@ -2225,7 +2224,7 @@ class FnBlockStmt(BlockStmt):
                 self._cond_stmt_buffer.append(stmt)
             return
         if len(self._cond_stmt_buffer) > 0:
-            new_stmt = BlockStmt(stmt.src_info, self._symbol_table, self._var_states, self._outer_variables)
+            new_stmt = BlockStmt(stmt.src_info, self._symbol_table, self._var_states)
             for buffer_stmt in self._cond_stmt_buffer:
                 new_stmt.add_stmt(buffer_stmt)
             self._cond_stmt_buffer.clear()
@@ -2242,7 +2241,7 @@ class FnBlockStmt(BlockStmt):
     def finish(self) -> None:
         """完成函数体的设置，进行语句排序和条件分支处理。"""
         if len(self._cond_stmt_buffer) > 0:
-            new_stmt = BlockStmt(self._cond_stmt_buffer[0].src_info, self._symbol_table, self._var_states, self._outer_variables)
+            new_stmt = BlockStmt(self._cond_stmt_buffer[0].src_info, self._symbol_table, self._var_states)
             for buffer_stmt in self._cond_stmt_buffer:
                 new_stmt.add_stmt(buffer_stmt)
             self._cond_stmt_buffer.clear()
@@ -2310,7 +2309,7 @@ class CastOp(Expression):
         return result
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._expr = self._expr.check_tail_recursive(func_name)
         return new_expr
 
@@ -2346,7 +2345,7 @@ class CastOp(Expression):
         return self._expr.inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._expr = self._expr.instantiation(type_args)
         new_expr._type_name = self._type_name.instantiation(type_args)
         new_expr._throw_stmt = self._throw_stmt.instantiation(type_args)

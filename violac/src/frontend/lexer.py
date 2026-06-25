@@ -92,7 +92,8 @@ class Lexer(FSM):
         file_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_path, self._workspace)
         cache_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
-        if os.path.exists(file_path) and os.path.exists(cache_path + TOKEN_POSTFIX) and os.path.getmtime(file_path) < os.path.getmtime(cache_path + TOKEN_POSTFIX):
+        if os.path.exists(file_path) and os.path.exists(cache_path + TOKEN_POSTFIX) and \
+                os.path.getmtime(file_path) < os.path.getmtime(cache_path + TOKEN_POSTFIX):
             self._logger.info(f"Passed: {file_path}")
             return TaskResult(TaskResultState.SUCCESS)
         self._logger.info(f"Lexing: {file_path}")
@@ -144,7 +145,6 @@ class Lexer(FSM):
         start = Lexer.__logical_states_list(start)
         start = Lexer.__brackets_states_list(start)
         start = Lexer.__punctuation_states_list(start)
-        start = Lexer.__comment_states_list(start)
         return start
 
     @staticmethod
@@ -356,6 +356,9 @@ class Lexer(FSM):
                     next_state.add_transfer("_", identifier_state)
                 current = next_state
             current.set_output(keyword.upper())
+            current.add_transfer("LETTER", identifier_state)
+            current.add_transfer("DIGIT", identifier_state)
+            current.add_transfer("_", identifier_state)
         return first
 
     @staticmethod

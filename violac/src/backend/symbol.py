@@ -639,7 +639,7 @@ class ClassName(TypeName):
     类名称。
     """
 
-    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], name: str, parent: Optional[str],
+    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], name: str, parent: Optional["ClassName"],
                  is_abstract: bool, is_c_part: bool, generic_args: Optional[list[str]] = None) -> None:
         """
         创建类。
@@ -652,7 +652,7 @@ class ClassName(TypeName):
         generic_args: 泛型参数。
         """
         super().__init__(src_info, namespace, name, SymbolType.CLASS)
-        self._parent: str = parent if parent is not None else "object"
+        self._parent: Optional["ClassName"] = parent
         self._children: list[str] = []
         self._properties: dict[str, PropertyVariableName] = {}
         self._methods: dict[tuple[str, tuple[TypeName, ...]], MethodName] = {}
@@ -662,8 +662,6 @@ class ClassName(TypeName):
         self._is_c_part: bool = is_c_part
         self._generic_args: Optional[list[str]] = generic_args
         self._generic_real_types: list[TypeName] = []
-        self.add_property(self._src_info, "$refCount", UINT32, Modifier.PRIVATE, False)
-        self.add_property(self._src_info, "$parent", VOID_PTR, Modifier.PRIVATE, False)
 
     def add_method(self, name: str, method: "MethodName") -> None:
         """
@@ -721,16 +719,13 @@ class ClassName(TypeName):
     def convertable_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
         if isinstance(target, ClassName):
-            if target.name == self.name or target.name == "object":
+            if target.name == self.name or target.self_name == "object":
                 return True
-            self_parent_name: str = self._parent
-            while self_parent_name != "object":
-                if self_parent_name == target.name:
+            self_parent: Optional["ClassName"] = self._parent
+            while self_parent is not None:
+                if self_parent == target:
                     return True
-                parent = symbol_dict[self_parent_name, None]
-                if not isinstance(parent, ClassName):
-                    raise InternalCompilerException("parent is not a class.", self._src_info)
-                self_parent_name = parent.parent
+                self_parent = self_parent.parent
             return False
         return False
 
@@ -839,7 +834,7 @@ class ClassName(TypeName):
         return self._methods
 
     @property
-    def parent(self) -> str:
+    def parent(self) -> Optional[ClassName]:
         """
         获取父类名称。
         """
@@ -854,30 +849,22 @@ class ClassName(TypeName):
 
     def shared_parent(
             self,
-            other: TypeName,
-            symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]
+            other: TypeName
     ) -> Optional["ClassName"]:
         """
         获取公共父类。
         """
         if not isinstance(other, ClassName):
             return None
-        self_parents: list[str] = [self.name]
-        while self_parents[-1] != "object":
-            self_parent = symbol_dict[self_parents[-1], None]
-            if not isinstance(self_parent, ClassName):
-                raise InternalCompilerException(f"{self_parents[-1]} is not a class.", self._src_info)
-            self_parents.append(self_parent.parent)
-        other_parents: list[str] = [other.name]
-        while other_parents[-1] != "object":
-            other_parent = symbol_dict[other_parents[-1], None]
-            if not isinstance(other_parent, ClassName):
-                raise InternalCompilerException(f"{other_parents[-1]} is not a class.", self._src_info)
-            other_parents.append(other_parent.parent)
-        cls_name: str = list(filter(lambda x: x in other_parents, self_parents))[0]
-        cls = symbol_dict[cls_name, None]
-        if not isinstance(cls, ClassName):
-            raise InternalCompilerException(f"{cls_name} is not a class.", self._src_info)
+        self_parents: list[Optional[ClassName]] = [self]
+        while self_parents[-1] is not None:
+            self_parents.append(self.parent)
+        self_parents.pop()
+        other_parents: list[Optional[ClassName]] = [other]
+        while other_parents[-1] is not None:
+            other_parents.append(other.parent)
+        other_parents.pop()
+        cls: Optional[ClassName] = list(filter(lambda x: x in other_parents, self_parents))[0]
         return cls
 
     @property
@@ -1592,8 +1579,7 @@ class FunctionName(GlobalVariableName):
         default_param_names: list[str] = list(filter(lambda x: x.strip() != "", default_param_names))
         not_in_args: list[str] = list(filter(lambda n: n not in self._arg_names, default_param_names))
         if len(not_in_args) != 0:
-            raise CompilerException(f"Default parameter {', '.join(not_in_args)} is not in arguments.",
-                                    self._src_info)
+            raise CompilerException(f"{', '.join(not_in_args)} not in arguments.", self._src_info)
         for name in default_param_names:
             # noinspection PyUnresolvedReferences
             var_type: TypeName = self._type.args[self._arg_names.index(name)]
@@ -1833,6 +1819,8 @@ object_destructor: MethodName = MethodName(
     Modifier.PUBLIC,
     True
 )
+Object.add_property(VIOLA_INIT, "$refCount", UINT32, Modifier.PRIVATE, False)
+Object.add_property(VIOLA_INIT, "$parent", VOID_PTR, Modifier.PRIVATE, False)
 Object.add_method("__del__", object_destructor)
 
 
@@ -2660,6 +2648,7 @@ class SymbolTable:
             [],
             False
         ), "__global__", [])
+        print(self.symbols)
         return self
 
     @property
@@ -2749,7 +2738,7 @@ class SymbolTable:
             raise CompilerException(f"Function {item_name} already exists.", self._src_info)
         args: list[TypeName]
         # noinspection PyTypeChecker
-        returns: list[TypeName] = list(map(lambda ret: self[ret], item_returns[::2])) if len(item_returns) > 1 else []
+        returns: list[TypeName] = list(map(lambda ret: self[ret, None], item_returns[::2])) if len(item_returns) > 1 else []
         if any(map(lambda ret: not isinstance(ret, TypeName), returns)):
             raise CompilerException("Function returns must be types.", self._src_info)
         func_type = FunctionTypeName(self._src_info, args, returns, generic_args)
@@ -2845,19 +2834,17 @@ class SymbolTable:
         cls_name: str = item[0].split(" ")[0].split("%")[0]
         if (cls_name, None) in self:
             raise CompilerException(f"Class {cls_name} already exists.", self._src_info)
-        parent: Optional[ClassName] = None
+        parent: ClassName = Object
         if item[0].split(" ")[0].split("%")[1] != "object":
             parent_name = item[0].split(" ")[0].split("%")[1]
             # noinspection PyTypeChecker
             parent = self[parent_name, None]
             if not isinstance(parent, ClassName):
                 raise CompilerException(f"$parent class {parent_name} is not a class.", self._src_info)
-        else:
-            parent_name = None
         is_abstract: bool = "abstract" in item[0].split(" ")[1:]
         is_c_part: bool = "c" in item[0].split(" ")[1:]
         generic_args: list[str] = item[1].split(" ")
-        cls = ClassName(self._src_info, self.namespace, cls_name, parent_name, is_abstract, is_c_part, generic_args)
+        cls = ClassName(self._src_info, self.namespace, cls_name, parent, is_abstract, is_c_part, generic_args)
         if parent is not None:
             for name, prop in parent.properties.items():
                 cls.add_property_object(name, prop)
@@ -2875,8 +2862,7 @@ class SymbolTable:
             property_name: str = item_text[1].split("%")[1]
             # noinspection PyTypeChecker
             t: TypeName = self[type_name, None]
-            cls.add_property(self._src_info, property_name, t, self.__get_modifier(item_text[2:]),
-                             "static" in item_text[2:])
+            cls.add_property(self._src_info, property_name, t, self.__get_modifier(item_text[2:]), "static" in item_text[2:])
             if item_loc == len(item) - 1:
                 raise CompilerException(f"Unexpected end of class {cls_name}", self._src_info)
             item_loc += 1
@@ -2937,10 +2923,10 @@ class VariableState(Enum):
     ASYNC_ASSIGNED: 异步赋值。
     ASSIGNED: 已赋值。
     """
-    def __gt__(self, other: VariableState) -> bool:
+    def __gt__(self, other: "VariableState") -> bool:
         return self.value > other.value
 
-    def __lt__(self, other: VariableState) -> bool:
+    def __lt__(self, other: "VariableState") -> bool:
         return self.value < other.value
 
     UNDECLARED = 0

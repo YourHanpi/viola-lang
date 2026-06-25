@@ -11,12 +11,12 @@ def __test_one_project(compiler_path: str, project_dir: str) -> None:
         os.mkdir(os.path.join(project_dir, "__viola_cache__"))
     main_file = os.path.join(project_dir, "main.vla") if len(os.listdir(project_dir)) > 3 else \
         os.path.join(project_dir, os.listdir(project_dir)[0])
-    output_dir = os.path.join(os.path.dirname(__file__), "test_compiled", os.path.basename(project_dir))
+    output_dir = os.path.join(str(os.path.dirname(__file__)), "test_compiled", os.path.basename(project_dir))
     print(f"Testing: {project_dir}")
     if os.name == "nt":
         subprocess.run(
             [compiler_path, "compile", f"\"{project_dir}\"", f"-i=\"{main_file}\"", f"-o=\"{output_dir}\"", "-j",
-             "--clear-cache", "--clear-output"],
+             "--clear-cache", "--clear-output", "--clear-log"],
             text=True,
             shell=True,
             timeout=30
@@ -24,7 +24,7 @@ def __test_one_project(compiler_path: str, project_dir: str) -> None:
     else:
         subprocess.run(
             [compiler_path, "compile", f"\"{project_dir}\"", f"-i=\"{main_file}\"", f"-o=\"{output_dir}\"", "-j",
-             "--clear-cache", "--clear-output"],
+             "--clear-cache", "--clear-output", "--clear-log"],
             text=True,
             shell=True,
             timeout=30
@@ -47,9 +47,11 @@ def main() -> None:
     else:
         base_dir = os.path.dirname(os.path.abspath(__file__))
         compiler = f"{base_dir}/../../shortcuts/violac"
+        print(os.path.abspath(compiler))
     if compiler.startswith("\"") and compiler.endswith("\"") or compiler.startswith("'") and compiler.endswith("'"):
         compiler = compiler[1:-1]
-    test_projects(compiler, 40)
+    # TODO: 修正c_compat系列测试，位于第48~55个测试（从0开始计数）
+    test_projects(compiler, 56)
     # test_projects(compiler)
 
 

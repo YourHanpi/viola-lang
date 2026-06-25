@@ -60,9 +60,9 @@ class CompilerVM:
             "FN": self.__make_def_fn,
             "C_PART_SQ": lambda cmd: self.__make(
                 definition.CPartSqDef(self._src_info, self._symbol_table, self._symbol_table.namespace,
-                                      self._var_state_table.assigned_variables, cmd[0],
-                                                                       " ".join(cmd[1:]).split("%"))),
+                                      self._var_state_table.assigned_variables, cmd[0], " ".join(cmd[1:]).split("%"))),
             "CLASS": lambda cmd: self.__make_class(cmd),
+            "CPART_IMPORT": lambda cmd: self.__make(definition.CPartImportDef(self._src_info, self._symbol_table, cmd[0])),
             "FROM_IMPORT": lambda cmd: self.__make(
                 definition.FromImportDef(self._src_info, self._symbol_table, workspace, cmd[0], cmd[1:])),
             "IMPORT": lambda cmd: self.__make(project.ImportDef(self._src_info, self._symbol_table, workspace, cmd[0])),
@@ -130,9 +130,6 @@ class CompilerVM:
             "DECL": lambda cmd: self.__make(
                 statement.DeclStmt(self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace)),
             "ASSIGN": lambda cmd: self.__make(
-                statement.AssignStmt(self._src_info, self._symbol_table, self._var_state_table)
-            ),
-            "ASSIGN_TO_THIS": lambda cmd: self.__make(
                 statement.AssignStmt(self._src_info, self._symbol_table, self._var_state_table, self._current_class)
             ),
             "OP": lambda cmd: self.__make(statement.OpStmt(self._src_info, self._symbol_table, self._var_state_table)),
@@ -146,9 +143,10 @@ class CompilerVM:
                 statement.ElifStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "ELSE": lambda cmd: self.__make(
                 statement.ElseStmt(self._src_info, self._symbol_table, self._var_state_table)),
-            "TRY": lambda cmd: self.__make(statement.TryStmt(self._src_info, self._symbol_table, self._var_state_table)),
-            "CATCH": lambda cmd: self.__make(
-                statement.CatchStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "TRY": lambda cmd: self.__make(
+                statement.TryStmt(self._src_info, self._symbol_table, self._var_state_table)
+            ),
+            "CATCH": lambda cmd: self.__make_catch_stmt(),
             "FINALLY": lambda cmd: self.__make(
                 statement.FinallyStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "TYPE_DEF": lambda cmd: self.__make(
@@ -249,7 +247,6 @@ class CompilerVM:
         lines: list[str] = cmd.split("\n")
         for i, line in enumerate(lines):
             self._exec_line(line)
-            # print(i)
 
     def get(self) -> project.SourceFile:
         """获取栈底的源文件对象，完成写入并返回。"""
@@ -613,7 +610,7 @@ class CompilerVM:
     def __call_set_stmt(self) -> None:
         """为常量定义或条件语句设置语句。"""
         self.__check_type(self._stack[-2], [
-            definition.ConstDef, statement.CondStmt, statement.CatchStmt, statement.FinallyStmt
+            definition.ConstDef, statement.CondStmt, statement.CatchStmt, statement.FinallyStmt, statement.TryStmt
         ])
         self.__check_type(self._stack[-1], [statement.Statement])
         # noinspection PyUnresolvedReferences
@@ -659,6 +656,16 @@ class CompilerVM:
         self._exec_mode_stack.append(self._exec_mode_stack[-1])
         self._scope_count_stack.append(_ScopeCount.HOLD)
         return obj
+
+    def __make_catch_stmt(self) -> statement.CatchStmt:
+        """创建异常处理语句并添加新的作用域。"""
+        self._exec_mode_stack.append(self._exec_mode_stack[-1])
+        self._scope_count_stack.append(_ScopeCount.INC)
+        self._symbol_table.add_scope()
+        self._var_state_table.add_scope()
+        result = statement.CatchStmt(self._src_info, self._symbol_table, self._var_state_table)
+        self._current_catch = result
+        return result
 
     def __make_class(self, cmd: list[str]) -> definition.ClassDef:
         """创建类的定义并添加新的作用域。"""

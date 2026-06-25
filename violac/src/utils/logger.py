@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from .compiler_exceptions import InternalCompilerException, CommandException
 from .compiler_params import COMPILER_PARAMS
+from .file_marks import LOG_DIR
 from .source_info import VIOLA_INIT
 
 from enum import IntEnum
@@ -75,9 +76,9 @@ class FileHandler:
         """打开日志文件，准备写入。"""
         if self._workspace == "":
             raise InternalCompilerException("Log file handler is not configured.", VIOLA_INIT)
-        if not os.path.exists(os.path.join(self._workspace, "__log__")):
-            os.mkdir(os.path.join(self._workspace, "__log__"))
-        self._path = f"{self._workspace}/__log__/{self._output_name}-{time.strftime('%Y-%m-%d-%H-%M-%S')}.log"
+        if not os.path.exists(os.path.join(self._workspace, LOG_DIR)):
+            os.mkdir(os.path.join(self._workspace, LOG_DIR))
+        self._path = os.path.join(self._workspace, LOG_DIR, f"{self._output_name}-{time.strftime('%Y-%m-%d-%H-%M-%S')}.log")
         self._handler = open(self._path, "a", encoding=self._encoding)
 
 

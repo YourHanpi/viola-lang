@@ -8,7 +8,7 @@ from utils.task import TaskResult, TaskResultState
 
 from enum import Enum
 import os
-from typing import Optional, Callable, Sequence, Mapping, Any
+from typing import Optional, Callable, Sequence, Mapping, Any, Union
 
 
 class _ExprState(Enum):
@@ -29,7 +29,7 @@ class _ExprState(Enum):
     UPDATE_STARTING = ("UPDATE_STARTING", None)
     # 后续按需添加状态
 
-    def __eq__(self, other: _ExprState | tuple[str, Optional[_ExprState]]) -> bool:
+    def __eq__(self, other: Union["_ExprState", tuple[str, Optional["_ExprState"]]]) -> bool:
         if isinstance(other, _ExprState):
             return self.value[0] == other.value[0]
         elif isinstance(other, tuple):
@@ -192,8 +192,8 @@ class ExprParser(GlobalParser):
         self._load_tokens(expr_tokens)
         self._lex_unary_op()
         self._current = 0
-        if len(expr_tokens) == 1:
-            self._logger.error("Empty expression")
+        if len(expr_tokens) == 0:
+            self._raise("Empty expression")
             return None
         return self._parse_expr(len(expr_tokens))
 
@@ -1099,7 +1099,7 @@ class ExprParser(GlobalParser):
     def _parse_update_item(self) -> Optional[list[str]]:
         """解析对象更新中的索引项。[expr] = value。"""
         command: list[str] = []
-        self._logger.debug(self._get_current().text)
+        # self._logger.debug(self._get_current().text)
         result = self._parse_expr_splits_with(["COMMA"], ["R_SQUARE_BRACKET"], [], self._parse_expr)
         if result is None:
             return None

@@ -5,7 +5,7 @@ from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TrySt
     STACK_B_POP_FUNC, CleanupBlock
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
     ClassName, MethodName, CLOSURE_T, TypeName, EXCEPTION_T_NAME, EnumName, GlobalVariableName, GenericArgument, \
-    StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable, FunctionTypeName
+    StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable, FunctionTypeName, Object
 from utils import CompilerException, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
@@ -422,7 +422,7 @@ class SqDef(Definition):
             sync_call_text,
             f"{STACK_B_POP_FUNC}(listener->currentThreadId);"
         ]))
-        try_stmt.set_try_stmt(try_inner)
+        try_stmt.set_stmt(try_inner)
         catch_stmt: CatchStmt = CatchStmt(self._src_info, self._symbol_table, self._var_states)
         # noinspection PyTypeChecker
         catch_var: VariableName = LocalVariableName(self._src_info, "exc",
@@ -450,7 +450,6 @@ class SqDef(Definition):
         catch_inner.finish()
         catch_stmt.set_stmt(catch_inner)
         try_stmt.add_except_stmt(catch_stmt)
-        try_stmt.finish()
         try_stmt.remove_mark()
         return try_stmt
 
@@ -714,7 +713,7 @@ class ClassDef(Definition):
         # self.add_method(destructor)
         # var_states.pop_scope()
         self._vtable_name: str = self._decl.vtable_name
-        self._parent_vtable_name: str = f"{self._decl.parent}$$vtable" if self._decl.parent != "object" else "NULL"
+        self._parent_vtable_name: str = f"{self._decl.parent.name}$$vtable" if self._decl.parent != Object else "NULL"
         self._is_finished: bool = False
         self._is_from_generic: bool = False
 

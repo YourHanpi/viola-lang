@@ -4,7 +4,7 @@ from .single_controllers import LexerController, GlobalParserController, ExprPar
 from backend.project import Project
 from maker import TargetSourceRecorder
 from utils import CommandException
-from utils.file_marks import CACHE_DIR
+from utils.file_marks import CACHE_DIR, LOG_DIR
 from utils.logger import LOGGER_CONTROLLER, Logger
 from utils.task import TaskStack, TaskResultState
 
@@ -46,10 +46,14 @@ class MainController:
         if "clear-output" in kwargs and kwargs["clear-output"] == "true" and os.path.exists(output_path):
             shutil.rmtree(output_path)
             os.mkdir(output_path)
+        if "clear-log" in kwargs and kwargs["clear-log"] == "true" and os.path.exists(os.path.join(workspace, LOG_DIR)):
+            shutil.rmtree(os.path.join(workspace, LOG_DIR))
+            os.mkdir(os.path.join(workspace, LOG_DIR))
 
     def run(self) -> None:
         """运行编译流程。"""
         LOGGER_CONTROLLER.open()
+        self._logger.info(f"The compiler will run with {self._thread_num} thread{'s' if self._thread_num > 1 else ''}.")
         try:
             entry_path = os.path.join(self._workspace, self._entry_path)
             self._task_stack.put(["violac", "parse", entry_path])

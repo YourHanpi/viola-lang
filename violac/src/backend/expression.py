@@ -1116,7 +1116,7 @@ class ArrayRef(ValueRef):
             if not isinstance(value.return_type, ClassName):
                 raise InternalCompilerException("ArrayRef element type mismatch", self._src_info)
             if self._element_type != value.return_type:
-                self._element_type = self._element_type.shared_parent(value.return_type, self._symbol_table)
+                self._element_type = self._element_type.shared_parent(value.return_type)
         elif isinstance(self._element_type, BaseTypeName):
             if not isinstance(value.return_type, BaseTypeName):
                 raise InternalCompilerException("ArrayRef element type mismatch", self._src_info)
@@ -2020,7 +2020,12 @@ class CallOp(Expression):
         result._call_name = result._listener_name + "$$_call"
         result._args_tuple = TupleRef(self._src_info, self._symbol_table)
         for arg in self._arg_list:
-            result._args_tuple.append(arg, self._src_info)
+            result._args_tuple.add_value(arg)
+        result._args_tuple.finish()
+        result._returns_tuple = TupleRef(self._src_info, self._symbol_table)
+        for ret in self._returns_list:
+            result._returns_tuple.add_value(ret)
+        result._returns_tuple.finish()
         return result
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
@@ -2235,6 +2240,7 @@ class CallOp(Expression):
         self._returns_tuple = TupleRef(self._src_info, self._symbol_table)
         for ret in self._returns_list:
             self._returns_tuple.add_value(VariableRef(self._src_info, self._symbol_table, ret))
+        self._returns_tuple.finish()
         if len(returns) > 1:
             self._unpack_expr = UnpackExpr(self._src_info, self._symbol_table, self)
             self._unpack_expr.set_returns(returns)
@@ -3256,7 +3262,7 @@ class ConditionalOp(Operator):
             return base_type_degrade(self._expr_list[1].return_type, self._expr_list[2].return_type)
         if isinstance(self._expr_list[1].return_type, ClassName) and \
                 isinstance(self._expr_list[2].return_type, ClassName):
-            return self._expr_list[1].return_type.shared_parent(self._expr_list[2].return_type, self._symbol_table)
+            return self._expr_list[1].return_type.shared_parent(self._expr_list[2].return_type)
         raise CompilerException("The branches of conditional operator have not shared $parent type.", self._src_info)
 
 
