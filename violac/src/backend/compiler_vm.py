@@ -176,6 +176,7 @@ class CompilerVM:
             "SET_CALLER": lambda cmd: self.__call_set_caller(),
             "SET_COND_EXPR": lambda cmd: self.__call_set_cond_expr(),
             "SET_DEF": lambda cmd: self.__call_set_def(),
+            "SET_DEFAULT_PARAM": lambda cmd: self.__call_set_default_param(cmd),
             "SET_END": lambda cmd: self.__call_set_end(),
             "SET_EXCEPT_DECL": lambda cmd: self.__call_set_except_decl(cmd),
             "SET_EXPR": lambda cmd: self.__call_set_expr(),
@@ -306,6 +307,7 @@ class CompilerVM:
         src_text: str = " ".join(cmd[5:])
         self._src_info.set_loc(*loc)
         self._src_info.set_text(src_text)
+        self._symbol_table.set_src_info(self._src_info)
 
     def __call_add_arg(self, cmd: list[str]) -> None:
         """为调用操作添加参数。"""
@@ -491,6 +493,14 @@ class CompilerVM:
         self.__check_type(self._stack[-2], [definition.Closure])
         # noinspection PyUnresolvedReferences
         self._stack[-2].set_def(self._stack[-1])
+        self.__pop()
+
+    def __call_set_default_param(self, cmd: list[str]) -> None:
+        """为函数定义设置默认参数。"""
+        self.__check_type(self._stack[-1], [expression.Expression])
+        self.__check_type(self._stack[-2], [definition.SqDef])
+        # noinspection PyUnresolvedReferences
+        self._stack[-2].set_default_param(cmd[0], self._stack[-1])
         self.__pop()
 
     def __call_set_end(self) -> None:

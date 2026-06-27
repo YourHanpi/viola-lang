@@ -187,7 +187,7 @@ class TestGlobalParserTokenNavigation(unittest.TestCase):
         ]
         self.parser._load_tokens(tokens)
         self.parser._move_to_first_token()
-        collected = self.parser._collect_until("SEMICOLON")
+        collected = self.parser._collect_until(["SEMICOLON"])
         self.assertIsNotNone(collected)
         self.assertEqual(len(collected), 3)  # a, +, b
 

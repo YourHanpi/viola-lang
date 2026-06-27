@@ -42,7 +42,7 @@ def _set_default(args: list[str], kwargs: dict[str, str]) -> tuple[list[str], di
     if "j" not in kwargs:
         kwargs["j"] = "1"
     elif kwargs["j"] == "true":
-        kwargs["j"] = str(os.cpu_count() - 1)
+        kwargs["j"] = str(os.process_cpu_count() - 1)
     return args, kwargs
 
 

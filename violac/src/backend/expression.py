@@ -2221,15 +2221,14 @@ class CallOp(Expression):
         else:
             self._func_expr = expr
             self._call_struct = True
-        if self._func is not None:
+        if self._func is not None and isinstance(self._func, FunctionName):
             func_arg_names: list[str] = self._func.arg_names[len(self._arg_list):]
             for n in func_arg_names:
                 if n in self._kwarg_dict:
                     self._arg_list.append(self._kwarg_dict[n])
                 else:
-                    default_value: Optional[GlobalVariableName] = self._func.default_params[n]
-                    if default_value is not None:
-                        self._arg_list.append(VariableRef(self._src_info, self._symbol_table, default_value))
+                    if n in self._func.default_params:
+                        self._arg_list.append(VariableRef(self._src_info, self._symbol_table, self._func.default_params[n]))
         if self._args_tuple is not None:
             self._args_tuple.finish()
         if self._returns_tuple is not None:

@@ -205,6 +205,7 @@ class SqDef(Definition):
         self._is_from_generic: bool = False
         self._is_main: bool = name == "main"
         self._async_body = None
+        self._default_params: dict[str, Expression] = {}
 
     def add_stmt(self, stmt: Statement) -> None:
         """向函数体中添加语句。"""
@@ -219,6 +220,8 @@ class SqDef(Definition):
         """完成函数定义，生成异步函数体。"""
         if self._is_finished:
             raise CompilerException("Function is already finished.", self._src_info)
+        if list(self._default_params.keys()) != list(self._decl.default_params.keys()):
+            raise InternalCompilerException("Some default parameters has not been set.", self._src_info)
         self._async_body = self.__get_async_body()
         self._body.indent()
         self._body.finish()
@@ -328,7 +331,7 @@ class SqDef(Definition):
     @property
     def outer_text(self) -> Optional[str]:
         """获取函数的外层代码文本。"""
-        results = list(filter(lambda x: x is not None, [self._body.outer_text, self._async_body.outer_text]))
+        results = list(filter(lambda x: x is not None, [self._body.outer_text, self._async_body.outer_text, self._get_default_params_decl()]))
         return "\n".join(results)
 
     @property
@@ -339,6 +342,13 @@ class SqDef(Definition):
     def set_as_closure(self, name: str) -> None:
         """将函数设置为闭包，绑定捕获结构体。"""
         self._body.set_as_closure(name, self._args)
+
+    def set_default_param(self, param_name: str, default_value: Expression) -> None:
+        if param_name not in self._decl.default_params:
+            raise InternalCompilerException(f"Parameter '{param_name}' is not a default parameter.", self._src_info)
+        if param_name in self._default_params:
+            raise CompilerException(f"Default parameter '{param_name}' has already been set.", self._src_info)
+        self._default_params[param_name] = default_value
 
     @property
     def source(self) -> str:
@@ -355,6 +365,29 @@ class SqDef(Definition):
     def used_variables(self) -> set[VariableName]:
         """获取函数中使用的非参数外部变量集合。"""
         return self._body.input_variables - set(self._args)
+
+    def _get_default_params_decl(self) -> str:
+        # noinspection PyTypeChecker
+        return "\n".join(
+            [v.outer_text for v in self._default_params.values() if v.outer_text is not None] +
+            [v.type_name_pair_calling + ";" for v in self._decl.default_params.values()]
+        )
+
+    def _get_default_params_init(self) -> str:
+        """获取函数的默认参数初始化文本。"""
+        results: list[str] = []
+        for k in self._decl.default_params:
+            global_init_text = self._default_params[k].global_init_text
+            if global_init_text is not None:
+                results.append(global_init_text)
+            head_text = self._default_params[k].head_text
+            if head_text is not None:
+                results.append(head_text)
+            front_text = self._default_params[k].front_text
+            if front_text is not None:
+                results.append(front_text)
+            results.append(f"{self._decl.default_params[k].name} = {self._default_params[k].text};")
+        return "\n".join(results)
 
     def _source(self, is_native_func: bool) -> str:
         """生成函数的 C 源代码文本。"""
@@ -583,6 +616,11 @@ class CPartSqDef(SqDef):
     def add_stmt(self, stmt: CStmt) -> None:
         """向函数体中添加 C 语句。"""
         self._body.add_stmt(stmt)
+
+    def finish(self) -> None:
+        super().finish()
+        self._body.remove_mark()
+        self._body.remove_jump_mark()
 
     @property
     def source(self) -> str:

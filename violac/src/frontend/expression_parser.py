@@ -692,6 +692,7 @@ class ExprParser(GlobalParser):
             return None
         self._next()
         result = self._parse_type_list(["CALL ADD_TYPE_ARG"])
+        self._next()
         if result is None:
             return None
         if result[1] < 0:

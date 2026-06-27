@@ -226,7 +226,7 @@ class GlobalParser:
         """
         return os.path.exists(path + PARSING_LOCK_POSTFIX)
 
-    def _collect_until(self, end_token_type: str) -> Optional[list[Token]]:
+    def _collect_until(self, end_token_type: list[str]) -> Optional[list[Token]]:
         """
         收集记号直到遇到指定类型的结束记号（跳过空白和注释）。
         :param end_token_type: 结束记号类型。
@@ -235,7 +235,7 @@ class GlobalParser:
         tokens: list[Token] = []
         while self._current < self._tokens_num:
             token = self._get_current()
-            if end_token_type in token.type:
+            if token.type[0] in end_token_type:
                 return tokens
             tokens.append(token)
             self._next_no_skip()
@@ -514,7 +514,7 @@ class GlobalParser:
             self._raise("Unexpected token: " + self._get_current().text)
             return None
         self._next()
-        expr_results = self._collect_until("SEMICOLON")
+        expr_results = self._collect_until(["SEMICOLON"])
         if expr_results is None:
             return None
         expr_commands = self._add_parsing_slice(expr_results)
@@ -652,6 +652,7 @@ class GlobalParser:
                 else:
                     self._raise("Unexpected token: " + self._get_current().text)
                     return None
+                self._next()
             self._parser_generic_table.add(class_name, len(generic_args))
             self._next()
         self._symbol_types[class_name] = "CLASS", len(generic_args)
@@ -823,7 +824,7 @@ class GlobalParser:
             return None
         var_name = self._get_current().text
         self._next()
-        expr_tokens = self._collect_until("SEMICOLON")
+        expr_tokens = self._collect_until(["SEMICOLON"])
         if expr_tokens is None:
             return None
         expr_tokens = [Token(cls_name, ["IDENTIFIER"], self._src_info.copy())] + expr_tokens
@@ -865,7 +866,7 @@ class GlobalParser:
             self._raise("Unexpected token: " + self._get_current().text)
             return None
         self._next()
-        expr_results = self._collect_until("SEMICOLON")
+        expr_results = self._collect_until(["SEMICOLON"])
         if expr_results is None:
             return None
         if not self._match_type("SEMICOLON"):
@@ -1021,7 +1022,7 @@ class GlobalParser:
             self._raise("Unexpected token: " + self._get_current().text)
             return None
         self._next()
-        value = self._collect_until("SEMICOLON")
+        value = self._collect_until(["SEMICOLON"])
         if value is None:
             return None
         result = self._add_parsing_slice(value)
@@ -1035,7 +1036,7 @@ class GlobalParser:
         解析表达式并返回RAW引用。
         :return: RAW命令列表。
         """
-        result_tokens = self._collect_until("SEMICOLON")
+        result_tokens = self._collect_until(["SEMICOLON"])
         if result_tokens is None:
             return None
         result = self._add_parsing_slice(result_tokens)
@@ -1165,6 +1166,7 @@ class GlobalParser:
             generic_names: list[str] = []
             if self._match_type("GENERIC_START"):
                 expect_comma: bool = False
+                self._next()
                 while True:
                     if self._current >= self._tokens_num:
                         self._raise("Unexpected EOF")
@@ -1191,10 +1193,11 @@ class GlobalParser:
             self._raise("Unexpected token: " + self._get_current().text)
             return None
         self._next()
-        args_result = self._parse_type_name_list(["R_BRACKET"])
+        args_result = self._parse_type_name_list_with_default(["R_BRACKET"])
         if args_result is None:
             return None
         command[0] += "%".join([t.split("%")[0] for t in args_result[1]]) if len(args_result[1]) > 0 else ""
+        command += args_result[0]
         symbol += ["%".join(args_result[1])]
         if not self._match_type("R_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -1217,7 +1220,7 @@ class GlobalParser:
                 self._raise("__new__ must return this")
                 return None
             rets = [f"{cls_name}%_this"]
-        symbol += ["%".join(rets)]
+        symbol += ["%".join(rets), " ".join(args_result[2])]
         if not self._match_type("R_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -1369,7 +1372,7 @@ class GlobalParser:
     @_set_loc_command
     def _parse_op_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         """解析操作语句（表达式语句）。"""
-        expr_result = self._collect_until("SEMICOLON")
+        expr_result = self._collect_until(["SEMICOLON"])
         if expr_result is None:
             return None
         if not self._match_type("SEMICOLON"):
@@ -1514,6 +1517,7 @@ class GlobalParser:
         l_angle_bracket_count: int = 0
         l_square_bracket_count: int = 0
         is_tuple: bool = False
+        is_array: bool = False
         result: list[str] = []
         while self._current < self._tokens_num:
             token = self._get_current()
@@ -1536,6 +1540,12 @@ class GlobalParser:
             if l_bracket_count == 0 and l_angle_bracket_count == 0 and l_square_bracket_count == 0:
                 self._next()
                 if self._match_type("L_SQUARE_BRACKET"):
+                    l_square_bracket_count += 1
+                    is_array = True
+                    continue
+                if not is_array and not is_tuple and self._match_type("GENERIC_START"):
+                    l_angle_bracket_count += 1
+                    self._next()
                     continue
                 if self._match_type("ARROW"):
                     if not is_tuple:
@@ -1554,8 +1564,9 @@ class GlobalParser:
                     if not self._match_type("R_BRACKET"):
                         self._raise("Unexpected token: " + token.text)
                         return None
-                    self._next()
                     result.append(dst_type)
+                    result.append(self._get_current().text)
+                    self._next()
                 return "".join(result)
             if l_bracket_count < 0 or l_angle_bracket_count < 0 or l_square_bracket_count < 0:
                 self._raise(f"Unexpected token {token.text}")
@@ -1620,6 +1631,49 @@ class GlobalParser:
                 expect_comma = True
                 self._next()
         return command, symbol
+
+    def _parse_type_name_list_with_default(self, end_symbols: list[str]) -> Optional[tuple[list[str], list[str], list[str]]]:
+        """解析类型-名称列表（类型声明中的参数列表），但是带有默认参数。"""
+        expect_comma: bool = False
+        command: list[str] = []
+        args_symbol: list[str] = []
+        defaults: list[str] = []
+        while True:
+            if self._match_types(end_symbols):
+                break
+            if expect_comma and not self._match_type("COMMA"):
+                self._raise("Expected comma. Unexpected token: " + self._get_current().text)
+                return None
+            if expect_comma and self._match_type("COMMA"):
+                self._next()
+                expect_comma = False
+            else:
+                if self._match_type("THIS"):
+                    if len(args_symbol) > 0:
+                        self._raise("Unexpected token: " + self._get_current().text)
+                        return None
+                    self._next()
+                    args_symbol.append("THIS")
+                    continue
+                type_decl = self._parse_type()
+                if type_decl is None:
+                    return None
+                if not self._match_type("IDENTIFIER"):
+                    self._raise("Unexpected token: " + self._get_current().text)
+                    return None
+                arg_name = self._get_current().text
+                args_symbol.append(type_decl + "%" + arg_name)
+                expect_comma = True
+                self._next()
+                if self._match_type("ASSIGN"):
+                    self._next()
+                    expr_tokens = self._collect_until(["COMMA", "R_BRACKET"])
+                    if expr_tokens is None:
+                        return None
+                    command.append(self._add_parsing_slice(expr_tokens))
+                    command.append(f"CALL SET_DEFAULT_PARAM {arg_name}")
+                    defaults.append(arg_name)
+        return command, args_symbol, defaults
 
     def _raise(self, message: str) -> None:
         """

@@ -1263,6 +1263,10 @@ class FunctionTypeName(TypeName):
         return self._generic_args is not None and len(self._generic_args) > 0
 
     @property
+    def raw_name(self) -> str:
+        return f"({', '.join(map(lambda t: t.raw_name, self._args))}) -> ({', '.join(map(lambda t: t.raw_name, self._returns))})"
+
+    @property
     def returns(self) -> list[TypeName]:
         """
         获取返回类型列表。
@@ -1426,7 +1430,7 @@ class FunctionName(GlobalVariableName):
         self._arg_names: list[str] = arg_names
         self._ret_names: list[str] = ret_names
         self._export: bool = export
-        self._default_params: dict[str, Optional[GlobalVariableName]] = {k: None for k in arg_names}
+        self._default_params: dict[str, GlobalVariableName] = {}
         self._arg_types: dict[str, TypeName] = {k: v for k, v in zip(arg_names, t.args)}
         self._kw_type = SymbolType.FUNCTION
         self._is_method = is_method
@@ -1521,7 +1525,7 @@ class FunctionName(GlobalVariableName):
         return self._type.c_calling_name_with_var(self._name)
 
     @property
-    def default_params(self) -> dict[str, Optional[GlobalVariableName]]:
+    def default_params(self) -> dict[str, GlobalVariableName]:
         """
         获取参数默认值。
         """
@@ -1583,7 +1587,7 @@ class FunctionName(GlobalVariableName):
         for name in default_param_names:
             # noinspection PyUnresolvedReferences
             var_type: TypeName = self._type.args[self._arg_names.index(name)]
-            self._default_params[name] = GlobalVariableName(self._src_info, self.as_namespace(), name, var_type)
+            self._default_params[name] = GlobalVariableName(self._src_info, self.as_namespace(), "$default$" + name, var_type)
 
     @property
     def type(self) -> FunctionTypeName:
@@ -2384,7 +2388,7 @@ class SymbolTable:
         self._init_builtin_types()
 
         def __real_type_getter(name: str) -> Optional[TypeName]:
-            name = name.strip()
+            name = self.clean_namespace(name.strip())
             if (name, None) in self.symbols:
                 return self.symbols[name, None]
             return None
@@ -2648,8 +2652,13 @@ class SymbolTable:
             [],
             False
         ), "__global__", [])
-        print(self.symbols)
         return self
+
+    def set_src_info(self, src_info: SourceInfo) -> None:
+        """
+        设置源代码信息。
+        """
+        self._src_info = src_info.copy()
 
     @property
     def symbols(self) -> dict[tuple[str, tuple[TypeName, ...] | None], NamedSymbol]:
@@ -2756,7 +2765,7 @@ class SymbolTable:
         func.set_default_params(item_default_args)
         for k, v in func.default_params.items():
             if v is not None:
-                self.add(v, item_name + "$default$" + k, None)
+                self.add(v, k, None)
         self.add(func, item_name, args)
 
     def _read_global_var_decl(self, item: list[str]) -> None:
@@ -2817,7 +2826,7 @@ class SymbolTable:
         method.set_default_params(item_default_args)
         for k, v in method.default_params.items():
             if v is not None:
-                self.add(v, f"{self.clean_namespace(cls.raw_name)}.{method_name}$default$" + k, None)
+                self.add(v, k, None)
         self.add(method, f"{self.clean_namespace(cls.raw_name)}.{method_name}", args)
         cls.add_method(method_name, method)
 

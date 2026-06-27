@@ -51,7 +51,7 @@ def main() -> None:
     if compiler.startswith("\"") and compiler.endswith("\"") or compiler.startswith("'") and compiler.endswith("'"):
         compiler = compiler[1:-1]
     # TODO: 修正c_compat系列测试，位于第48~55个测试（从0开始计数）
-    test_projects(compiler, 56)
+    test_projects(compiler, 72)
     # test_projects(compiler)
 
 
