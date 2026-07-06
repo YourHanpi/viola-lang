@@ -3,7 +3,7 @@ from utils import CompilerException, InternalCompilerException, SourceInfo, VIOL
 from utils.fsm import FSM, StateNode, Token
 
 from abc import ABC, abstractmethod
-from copy import deepcopy
+from copy import copy
 from enum import Enum
 import os
 from typing import Optional, Callable
@@ -117,8 +117,6 @@ VIOLA_LANG: list[NamespaceName] = [NamespaceName("viola"), NamespaceName("lang")
 VIOLA_LANG_EXCEPTION: list[NamespaceName] = [NamespaceName("viola"), NamespaceName("lang"), NamespaceName("exception")]
 VIOLA_COLLECTIONS: list[NamespaceName] = [NamespaceName("viola"), NamespaceName("collections")]
 VIOLA_IO: list[NamespaceName] = [NamespaceName("viola"), NamespaceName("io")]
-GENERIC_CLASS: list[NamespaceName] = [NamespaceName("__generic"), NamespaceName("class")]
-GENERIC_FUNC: list[NamespaceName] = [NamespaceName("__generic"), NamespaceName("function")]
 
 
 class NamedSymbol(Symbol):
@@ -137,7 +135,7 @@ class NamedSymbol(Symbol):
         super().__init__("$".join(list(map(lambda n: n.name, namespace)) + [name]), kw_type)
         self._namespace: list[NamespaceName] = namespace
         self._self_name: str = name
-        self._src_info: SourceInfo = deepcopy(src_info)
+        self._src_info: SourceInfo = copy(src_info)
         self._raw_name: str = ".".join(list(map(lambda n: n.name, namespace)) + [name])
 
     def __str__(self) -> str:
@@ -432,7 +430,8 @@ class GenericArgument(TypeName):
 
     def convertable_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
-        raise CompilerException("Generic argument is not instantiated.", self._src_info)
+        # raise CompilerException("Generic argument is not instantiated.", self._src_info)
+        return True
 
     def instantiation(self, real_types: dict["GenericArgument", TypeName]) -> TypeName:
         return real_types[self]
@@ -489,7 +488,7 @@ class VariableName(NamedSymbol):
         new_name: 新变量名。
         t: 泛型参数的实例化字典。
         """
-        new_variable: VariableName = deepcopy(self)
+        new_variable: VariableName = copy(self)
         new_variable._type = new_variable._type.instantiation(t)
         return new_variable
 
@@ -794,14 +793,14 @@ class ClassName(TypeName):
         generic_dict: dict[GenericArgument, TypeName] = dict(
             zip(map(lambda n: GenericArgument(self._src_info, n), self._generic_args), args)
         )
-        result: ClassName = ClassName(self._src_info, GENERIC_CLASS, new_name, self._parent,
+        result: ClassName = ClassName(self._src_info, [], new_name, self._parent,
                                       self._is_abstract, False, self._generic_args)
         for name, prop in self._properties.items():
             if name in ["$refCount", "$parent"]:
                 continue
             result.add_property_object(name, prop.instantiation("", generic_dict))
         for (name, _), method in self._methods.items():
-            result.add_method(name, method.instantiation(f"{new_name}.{method.name}", generic_dict))
+            result.add_method(name, method.instantiation(f"{new_name}${method.name}", generic_dict))
         return result
 
     @property
@@ -1540,7 +1539,7 @@ class FunctionName(GlobalVariableName):
 
     def instantiation(self, new_name: str, t: dict["GenericArgument", TypeName]) -> "FunctionName":
         new_type: FunctionTypeName = self.type.instantiation(t)
-        result: FunctionName = FunctionName(self._src_info, GENERIC_FUNC, new_name,
+        result: FunctionName = FunctionName(self._src_info, self._namespace, new_name,
                                             new_type, self._arg_names, self._ret_names, self._export)
         return result
 
@@ -1551,7 +1550,7 @@ class FunctionName(GlobalVariableName):
         real_types: 类型实参。
         """
         new_type: FunctionTypeName = self.type.instantiation_func_t(real_types)
-        result: FunctionName = FunctionName(self._src_info, GENERIC_FUNC, new_name,
+        result: FunctionName = FunctionName(self._src_info, self._namespace, new_name,
                                             new_type, self._arg_names, self._ret_names, self._export)
         return result
 
@@ -1735,7 +1734,7 @@ class MethodName(PropertyVariableName):
         new_name: 实例化后的方法名。
         t: 从类型形参到类型实参的字典。
         """
-        result: MethodName = deepcopy(self)
+        result: MethodName = copy(self)
         result._function_name = self._function_name.instantiation(new_name, t)
         result.rename(result._function_name.name)
         return result
@@ -1746,7 +1745,7 @@ class MethodName(PropertyVariableName):
         new_name: 实例化后的方法名。
         t: 类型实参。
         """
-        result: MethodName = deepcopy(self)
+        result: MethodName = copy(self)
         result._function_name = self._function_name.instantiation_full(new_name, t)
         result.rename(result._function_name.name)
         return result
@@ -1975,7 +1974,7 @@ class GenericTable:
             if t in self._class_instances[class_name]:
                 raise InternalCompilerException("Class already exists.", self._source_info)
             self._class_instances[class_name][t] = class_name.instantiation_full(
-                f"{class_name.name}$_{len(self._class_instances[class_name])}", list(t)
+                f"{class_name.raw_name}$_{len(self._class_instances[class_name])}", list(t)
             )
         else:
             raise InternalCompilerException("Class does not exist.", self._source_info)
@@ -2024,11 +2023,11 @@ class GenericTable:
             if t in self._class_instances[class_name]:
                 return self._class_instances[class_name][t]
             self.add_cls_instance(class_name, t)
-            result = deepcopy(self._class_instances[class_name][t])
+            result = copy(self._class_instances[class_name][t])
             if result.is_generic:
                 del self._class_instances[class_name][t]
             return result
-        raise CompilerException("Class does not exist.", self._source_info)
+        raise CompilerException(f"Class {class_name.raw_name} does not exist.", self._source_info)
 
     def get_func_instance(self, function_name: FunctionName, t: tuple[TypeName, ...]) -> FunctionName:
         """
@@ -2038,7 +2037,7 @@ class GenericTable:
             if t in self._function_instances[function_name]:
                 return self._function_instances[function_name][t]
             self.add_func_instance(function_name, t)
-            result = deepcopy(self._function_instances[function_name][t])
+            result = copy(self._function_instances[function_name][t])
             if result.type.is_generic:
                 del self._function_instances[function_name][t]
             return result
@@ -2064,7 +2063,7 @@ class _TypeNameLexer(FSM):
             char_buf.append(char)
             if next_state is None:
                 if self._current.output is None:
-                    raise CompilerException(f"Unexpected character {char}", deepcopy(src_info))
+                    raise CompilerException(f"Unexpected character {char}", copy(src_info))
                 tokens.append(Token("".join(char_buf[:-1]), [self._current.output], 0))
                 char_buf.clear()
                 current_loc -= 1
@@ -2357,9 +2356,6 @@ class SymbolTable:
                 result = self._type_name_parser.parse(self._src_info, item2)
                 if result is None:
                     raise CompilerException(f"Type {item} not found", self._src_info)
-                for t in result.used_types:
-                    if (t.name, None) not in self:
-                        raise CompilerException(f"Type {t.name} not found", self._src_info)
                 return result
             raise CompilerException(f"Symbol {item} not found", self._src_info)
         return self.symbols[item, types]
@@ -2427,6 +2423,20 @@ class SymbolTable:
         if symbol.kw_type != SymbolType.FUNCTION and symbol.kw_type != SymbolType.METHOD and types is not None:
             raise InternalCompilerException("Symbol must not have types.", self._src_info)
         self._symbols[-1][name, tuple(types) if types is not None else None] = symbol
+
+    def add_to_root(self, symbol: NamedSymbol, name: str, types: Optional[list[TypeName]]) -> None:
+        """
+        添加一个符号到最底层作用域。
+        symbol: 需要添加的符号。
+        name: 查找符号时使用的名称。
+        types: 符号的参数类型列表（如果不是函数则为None）。
+        """
+        if types is not None:
+            if (name, tuple(types)) in self.symbols:
+                raise CompilerException(f"Symbol {name} already exists.", self._src_info)
+        if symbol.kw_type != SymbolType.FUNCTION and symbol.kw_type != SymbolType.METHOD and types is not None:
+            raise InternalCompilerException("Symbol must not have types.", self._src_info)
+        self._symbols[0][name, tuple(types) if types is not None else None] = symbol
 
     def add_scope(self) -> None:
         """
@@ -2582,6 +2592,7 @@ class SymbolTable:
         获取泛型类的实例化对象。
         """
         cls = self._generic_table.get_cls_instance(class_name, t)
+        self.add_to_root(cls, cls.name, None)
         for method in cls.methods.values():
             if method.is_generic and method not in self._generic_table:
                 self._generic_table.add_func_def(method.as_function())
@@ -2653,6 +2664,13 @@ class SymbolTable:
             False
         ), "__global__", [])
         return self
+
+    def remove(self, name: str) -> None:
+        """
+        删除符号。
+        """
+        for i, sym in enumerate(self._symbols):
+            self._symbols[i] = dict(filter(lambda x: x[0][0] != name, sym.items()))
 
     def set_src_info(self, src_info: SourceInfo) -> None:
         """
@@ -2797,6 +2815,10 @@ class SymbolTable:
         cls = self[cls_name, None]
         if not isinstance(cls, ClassName):
             raise CompilerException(f"{cls_name} is not a class.", self._src_info)
+        # noinspection PyTypeChecker
+        generic_arg_obj_cls: list[GenericArgument] = cls.generic_args if cls.generic_args is not None else []
+        for arg in generic_arg_obj_cls:
+            self.add(arg, arg.name, None)
         is_abstract: bool = "abstract" in item_name[2:]
         is_static: bool = "static" in item_name[2:] or method_name.endswith(".__new__")
         export: bool = "export" in item_name[2:]
@@ -2829,6 +2851,8 @@ class SymbolTable:
                 self.add(v, k, None)
         self.add(method, f"{self.clean_namespace(cls.raw_name)}.{method_name}", args)
         cls.add_method(method_name, method)
+        for arg in generic_arg_obj_cls:
+            self.remove(arg.name)
 
     def _read_class_decl(self, item: list[str]) -> None:
         """
@@ -2854,12 +2878,18 @@ class SymbolTable:
         is_c_part: bool = "c" in item[0].split(" ")[1:]
         generic_args: list[str] = item[1].split(" ")
         cls = ClassName(self._src_info, self.namespace, cls_name, parent, is_abstract, is_c_part, generic_args)
+        if len(generic_args) > 0:
+            self._generic_table.add_cls_def(cls)
+        # noinspection PyTypeChecker
+        generic_arg_obj: list[GenericArgument] = cls.generic_args if cls.generic_args is not None else []
+        for arg in generic_arg_obj:
+            self.add(arg, arg.name, None)
         if parent is not None:
             for name, prop in parent.properties.items():
                 cls.add_property_object(name, prop)
             vtable: ClassName = ClassName(self._src_info, [], cls.name + "$$vtable", None, False,
                                           False)
-            self.add(vtable, cls.name + ".$$vtable", None)
+            self.add(vtable, self.clean_namespace(cls.raw_name) + ".$$vtable", None)
             cls.add_property(self._src_info, "$$vtable", vtable, Modifier.PUBLIC, True)
         item_loc: int = 2
         while not item[item_loc] == "END CLASS":
@@ -2884,6 +2914,8 @@ class SymbolTable:
             cls.add_method("__del__", del_method)
             self.add(del_method, cls_key_name + ".__del__", [cls])
         self.add(cls, cls_key_name, None)
+        for arg in generic_args:
+            self.remove(arg)
 
     def _read_enum_decl(self, item: list[str]) -> None:
         """

@@ -23,11 +23,11 @@ Viola是一个以内存安全、高并发简化和高性能为设计目标的编
 
 ## 语法解析
 
-这一部分（编译器前端）使用递归下降法编写，目前尚未完成。源代码见[链接](violac/src/frontend)。
+这一部分（编译器前端）使用递归下降法编写，目前已经基本完成，正在进行测试。源代码见[链接](violac/src/frontend)。
 
 ## 语义分析和目标代码生成
 
-这一部分（编译器后端）负责生成C代码，初稿已经基本完成，但未进行测试。源代码见[链接](violac/src/backend)。
+这一部分（编译器后端）负责生成C代码，目前已经基本完成，正在进行测试。源代码见[链接](violac/src/backend)。
 
 语义分析部分预计包含以下功能：
 
@@ -54,10 +54,10 @@ Viola是一个以内存安全、高并发简化和高性能为设计目标的编
 ## viola.lang
 
 - `array<T>`类。
-- `expand`函数，声明为`sq expand<T>(T[] inputs, (T[]) -> (T) predicate, size_t size) -> (T[] results);`，运行时将调用predicate函数对最后input.length个元素进行迭代，并返回迭代至长度为size的数组。
-- `filter`函数，声明为`fn filter<T>(T[] inputs, (T) -> (bool) predicate, bool useAsync) -> (T[] results);`。
-- `map`函数，声明为`fn map<T, U>(T[] inputs, (T) -> (U) mapper, bool useAsync) -> (U[] results);`。
-- `reduce`函数，声明为`fn reduce<T>(T[] inputs, (T, T) -> (T) reducer, T initialValue, bool useAsync) -> (T result);`。
+- `expand`函数，声明为`sq expand::<T>(T[] inputs, (T[]) -> (T) predicate, size_t size) -> (T[] results);`，运行时将调用predicate函数对最后input.length个元素进行迭代，并返回迭代至长度为size的数组。
+- `filter`函数，声明为`fn filter::<T>(T[] inputs, (T) -> (bool) predicate, bool useAsync) -> (T[] results);`。
+- `map`函数，声明为`fn map::<T, U>(T[] inputs, (T) -> (U) mapper, bool useAsync) -> (U[] results);`。
+- `reduce`函数，声明为`fn reduce::<T>(T[] inputs, (T, T) -> (T) reducer, T initialValue, bool useAsync) -> (T result);`。
 - `string`类。
 
 ### viola.lang.thread

@@ -1154,6 +1154,9 @@ class CStmt(Statement):
         else:
             self._text += "\n" + text
 
+    def finish(self) -> None:
+        """完成 C 代码语句的构建。"""
+
     def as_async(self) -> "Statement":
         return super().as_async()
 
@@ -1404,7 +1407,7 @@ class IfStmt(CondStmt):
 
     @property
     def input_variables(self) -> set[VariableName]:
-        return self._cond_expr.used_variables | self._stmt.input_variables | set(map(lambda x: x.input_variables, self._branches))
+        return self._cond_expr.used_variables | self._stmt.input_variables | set().union(*map(lambda x: x.input_variables, self._branches))
 
 
 class CatchStmt(Statement):

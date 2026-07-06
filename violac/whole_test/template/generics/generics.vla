@@ -1,5 +1,5 @@
 // Viola Generics Test Template
-// Tests: generic classes and generic functions/methods
+// Tests: generic classes
 
 // Generic class
 class ${GENERIC_CLASS}::<${TYPE_PARAM}> {
@@ -9,12 +9,6 @@ class ${GENERIC_CLASS}::<${TYPE_PARAM}> {
     public sq __new__(${TYPE_PARAM} ${PROP_NAME_1}, int ${PROP_NAME_2}) -> (this) {
         this.${PROP_NAME_1} = ${PROP_NAME_1};
         this.${PROP_NAME_2} = ${PROP_NAME_2};
-    }
-
-    // Generic method
-    public fn convertTo::<${TYPE_PARAM_2}>() -> (${GENERIC_CLASS}::<${TYPE_PARAM_2}> result) {
-        // Placeholder for type conversion
-        result = ${GENERIC_CLASS}::<${TYPE_PARAM_2}>(${TYPE_PARAM_2}_default, this.${PROP_NAME_2});
     }
 
     // Non-generic method

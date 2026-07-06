@@ -107,23 +107,23 @@ class ParserGenericTable:
         """
         初始化泛型参数表。
         """
-        self._table: dict[str, int] = {}
+        self._table: dict[str, list[str]] = {}
 
-    def add(self, name: str, params_num: int) -> None:
+    def add(self, name: str, params: list[str]) -> None:
         """
         添加泛型类型及其参数数量。
         :param name: 类型名称。
-        :param params_num: 泛型参数数量。
+        :param params: 泛型参数数量。
         """
-        self._table[name] = params_num
+        self._table[name] = params
 
     def dump(self) -> str:
         """
         序列化泛型参数表为字符串。
         """
-        return "\n".join(f"{name} {params_num}" for name, params_num in self._table.items())
+        return "\n".join(f"{name} {' '.join(params_num)}" for name, params_num in self._table.items())
 
-    def get_params_num(self, name: str) -> int:
+    def get_params(self, name: str) -> list[str]:
         """
         获取指定类型的泛型参数数量。
         :param name: 类型名称。
@@ -138,8 +138,8 @@ class ParserGenericTable:
         """
         self = cls()
         for line in data.split("\n"):
-            name, params_num = line.split()
-            self.add(name, int(params_num))
+            params = line.split()
+            self.add(params[0], params[1:])
         return self
 
 

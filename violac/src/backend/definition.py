@@ -206,6 +206,10 @@ class SqDef(Definition):
         self._is_main: bool = name == "main"
         self._async_body = None
         self._default_params: dict[str, Expression] = {}
+        # noinspection PyTypeChecker
+        generic_args: list[GenericArgument] = self._decl.type.generic_args if self._decl.type.generic_args is not None else []
+        for arg in generic_args:
+            self._symbol_table.add(arg, arg.name, None)
 
     def add_stmt(self, stmt: Statement) -> None:
         """向函数体中添加语句。"""
@@ -754,6 +758,10 @@ class ClassDef(Definition):
         self._parent_vtable_name: str = f"{self._decl.parent.name}$$vtable" if self._decl.parent != Object else "NULL"
         self._is_finished: bool = False
         self._is_from_generic: bool = False
+        # noinspection PyTypeChecker
+        generic_args: list[GenericArgument] = self._decl.generic_args if self._decl.generic_args is not None else []
+        for arg in generic_args:
+            self._symbol_table.add(arg, arg.name, None)
 
     def add_method(self, method: SqDef) -> None:
         """向类中添加方法定义。"""

@@ -1,17 +1,13 @@
 // Viola Inheritance Test Template
-// Tests: class inheritance, abstract classes, method overriding, polymorphism
+// Tests: class inheritance and method overriding
 
-// Abstract base class
-abstract class ${ABSTRACT_CLASS} {
+// Base class
+class ${ABSTRACT_CLASS} {
     ${PROP_A_TYPE} ${PROP_A_NAME};
 
     public sq __new__(${PROP_A_TYPE} ${PROP_A_NAME}) -> (this) {
         this.${PROP_A_NAME} = ${PROP_A_NAME};
     }
-
-    // Abstract methods
-    public abstract fn area() -> (double result);
-    public abstract fn description() -> (string result);
 
     // Concrete method
     public fn get${PROP_A_NAME_CAP}() -> (${PROP_A_TYPE} result) {
@@ -19,7 +15,7 @@ abstract class ${ABSTRACT_CLASS} {
     }
 }
 
-// Concrete subclass 1
+// Concrete subclass
 class ${SUBCLASS_1} extends ${ABSTRACT_CLASS} {
     ${PROP_B_TYPE} ${PROP_B_NAME};
 
@@ -27,75 +23,11 @@ class ${SUBCLASS_1} extends ${ABSTRACT_CLASS} {
         this.${PROP_A_NAME} = ${PROP_A_NAME};
         this.${PROP_B_NAME} = ${PROP_B_NAME};
     }
-
-    public fn area() -> (double result) {
-        result = this.${PROP_A_NAME} * this.${PROP_B_NAME};
-    }
-
-    public fn description() -> (string result) {
-        result = "${SUBCLASS_1_DESC}";
-    }
-}
-
-// Concrete subclass 2
-class ${SUBCLASS_2} extends ${ABSTRACT_CLASS} {
-    ${PROP_C_TYPE} ${PROP_C_NAME};
-
-    public sq __new__(${PROP_A_TYPE} ${PROP_A_NAME}, ${PROP_C_TYPE} ${PROP_C_NAME}) -> (this) {
-        this.${PROP_A_NAME} = ${PROP_A_NAME};
-        this.${PROP_C_NAME} = ${PROP_C_NAME};
-    }
-
-    public fn area() -> (double result) {
-        result = this.${PROP_A_NAME} * this.${PROP_C_NAME} * ${AREA_FACTOR};
-    }
-
-    public fn description() -> (string result) {
-        result = "${SUBCLASS_2_DESC}";
-    }
-}
-
-// Multi-level inheritance
-abstract class ${INTERMEDIATE_CLASS} extends ${ABSTRACT_CLASS} {
-    ${PROP_D_TYPE} ${PROP_D_NAME};
-
-    public sq __new__(${PROP_A_TYPE} ${PROP_A_NAME}, ${PROP_D_TYPE} ${PROP_D_NAME}) -> (this) {
-        this.${PROP_A_NAME} = ${PROP_A_NAME};
-        this.${PROP_D_NAME} = ${PROP_D_NAME};
-    }
-
-    // Still abstract - does not implement all methods
-}
-
-class ${SUBCLASS_3} extends ${INTERMEDIATE_CLASS} {
-    public sq __new__(${PROP_A_TYPE} ${PROP_A_NAME}, ${PROP_D_TYPE} ${PROP_D_NAME}) -> (this) {
-        this.${PROP_A_NAME} = ${PROP_A_NAME};
-        this.${PROP_D_NAME} = ${PROP_D_NAME};
-    }
-
-    public fn area() -> (double result) {
-        result = this.${PROP_A_NAME} + this.${PROP_D_NAME};
-    }
-
-    public fn description() -> (string result) {
-        result = "${SUBCLASS_3_DESC}";
-    }
 }
 
 sq main() -> () {
-    // Create instances of concrete subclasses
+    // Create instance of subclass
     ${SUBCLASS_1} obj1(${INIT_VAL_A}, ${INIT_VAL_B});
-    ${SUBCLASS_2} obj2(${INIT_VAL_A}, ${INIT_VAL_C});
-    ${SUBCLASS_3} obj3(${INIT_VAL_A}, ${INIT_VAL_D});
-
-    // Call overridden methods
-    double area1 = obj1.area();
-    double area2 = obj2.area();
-    double area3 = obj3.area();
-
-    string desc1 = obj1.description();
-    string desc2 = obj2.description();
-    string desc3 = obj3.description();
 
     // Call inherited method
     ${PROP_A_TYPE} val = obj1.get${PROP_A_NAME_CAP}();

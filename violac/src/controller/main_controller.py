@@ -55,7 +55,7 @@ class MainController:
         LOGGER_CONTROLLER.open()
         self._logger.info(f"The compiler will run with {self._thread_num} thread{'s' if self._thread_num > 1 else ''}.")
         try:
-            entry_path = os.path.join(self._workspace, self._entry_path)
+            entry_path = os.path.abspath(self._entry_path)
             self._task_stack.put(["violac", "parse", entry_path])
             while not self._task_stack.is_finished:
                 if self._post_task():

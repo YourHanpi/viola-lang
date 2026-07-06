@@ -63,7 +63,7 @@ class GlobalParser:
         self._src_info: SourceInfo = VIOLA_INIT
         self._imports: dict[str, str] = {}
         self._parser_generic_table: ParserGenericTable = ParserGenericTable()
-        self._symbol_types: dict[str, tuple[str, int]] = {}
+        self._symbol_types: dict[str, tuple[str, list[str]]] = {}
         self._logger: Logger = Logger(f"Parser[0]")
         self._tasks: list[list[str]] = []
         self._static_libs_to_link: list[str] = []
@@ -274,7 +274,9 @@ class GlobalParser:
         Returns:
             依次为目标的符号表路径、符号类型表路径、语法分析锁路径和源代码路径。
         """
-        root_paths: list[str] = [self._workspace] + os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":")
+        root_paths: list[str] = [self._workspace]
+        if "VIOLA_HOME" in os.environ:
+            root_paths += os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":")
         for root_path in root_paths:
             # TODO: 增加对Viola元数据（viola.metadata）的格式与解析
             # header_path = os.path.join(root_path, namespace.replace(".", os.sep) + ".vlah")
@@ -301,6 +303,7 @@ class GlobalParser:
         while self._current < self._tokens_num:
             if self._match_types(["FN", "SQ", "CLASS", "ENUM"]):
                 break
+            self._next()
 
     def _handle_error_from_import(self) -> None:
         """
@@ -309,6 +312,7 @@ class GlobalParser:
         while self._current < self._tokens_num:
             if self._match_types(["FN", "SQ", "CLASS", "ENUM", "IMPORT", "FROM"]):
                 break
+            self._next()
 
     def _load_symbol(self, namespace: str, to_load: Optional[list[str]] = None) -> Optional[list[str]]:
         """
@@ -381,16 +385,16 @@ class GlobalParser:
         for text in texts:
             text = text.strip()
             kv_list: list[str] = text.split("%")
-            type_args_count: int = int(kv_list[2])
+            type_args: list[str] = kv_list[2:]
             if to_load is None or kv_list[0] in to_load:
                 original_name: str = kv_list[0]
                 if to_load is None:
                     original_name = namespace + "." + original_name
                     kv_list[0] = alias + "." + kv_list[0]
-                self._symbol_types[kv_list[0]] = kv_list[1], type_args_count
+                self._symbol_types[kv_list[0]] = kv_list[1], type_args
                 self._imports[kv_list[0]] = original_name
-                if type_args_count > 0:
-                    self._parser_generic_table.add(kv_list[0], type_args_count)
+                if len(type_args) > 0:
+                    self._parser_generic_table.add(kv_list[0], type_args)
 
     def _load_tokens(self, tokens: list[Token]) -> None:
         """
@@ -554,7 +558,7 @@ class GlobalParser:
         if len(prefixes) > 1:
             self._raise(f"Unexpected prefix for C part sq: {' '.join(prefixes)}")
             return None
-        decl_result = self._parse_func_decl("SQ", [], True)
+        decl_result = self._parse_func_decl("SQ", [], False)
         if decl_result is not None:
             command, symbol = decl_result
         else:
@@ -571,10 +575,10 @@ class GlobalParser:
     @_set_loc_command
     def _parse_c_part_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         """解析C代码片段语句（cpart { ... }）。"""
-        self._next()
         if not self._match_type("L_CURLY_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
+        self._next()
         codes: list[str] = []
         while True:
             if self._current >= self._tokens_num:
@@ -592,6 +596,7 @@ class GlobalParser:
         for code in codes:
             if code.strip():
                 result.append(f"CALL ADD_TEXT {code}")
+        result.append("CALL ADD_STMT")
         return result, []
 
     @_set_loc_command
@@ -653,9 +658,9 @@ class GlobalParser:
                     self._raise("Unexpected token: " + self._get_current().text)
                     return None
                 self._next()
-            self._parser_generic_table.add(class_name, len(generic_args))
+            self._parser_generic_table.add(class_name, generic_args)
             self._next()
-        self._symbol_types[class_name] = "CLASS", len(generic_args)
+        self._symbol_types[class_name] = "CLASS", generic_args
         parent_name: str = "object"
         if self._match_type("EXTENDS"):
             self._next()
@@ -1069,15 +1074,17 @@ class GlobalParser:
     @_set_loc_command
     def _parse_from_import(self) -> Optional[tuple[list[str], list[str]]]:
         """解析from...import语句。"""
+        self._next()
         module_path: Optional[str] = self._parse_name()
         if module_path is None:
             return None
-        self._next()
         if not self._match_type("IMPORT"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
+        self._next()
         expect_comma: bool = False
         import_symbols: list[str] = []
+        is_wildcard: bool = False
         while True:
             if self._current >= self._tokens_num:
                 self._raise("Unexpected EOF")
@@ -1092,11 +1099,16 @@ class GlobalParser:
                 import_symbols.append(self._get_current().text)
                 expect_comma = True
                 self._next()
+            elif self._match_type("MUL"):
+                is_wildcard = True
+                self._next()
             elif self._match_type("SEMICOLON"):
                 break
             else:
                 self._raise("Unexpected token: " + self._get_current().text)
                 return None
+        if is_wildcard:
+            import_symbols = ["*"]
         self._load_symbol_type_list(module_path, module_path, import_symbols)
         if len(self._tasks) > 0:
             return None
@@ -1184,11 +1196,11 @@ class GlobalParser:
                         self._raise("Unexpected token: " + self._get_current().text)
                         return None
                 symbol.append(" ".join(generic_names))
-                self._parser_generic_table.add(func_name, len(generic_names))
+                self._parser_generic_table.add(func_name, generic_names)
                 self._next()
             else:
                 symbol.append("")
-            self._symbol_types[func_name] = "FUNCTION", len(generic_names)
+            self._symbol_types[func_name] = "FUNCTION", generic_names
         if not self._match_type("L_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
@@ -1286,14 +1298,16 @@ class GlobalParser:
                 self._raise("Unexpected EOF")
                 return None
             self._next()
-            return [f"MAKE DEF CPART_IMPORT {''.join(name_buffer)}"], []
-        self._back()
+            return [f"MAKE DEF CPART_IMPORT {''.join(name_buffer)}", "CALL ADD_DEF"], []
         module_path: Optional[str] = self._parse_name()
         if module_path is None:
             return None
         alias: str = module_path
-        self._next()
         if self._match_type("AS"):
+            self._next()
+            if not self._match_type("IDENTIFIER"):
+                self._raise("Unexpected token: " + self._get_current().text)
+                return None
             alias = self._get_current().text
             self._next()
         if not self._match_type("SEMICOLON"):
@@ -1540,10 +1554,13 @@ class GlobalParser:
             if l_bracket_count == 0 and l_angle_bracket_count == 0 and l_square_bracket_count == 0:
                 self._next()
                 if self._match_type("L_SQUARE_BRACKET"):
+                    result.append(self._get_current().text)
                     l_square_bracket_count += 1
                     is_array = True
+                    self._next()
                     continue
                 if not is_array and not is_tuple and self._match_type("GENERIC_START"):
+                    result.append(self._get_current().text)
                     l_angle_bracket_count += 1
                     self._next()
                     continue

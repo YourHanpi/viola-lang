@@ -60,7 +60,8 @@ class Lexer(FSM):
                     self._logger.error(str(CompilerException(f"Unexpected character {char}", self._src_info.copy())))
                     while current_loc < text_length and char not in " \n\t":
                         current_loc += 1
-                        char = text[current_loc]
+                        if current_loc < text_length:
+                            char = text[current_loc]
                     tokens.append(Token("", ["_ERROR"], self._src_info.copy()))
                     self._is_error = True
                 else:
@@ -77,7 +78,10 @@ class Lexer(FSM):
                 char_buf.clear()
             char_buf.append(char)
             self._current = next_state if next_state is not None else self._start
-            self._src_info.set_text(text_lines[self._start_line - 1])
+            if 0 <= self._start_line - 1 < len(text_lines):
+                self._src_info.set_text(text_lines[self._start_line - 1])
+            else:
+                self._src_info.set_text("")
             current_loc += 1
         return tokens
 

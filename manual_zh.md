@@ -1,8 +1,10 @@
 # Viola编译器
 
+**在GitHub上访问[项目](https://github.com/YourHanpi/viola-lang)**
+
 ## 简介
 
-Viola是一种静态类型的、编译式的、通用的、大小写敏感的、数据不可变的编程语言，它可以兼容C++。
+Viola是一种静态类型的、编译式的、通用的、大小写敏感的、数据不可变的编程语言，它可以兼容C语言。
 
 Viola支持面向对象的程序设计，包括封装、继承、多态和抽象等等。
 
@@ -20,33 +22,30 @@ Viola支持面向对象的程序设计，包括封装、继承、多态和抽象
 
 ## 基本数据类型
 
-- `bool` - 布尔类型（相当于C++ `bool`）
-- `int` - 整型（相当于C++ `int`）
-    - `int8` - 8位整型（相当于C++ `int8_t`）
-    - `int16` - 16位整型（相当于C++ `int16_t`）
-    - `int32` - 32位整型（相当于C++ `int32_t`）
-    - `int64` - 64位整型（相当于C++ `int64_t`）
-    - `uint` - 无符号整型（相当于C++ `unsigned int`）
-    - `uint8` - 8位无符号整型（相当于C++ `uint8_t`）
-    - `uint16` - 16位无符号整型（相当于C++ `uint16_t`）
-    - `uint32` - 32位无符号整型（相当于C++ `uint32_t`）
-    - `uint64` - 64位无符号整型（相当于C++ `uint64_t`）
-    - `size_t` - 数据长度类型（相当于C++ `size_t`）
-- `float` - 浮点型（相当于C++ `float`)
-    - `float32` - 32位浮点型（相当于C++ `float32_t`）
-    - `float64` - 64位浮点型（相当于C++ `float64_t`）
-    - `double` - 双精度浮点型（相当于C++ `double`）
-    - `long double` - 四精度浮点型（相当于C++ `long double`）
-- `complex` - 复数类型（相当于C++ `std::complex<float>`）
-    - `complex64` - 64位复数类型（相当于C++ `std::complex<float32_t>`）
-    - `complex128` - 128位复数类型（相当于C++ `std::complex<float64_t>`）
+- `bool` - 布尔类型（相当于C `bool`）
+- `int` - 整型（相当于C `int`）
+    - `int8` - 8位整型（相当于C `int8_t`）
+    - `int16` - 16位整型（相当于C `int16_t`）
+    - `int32` - 32位整型（相当于C `int32_t`）
+    - `int64` - 64位整型（相当于C `int64_t`）
+    - `uint` - 无符号整型（相当于C `unsigned int`）
+    - `uint8` - 8位无符号整型（相当于C `uint8_t`）
+    - `uint16` - 16位无符号整型（相当于C `uint16_t`）
+    - `uint32` - 32位无符号整型（相当于C `uint32_t`）
+    - `uint64` - 64位无符号整型（相当于C `uint64_t`）
+    - `size_t` - 数据长度类型（相当于C `size_t`）
+- `float` - 浮点型（相当于C `float`）
+    - `float32` - 32位浮点型（相当于C `float32_t`）
+    - `float64` - 64位浮点型（相当于C `float64_t`）
+    - `double` - 双精度浮点型（相当于C `double`）
+    - `float128` - 四精度浮点型（相当于C `long double`）
 
 ## 集合数据类型
 
 **注意：所有集合类型与类类型在实现上均为object类。**
 
-- `T[]` - 元素类型为T的数组类型（见cSource/src/Base/Array.h）
-- `dict<K, V>` - 键为K类型，值为V类型的字典类型
+- `T[]` - 元素类型为T的数组类型
+- `dict::<K, V>` - 键为K类型，值为V类型的字典类型（**TODO: 字典功能尚未实装**）
 - `(T1, T2, ...)` - 元素类型为T1, T2, ...的元组类型
 - `(T1, T2, ...) -> (R1, R2, ...)` - 函数类型，参数类型为`T1, T2, ...`，返回类型为`(R1, R2, ...)`
 - `string` - 字符串类型
@@ -67,7 +66,7 @@ Typename varname;
 int a;
 float b;
 string c;
-dict<int, string> d;
+dict::<int, string> d;
 ```
 
 变量的定义语法如下：
@@ -82,7 +81,7 @@ Typename varname = value;
 int a = 10;
 float b = 3.14;
 string c = "Hello, World!";
-dict<int, string> d = {1: "one", 2: "two", 3: "three"};
+dict::<int, string> d = {1: "one", 2: "two", 3: "three"};
 ```
 
 变量的赋值语法如下：
@@ -186,6 +185,8 @@ true  // 布尔字面量
 1919.810l // 128位浮点型
 ```
 
+**TODO: 128位浮点型的支持**
+
 ### 字符串字面量
 
 字符串字面量的写法是这样的：
@@ -202,6 +203,8 @@ true  // 布尔字面量
 ```viola
 "Hello, world!\n"
 ```
+
+**TODO: 实现r前缀字符串。**
 
 - 如果不希望转义任何字符，则需要加上`r`前缀。例如：
 
@@ -221,33 +224,34 @@ r"Hello, world!\n" // 相当于"Hello, world!\\n"的值
 
 二元算术运算符：
 
-| 运算符  | 描述                   | 调用方式         | 调用的魔术方法                                                                                                         |
-|:-----|:---------------------|:-------------|:----------------------------------------------------------------------------------------------------------------|
-| `+`  | 把两个操作数相加             | `x = a + b`  | `fn __add__(T1 other) -> T2`<br>`fn __radd__(T1 other) -> T2`\*<br>\*当`a`所在类的`__add__`方法未定义时，调用`b`的此方法          |
-| `-`  | 将前一操作数减去后一操作数        | `x = a - b`  | `fn __sub__(T1 other) -> T2`<br>`fn __rsub__(T1 other) -> T2`\*<br>\*当`a`所在类的`__sub__`方法未定义时，调用`b`的此方法          |
-| `*`  | 把两个操作数相乘             | `x = a * b`  | `fn __mul__(T1 other) -> T2`<br>`fn __rmul__(T1 other) -> T2`\*<br>\*当`a`所在类的`__mul__`方法未定义时，调用`b`的此方法          |
-| `/`  | 将前一操作数除以后一操作数        | `x = a / b`  | `fn __div__(T1 other) -> T2`<br>`fn __rdiv__(T1 other) -> T2`\*<br>\*当`a`所在类的`__div__`方法未定义时，调用`b`的此方法          |
-| `%`  | 取前一操作数除以后一操作数的余数     | `x = a % b`  | `fn __mod__(T1 other) -> T2`<br>`fn __rmod__(T1 other) -> T2`\*<br>\*当`a`所在类的`__mod__`方法未定义时，调用`b`的此方法          |
-| `**` | 取前一操作数的幂，指数为后一操作数    | `x = a ** b` | `fn __pow__(T1 other) -> T2`<br>`fn __rpow__(T1 other) -> T2`\*<br>\*当`a`所在类的`__pow__`方法未定义时，调用`b`的此方法          |
-| `@`  | 进行矩阵乘法，将前一操作数右乘后一操作数 | `x = a @ b`  | `fn __matmul__(T1 other) -> T2`<br>`fn __rmatmul__(T1 other) -> T2`\*<br>\*当`a`所在类的`__matmul__`方法未定义时，调用`b`的此方法 |
+| 运算符  | 描述                   | 调用方式         | 调用的魔术方法                                                                                                                           |
+|:-----|:---------------------|:-------------|:----------------------------------------------------------------------------------------------------------------------------------|
+| `+`  | 把两个操作数相加             | `x = a + b`  | `fn __add__(T1 other) -> (T2 result)`<br>`fn __radd__(T1 other) -> (T2 result)`\*<br>\*当`a`所在类的`__add__`方法未定义时，调用`b`的此方法          |
+| `-`  | 将前一操作数减去后一操作数        | `x = a - b`  | `fn __sub__(T1 other) -> (T2 result)`<br>`fn __rsub__(T1 other) -> (T2 result)`\*<br>\*当`a`所在类的`__sub__`方法未定义时，调用`b`的此方法          |
+| `*`  | 把两个操作数相乘             | `x = a * b`  | `fn __mul__(T1 other) -> (T2 result)`<br>`fn __rmul__(T1 other) -> (T2 result)`\*<br>\*当`a`所在类的`__mul__`方法未定义时，调用`b`的此方法          |
+| `/`  | 将前一操作数除以后一操作数        | `x = a / b`  | `fn __div__(T1 other) -> (T2 result)`<br>`fn __rdiv__(T1 other) -> (T2 result)`\*<br>\*当`a`所在类的`__div__`方法未定义时，调用`b`的此方法          |
+| `%`  | 取前一操作数除以后一操作数的余数     | `x = a % b`  | `fn __mod__(T1 other) -> (T2 result)`<br>`fn __rmod__(T1 other) -> (T2 result)`\*<br>\*当`a`所在类的`__mod__`方法未定义时，调用`b`的此方法          |
+| `**` | 取前一操作数的幂，指数为后一操作数    | `x = a ** b` | `fn __pow__(T1 other) -> (T2 result)`<br>`fn __rpow__(T1 other) -> (T2 result)`\*<br>\*当`a`所在类的`__pow__`方法未定义时，调用`b`的此方法          |
+| `@`  | 进行矩阵乘法，将前一操作数右乘后一操作数 | `x = a @ b`  | `fn __matmul__(T1 other) -> (T2 result)`<br>`fn __rmatmul__(T1 other) -> (T2 result)`\*<br>\*当`a`所在类的`__matmul__`方法未定义时，调用`b`的此方法 |
 
 一元算术运算符：
 
-| 运算符 | 描述  | 调用方式     | 调用的魔术方法             |
-|:----|:----|:---------|:--------------------|
-| `+` | 取正数 | `x = +a` | `fn __pos__() -> T` |
-| `-` | 取负数 | `x = -a` | `fn __neg__() -> T` |
+| 运算符 | 描述   | 调用方式     | 调用的魔术方法                |
+|:----|:-----|:---------|:-----------------------|
+| `+` | 取正数  | `x = +a` | `fn __pos__() -> T`    |
+| `-` | 取负数  | `x = -a` | `fn __neg__() -> T`    |
+| `~` | 按位取反 | `x = ~a` | `fn __invert__() -> T` |
 
 关系运算符：
 
-| 运算符  | 描述                 | 调用方式         | 调用的魔术方法                     |
-|:-----|:-------------------|:-------------|:----------------------------|
-| `==` | 判断两个操作数是否相等        | `x = a == b` | `fn __eq__(T1 other) -> T2` |
-| `!=` | 判断两个操作数是否不相等       | `x = a != b` | `fn __ne__(T1 other) -> T2` |
-| `>`  | 判断前一操作数是否大于后一操作数   | `x = a > b`  | `fn __gt__(T1 other) -> T2` |
-| `<`  | 判断前一操作数是否小于后一操作数   | `x = a < b`  | `fn __lt__(T1 other) -> T2` |
-| `>=` | 判断前一操作数是否大于等于后一操作数 | `x = a >= b` | `fn __ge__(T1 other) -> T2` |
-| `<=` | 判断前一操作数是否小于等于后一操作数 | `x = a <= b` | `fn __le__(T1 other) -> T2` |
+| 运算符  | 描述                 | 调用方式         | 调用的魔术方法                              |
+|:-----|:-------------------|:-------------|:-------------------------------------|
+| `==` | 判断两个操作数是否相等        | `x = a == b` | `fn __eq__(T1 other) -> (T2 result)` |
+| `!=` | 判断两个操作数是否不相等       | `x = a != b` | `fn __ne__(T1 other) -> (T2 result)` |
+| `>`  | 判断前一操作数是否大于后一操作数   | `x = a > b`  | `fn __gt__(T1 other) -> (T2 result)` |
+| `<`  | 判断前一操作数是否小于后一操作数   | `x = a < b`  | `fn __lt__(T1 other) -> (T2 result)` |
+| `>=` | 判断前一操作数是否大于等于后一操作数 | `x = a >= b` | `fn __ge__(T1 other) -> (T2 result)` |
+| `<=` | 判断前一操作数是否小于等于后一操作数 | `x = a <= b` | `fn __le__(T1 other) -> (T2 result)` |
 
 逻辑运算符：
 
@@ -259,22 +263,22 @@ r"Hello, world!\n" // 相当于"Hello, world!\\n"的值
 
 位运算符：
 
-| 运算符  | 描述   | 调用方式         | 调用的魔术方法                                                                                                                      |
-|:-----|:-----|:-------------|:-----------------------------------------------------------------------------------------------------------------------------|
-| `&`  | 按位与  | `x = a & b`  | `fn __and__(T1 other) -> T2`<br>`fn __rand__(T1 other) -> T2 `\*<br>\*当`a`所在类的`__and__`方法未定义时，调用`b`的`__rand__`方法             |
-| `\|` | 按位或  | `x = a \| b` | `fn __or__(T1 other) -> T2`<br>`fn __ror__(T1 other) -> T2 `\*<br>\*当`a`所在类的`__or__`方法未定义时，调用`b`的`__ror__`方法                 |
-| `^`  | 按位异或 | `x = a ^ b`  | `fn __xor__(T1 other) -> T2`<br>`fn __rxor__(T1 other) -> T2 `\*<br>\*当`a`所在类的`__xor__`方法未定义时，调用`b`的`__rxor__`方法             |
-| `~`  | 按位取反 | `x = ~a`     | `fn __not__() -> T2`                                                                                                         |
-| `<<` | 左移   | `x = a << b` | `fn __lshift__(T1 other) -> T2`<br>`fn __rlshift__(T1 other) -> T2 `\*<br>\*当`a`所在类的`__lshift__`方法未定义时，调用`b`的`__rlshift__`方法 |
-| `>>` | 右移   | `x = a >> b` | `fn __rshift__(T1 other) -> T2`<br>`fn __rrshift__(T1 other) -> T2 `\*<br>\*当`a`所在类的`__rshift__`方法未定义时，调用`b`的`__rrshift__`方法 |
+| 运算符  | 描述   | 调用方式         | 调用的魔术方法                                                                                                                                        |
+|:-----|:-----|:-------------|:-----------------------------------------------------------------------------------------------------------------------------------------------|
+| `&`  | 按位与  | `x = a & b`  | `fn __and__(T1 other) -> (T2 result)`<br>`fn __rand__(T1 other) -> (T2 result) `\*<br>\*当`a`所在类的`__and__`方法未定义时，调用`b`的`__rand__`方法             |
+| `\|` | 按位或  | `x = a \| b` | `fn __or__(T1 other) -> (T2 result)`<br>`fn __ror__(T1 other) -> (T2 result) `\*<br>\*当`a`所在类的`__or__`方法未定义时，调用`b`的`__ror__`方法                 |
+| `^`  | 按位异或 | `x = a ^ b`  | `fn __xor__(T1 other) -> (T2 result)`<br>`fn __rxor__(T1 other) -> (T2 result) `\*<br>\*当`a`所在类的`__xor__`方法未定义时，调用`b`的`__rxor__`方法             |
+| `~`  | 按位取反 | `x = ~a`     | `fn __not__() -> (T2 result)`                                                                                                                  |
+| `<<` | 左移   | `x = a << b` | `fn __lshift__(T1 other) -> (T2 result)`<br>`fn __rlshift__(T1 other) -> (T2 result) `\*<br>\*当`a`所在类的`__lshift__`方法未定义时，调用`b`的`__rlshift__`方法 |
+| `>>` | 右移   | `x = a >> b` | `fn __rshift__(T1 other) -> (T2 result)`<br>`fn __rrshift__(T1 other) -> (T2 result) `\*<br>\*当`a`所在类的`__rshift__`方法未定义时，调用`b`的`__rrshift__`方法 |
 
 其他运算符：
 
-| 运算符       | 描述   | 调用方式             | 调用的魔术方法                          |
-|:----------|:-----|:-----------------|:---------------------------------|
-| `.`       | 属性访问 | `x = obj.prop`   | 无                                |
-| `(T)`     | 类型转换 | `x = (T)value`   | 无                                |
-| `[index]` | 索引访问 | `x = obj[index]` | `fn __getitem__(T1 index) -> T2` |
+| 运算符       | 描述   | 调用方式              | 调用的魔术方法                                   |
+|:----------|:-----|:------------------|:------------------------------------------|
+| `.`       | 属性访问 | `x = obj.prop`    | 无                                         |
+| `(as T)`  | 类型转换 | `x = (as T)value` | 无                                         |
+| `[index]` | 索引访问 | `x = obj[index]`  | `fn __getitem__(T1 index) -> (T2 result)` |
 
 ### 对象更新操作符
 
@@ -312,7 +316,7 @@ arr2 = arr1 => {
 ```
 
 这段代码的含义是：令arr2的索引为start1到end1的元素依次为newArr1，arr2的索引为start2到end2的元素依次为newArr2，其余值与arr1相同。
-**只有定义了`__setitem__`方法，且`__setitem__`方法接受整数作为索引时，才能使用这种对象更新操作符。**
+**只有定义了`__setitem__`方法，且`__setitem__`方法接受切片作为索引时，才能使用这种对象更新操作符。**
 
 ### 运算符优先级
 
@@ -322,23 +326,32 @@ arr2 = arr1 => {
 |:----|:------|:------------------|:-----|
 | 1   | 后缀    | `()` `[]` `.`     | 从左到右 |
 | 2   | 一元运算符 | `+` `-` `!` `~`   | 从右到左 |
-| 3   | 乘除和取模 | `*` `/` `%` `@`   | 从左到右 |
-| 4   | 加减    | `+` `-`           | 从左到右 |
-| 5   | 移位    | `<<` `>>`         | 从左到右 |
-| 6   | 比较    | `>` `>=` `<` `<=` | 从左到右 |
-| 7   | 相等    | `==` `!=`         | 从左到右 |
-| 8   | 按位与   | `&`               | 从左到右 |
-| 9   | 按位异或  | `^`               | 从左到右 |
-| 10  | 按位或   | `\|`              | 从左到右 |
-| 11  | 逻辑与   | `&&`              | 从左到右 |
-| 12  | 逻辑或   | `\|\|`            | 从左到右 |
-| 13  | 对象更新  | `=> {}`           | 从右到左 |
+| 3   | 幂     | `**`              | 从右到左 |
+| 4   | 乘除和取模 | `*` `/` `%` `@`   | 从左到右 |
+| 5   | 加减    | `+` `-`           | 从左到右 |
+| 6   | 移位    | `<<` `>>`         | 从左到右 |
+| 7   | 比较    | `>` `>=` `<` `<=` | 从左到右 |
+| 8   | 相等    | `==` `!=`         | 从左到右 |
+| 9   | 按位与   | `&`               | 从左到右 |
+| 10  | 按位异或  | `^`               | 从左到右 |
+| 11  | 按位或   | `\|`              | 从左到右 |
+| 12  | 逻辑与   | `&&`              | 从左到右 |
+| 13  | 逻辑或   | `\|\|`            | 从左到右 |
 | 14  | 条件    | `? :`             | 从右到左 |
-| 15  | 赋值    | `=`               | 从右到左 |
+| 15  | 对象更新  | `=> {}`           | 从右到左 |
 
 ## 循环
 
 **注意：由于数据不可变性，Viola不提供循环。如有需要，请使用递归。**
+
+**TODO: 提供用于循环的库函数（声明见下）。**
+
+```viola
+sq forEach::<T, U>(T[] iterable, (T) -> (U) mapper) -> (U[] result);
+sq forEach::<T>(T[] iterable, (T) -> () mapper) -> ();
+sq while::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result);
+sq doWhile::<T>(T inputs, (T) -> (T) updater) -> (T result);
+```
 
 ## 分支
 
@@ -347,10 +360,10 @@ Viola提供了以下两类分支语句：
 - `if`语句的格式如下：
 
 ```viola
-if condition0 {
+if (condition0) {
     // 当条件condition0满足时执行
 }
-elif condition1 { // 可选，可以有多个elif语句，必须跟随在if语句或elif语句之后
+elif (condition1) { // 可选，可以有多个elif语句，必须跟随在if语句或elif语句之后
     // 当前述条件都不满足，且条件condition1满足时执行
 }
 else { // 可选，必须跟随在if语句或elif语句之后
@@ -358,7 +371,7 @@ else { // 可选，必须跟随在if语句或elif语句之后
 }
 ```
 
-- `match`语句的格式如下：
+- `match`语句的格式如下（**TODO: 添加match语句的实现**）：
 
 ```viola
 match value {
@@ -409,6 +422,20 @@ Viola中的函数声明的一般形式如下：
 ```viola
 fn max(int a, int b) -> (int);
 sq write(string path, string content) -> ();
+```
+
+**TODO: 添加lambda表达式的实现（如下）**
+
+```viola
+(T1 arg1, T2 arg2, ...) -> (expr1, expr2, ...)
+
+// 等价于：
+
+fn (T1 arg1, T2 arg2, ...) -> (T1 result1, T2 result2, ...) {
+    result1 = expr1;
+    result2 = expr2;
+    // ...
+}
 ```
 
 Viola中的函数定义的一般形式如下：
@@ -469,6 +496,8 @@ Viola中的函数参数，如果是基本数据类型则按值传递，否则按
 ```viola
 double log(double x, double base = 2.71828) -> (double result) {...}
 ```
+
+**TODO: 为以下功能添加标准库支持**
 
 ## 数组
 
@@ -532,6 +561,7 @@ size_t array0Length = arange0.length(); // array0Length = 5
 ```
 
 此外，还有一些较为通用的内置函数适用于数组，例如：
+
 ```viola
 int[] array2 = filter(arange2, fn(int x) -> (bool f) {f = x > 2}, async=false); // array2 = [3, 4, 5, 6, 7]
 int[] array3 = map(arange0, fn(int x) -> (int f) {f = x * 2}, async=true); // array3 = [0, 2, 4, 6]
@@ -612,6 +642,8 @@ sq input() -> (string);
 如果希望访问标准输入流，请使用`sys.stdin`。
 
 ### 对文件的输入与输出
+
+**注意：尚不确定是否会采用文件句柄这一形式，因为目前已知的方法都可能导致死锁。**
 
 首先我们需要打开文件，并获取文件句柄，函数声明如下：
 
@@ -707,6 +739,8 @@ sq toBytes(Image img) -> (uint8[] result) {...}
 
 ### 访问修饰符
 
+**TODO: 实现访问修饰符，而不是忽略它们。**
+
 对于前述的访问修饰符public、protected和private，和其他大多数语言一样，有这样的访问类型（其中“+”表示可以访问，“-”表示不可以访问）：
 
 | 访问者 | public | protected | private |
@@ -745,7 +779,7 @@ abstract class Shape {
     public abstract fn draw(Image img, uint x, uint y, double rotate, uint8[] color) -> (Image newImg);
 }
 
-abstract class Triangle(Shape) { // 抽象类Triangle继承抽象类Shape，不强制要求实现前述抽象方法
+abstract class Triangle extends Shape { // 抽象类Triangle继承抽象类Shape，不强制要求实现前述抽象方法
     double a;
     double b;
     double c;
@@ -761,7 +795,7 @@ abstract class Triangle(Shape) { // 抽象类Triangle继承抽象类Shape，不�
     }
 }
 
-class RightTriangle(Triangle) { // 不是抽象类，必须实现抽象方法
+class RightTriangle extends Triangle { // 不是抽象类，必须实现抽象方法
     public sq __new__(double a, double b) -> (this) {
         this.super = __new__(a, b, sqrt(a * a + b * b));
     }
@@ -776,16 +810,18 @@ class RightTriangle(Triangle) { // 不是抽象类，必须实现抽象方法
 
 ## 泛型
 
+**TODO: 实现泛型的类型约束，以及union类型。**
+
 Viola支持泛型。泛型类和泛型函数（方法）的定义格式如下：
 
 ```viola
-class 类名<T1, T2, ..., TN>(父类列表) {...} // 其中T1、T2……TN为类型参数
+class 类名::<T1, T2, ..., TN> extends 父类 {...} // 其中T1、T2……TN为类型参数
 ```
 
 例如：
 
 ```viola
-class PCMWave<T> {
+class PCMWave::<T> {
     static uint8[] _RIFF = ascii("RIFF");
     uint32 riffSize;
     static uint8[] _WAVE = ascii("WAVE");
@@ -799,9 +835,9 @@ class PCMWave<T> {
     static T[] _data = ascii("data"); // 泛型类成员变量
     
     public sq __new__(...) -> (this) {...}
-    public fn convertTo<U>() -> (PCMWave<U> result) {...} // 泛型方法
+    public fn convertTo::<U>() -> (PCMWave::<U> result) {...} // 泛型方法
     public fn convertToBytes() -> (uint8[] result) {...}
-    static public fn load(string path) -> (PCMWave<T> wave) {...}
+    static public fn load(string path) -> (PCMWave::<T> wave) {...}
     public sq save(string path) -> () {...}
 }
 ```
@@ -854,7 +890,7 @@ Vector2D c = a + b;
 |:--------|:---------------------------------------------------------|
 | 双目算术运算符 | `+`（加） `-`（减） `*`（乘） `/`（除） `%`（取模） `**`（乘方） `@`（矩阵乘）    |
 | 关系运算符   | `<`（小于） `>`（大于） `<=`（小于等于） `>=`（大于等于） `==`（等于） `!=`（不等于） |
-| 单目运算符   | `+`（正号） `-`（负号）                                          |
+| 单目运算符   | `+`（正号） `-`（负号） `~`（按位取反）                                |
 | 位运算符    | `&`（按位与） `\|`（按位或） `^`（按位异或） `~`（按位取反） `<<`（左移） `>>`（右移） |
 | 其他运算符   | `[]`（索引） `()`（调用）                                        |
 
@@ -872,9 +908,9 @@ Vector2D c = a + b;
 ```viola
 try {
     // 保护代码
-} catch (Exception1 e) {
+} catch Exception1 e {
     // 处理Exception1类型的异常
-} catch (Exception2 e) {
+} catch Exception2 e {
     // 处理Exception2类型的异常
 }
 // ...
@@ -904,6 +940,8 @@ from 包名 import *;
 
 ## C语言兼容
 
+**TODO: 添加对C结构体的兼容。**
+
 Viola编译器最终会生成C代码，并且允许向Viola源代码中添加C代码。要定义C函数，请使用如下格式：
 
 ```viola
@@ -916,6 +954,7 @@ cpart sq 函数名(参数列表) -> (T) {函数体}
 ```viola
 import cpart "文件名"; // 相当于#include "文件名"
 import cpart <文件名>; // 相当于#include <文件名>
+import cpart 宏定义; // 相当于#include 宏定义
 ```
 
 但是导入后需要添加__del__()方法。例如：

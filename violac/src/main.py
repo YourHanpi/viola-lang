@@ -37,12 +37,12 @@ def _get_params(command: list[str]) -> tuple[list[str], dict[str, str]]:
 
 def _set_default(args: list[str], kwargs: dict[str, str]) -> tuple[list[str], dict[str, str]]:
     """为未指定的参数设置默认值。"""
-    if "o" not in kwargs:
+    if "o" not in kwargs and len(args) > 0:
         kwargs["o"] = os.path.join(args[0], "viola-compiled")
     if "j" not in kwargs:
         kwargs["j"] = "1"
     elif kwargs["j"] == "true":
-        kwargs["j"] = str(os.process_cpu_count() - 1)
+        kwargs["j"] = str(os.cpu_count() - 1)
     return args, kwargs
 
 
@@ -50,6 +50,7 @@ def main() -> None:
     """Viola编译器入口函数。"""
     if len(sys.argv) < 2:
         UtilsController().run("help", [], {})
+        return
     args, kwargs = _get_params(sys.argv[1:])
     args, kwargs = _set_default(args, kwargs)
     if kwargs["j"].isdecimal():
