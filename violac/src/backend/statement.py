@@ -746,7 +746,8 @@ class AssignStmt(Statement):
         new_stmt = copy(self)
         new_stmt._var_value = self._var_value.instantiation(type_args)
         new_stmt._var = list(map(lambda var: var.instantiation(var.name, type_args), self._var))
-        new_stmt._var_types = self._var_types.instantiation(type_args)
+        if self._var_types is not None:
+            new_stmt._var_types = self._var_types.instantiation(type_args)
         return new_stmt
 
     @property

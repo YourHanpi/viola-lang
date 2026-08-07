@@ -55,7 +55,11 @@ class Symbol(ABC):
         """
         获取符号的哈希值。
         """
-        return hash(self._name)
+        # deepcopy 期间 _name 可能尚未设置，回退到 id
+        try:
+            return hash(self._name)
+        except AttributeError:
+            return id(self)
 
     def __init__(self, name: str, kw_type: SymbolType) -> None:
         """
@@ -408,6 +412,9 @@ class GenericArgument(TypeName):
     泛型参数类型。
     """
 
+    def __hash__(self) -> int:
+        return hash("$generic$" + self.name)
+
     def __init__(self, src_info: SourceInfo, name: str) -> None:
         """
         创建泛型参数类型。
@@ -728,6 +735,13 @@ class ClassName(TypeName):
             return False
         return False
 
+    def instantiation(self, real_types: dict["GenericArgument", TypeName]) -> TypeName:
+        # 检查是否有从原类到实例化类的映射（泛型实例化时添加）
+        key = GenericArgument(self._src_info, self.name)
+        if key in real_types:
+            return real_types[key]
+        return self
+
     @property
     def generic_args(self) -> Optional[list[GenericArgument]]:
         """
@@ -794,7 +808,9 @@ class ClassName(TypeName):
             zip(map(lambda n: GenericArgument(self._src_info, n), self._generic_args), args)
         )
         result: ClassName = ClassName(self._src_info, [], new_name, self._parent,
-                                      self._is_abstract, False, self._generic_args)
+                                      self._is_abstract, False, None)
+        # 将原类自身加入替换字典，使方法中 this 的类型指向新的实例化类
+        generic_dict[GenericArgument(self._src_info, self.name)] = result
         for name, prop in self._properties.items():
             if name in ["$refCount", "$parent"]:
                 continue
@@ -1229,15 +1245,15 @@ class FunctionTypeName(TypeName):
         return self._generic_args
 
     def instantiation(self, real_types: dict["GenericArgument", "TypeName"]) -> "FunctionTypeName":
-        if self._generic_args is None:
+        # 始终创建新类型，替换所有参数和返回值中的泛型参数
+        new_args = list(map(lambda t: t.instantiation(real_types), self._args))
+        new_returns = list(map(lambda t: t.instantiation(real_types), self._returns))
+        if new_args == self._args and new_returns == self._returns:
             return self
-        result = FunctionTypeName(
-            self._src_info,
-            list(map(lambda t: t.instantiation(real_types), self._args)),
-            list(map(lambda t: t.instantiation(real_types), self._returns))
-        )
-        real_type_names: list[str] = list(map(lambda t: t.name, real_types))
-        result._generic_args = list(filter(lambda t: t not in real_type_names, self._generic_args))
+        result = FunctionTypeName(self._src_info, new_args, new_returns)
+        if self._generic_args is not None:
+            real_type_names: list[str] = list(map(lambda t: t.name, real_types))
+            result._generic_args = list(filter(lambda t: t not in real_type_names, self._generic_args))
         return result
 
     def instantiation_func_t(self, real_types: list[TypeName]) -> "FunctionTypeName":
@@ -1472,9 +1488,16 @@ class FunctionName(GlobalVariableName):
         """
         转换为声明。
         """
+        # 若类型参数含未实例化的泛型，返回注释占位
+        for t in self.type.args:
+            if isinstance(t, GenericArgument):
+                return f"// GENERIC FUNCTION {self._name}"
+        for t in self.type.returns:
+            if isinstance(t, GenericArgument):
+                return f"// GENERIC FUNCTION {self._name}"
         args_text = ", ".join(list(map(lambda t, a: f"{t.c_calling_name} {a}", self.type.args, self._arg_names)))
         returns_text = ", ".join(list(map(lambda t, r: f"{t.c_assigning_name} {r}", self.type.returns, self._ret_names)))
-        return f"void {self.name}({', '.join(filter(lambda x: x != "", [args_text, returns_text, LISTENER_T + ' *listener']))})"
+        return f"void {self.name}({', '.join(filter(lambda x: x != '', [args_text, returns_text, LISTENER_T + ' *listener']))})"
 
     def as_define_name(self) -> str:
         """
@@ -1736,6 +1759,7 @@ class MethodName(PropertyVariableName):
         """
         result: MethodName = copy(self)
         result._function_name = self._function_name.instantiation(new_name, t)
+        result._type = result._function_name.type
         result.rename(result._function_name.name)
         return result
 
@@ -1974,7 +1998,7 @@ class GenericTable:
             if t in self._class_instances[class_name]:
                 raise InternalCompilerException("Class already exists.", self._source_info)
             self._class_instances[class_name][t] = class_name.instantiation_full(
-                f"{class_name.raw_name}$_{len(self._class_instances[class_name])}", list(t)
+                f"{class_name.self_name}__{len(self._class_instances[class_name])}", list(t)
             )
         else:
             raise InternalCompilerException("Class does not exist.", self._source_info)
@@ -2353,7 +2377,11 @@ class SymbolTable:
                 if len(functions) == 1:
                     return functions[0]
                 item2 = item.replace(".", "$")
+                if (item2, None) in self.symbols:
+                    return self.symbols[item2, None]
                 result = self._type_name_parser.parse(self._src_info, item2)
+                if result is not None and isinstance(result, ClassName) and (result.self_name, None) not in self.symbols:
+                    self.add_to_root(result, result.self_name, None)
                 if result is None:
                     raise CompilerException(f"Type {item} not found", self._src_info)
                 return result
@@ -2384,7 +2412,10 @@ class SymbolTable:
         self._init_builtin_types()
 
         def __real_type_getter(name: str) -> Optional[TypeName]:
-            name = self.clean_namespace(name.strip())
+            name = name.strip()
+            if (name, None) in self.symbols:
+                return self.symbols[name, None]
+            name = self.clean_namespace(name)
             if (name, None) in self.symbols:
                 return self.symbols[name, None]
             return None
@@ -2592,7 +2623,8 @@ class SymbolTable:
         获取泛型类的实例化对象。
         """
         cls = self._generic_table.get_cls_instance(class_name, t)
-        self.add_to_root(cls, cls.name, None)
+        if (cls.self_name, None) not in self.symbols:
+            self.add_to_root(cls, cls.self_name, None)
         for method in cls.methods.values():
             if method.is_generic and method not in self._generic_table:
                 self._generic_table.add_func_def(method.as_function())

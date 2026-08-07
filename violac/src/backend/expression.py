@@ -1799,29 +1799,45 @@ class AttrOp(Expression):
         return self
 
     def find_method(self, arg_type_list: list[str], kwarg_type_dict: dict[str, str]) -> MethodName:
-        """查找匹配的方法。
-
-        先尝试动态方法（第一个参数为调用者自身），再尝试静态方法。
-        恰好匹配一个时返回，否则抛出异常。
-
-        Args:
-            arg_type_list: 参数类型名列表。
-            kwarg_type_dict: 关键字参数类型名映射。
-
-        Returns:
-            匹配的 MethodName。
-
-        Raises:
-            CompilerException: 找不到方法或存在歧义时抛出。
-        """
+        """查找匹配的方法。"""
+        caller_type = self._caller.return_type
+        if not isinstance(caller_type, ClassName):
+            raise CompilerException("Variable to get attribute is not a class type", self._src_info)
+        # 仅对泛型实例类使用直搜（raw_name 含 $_ 或 __ 后缀）
+        if "$_" in caller_type.raw_name or "__" in caller_type.raw_name:
+            name = self._attr
+            args = [self._symbol_table.clean_namespace(t.replace("$", ".")) for t in arg_type_list]
+            cls_methods = caller_type.methods
+            resolve = lambda tn: self._symbol_table[tn, None]
+            static_arg_types = list(map(resolve, args))
+            # 先尝试静态方法
+            for (m_name, m_types), method in cls_methods.items():
+                if m_name != name:
+                    continue
+                if len(m_types) == len(static_arg_types):
+                    if all(static_arg_types[i].convertable_to(m_types[i], self._symbol_table.symbols) for i in range(len(m_types))):
+                        return method
+            # 再尝试动态方法
+            dynamic_arg_types = [caller_type] + static_arg_types
+            for (m_name, m_types), method in cls_methods.items():
+                if m_name != name:
+                    continue
+                if len(m_types) == len(dynamic_arg_types):
+                    if all(dynamic_arg_types[i].convertable_to(m_types[i], self._symbol_table.symbols) for i in range(len(m_types))):
+                        return method
+            raise CompilerException(
+                f"Method not found: {caller_type.raw_name}.{self._attr}({', '.join(arg_type_list)})",
+                self._src_info
+            )
+        # 普通类使用原有符号表查找逻辑
         arg_type_list = [self._symbol_table.clean_namespace(t.replace("$", ".")) for t in arg_type_list]
         kwarg_type_dict = {k: self._symbol_table.clean_namespace(v.replace("$", ".")) for k, v in kwarg_type_dict.items()}
-        dynamic_arg_type_list: list[str] = [self._symbol_table.clean_namespace(self._caller.return_type.raw_name)] + arg_type_list
+        dynamic_arg_type_list: list[str] = [self._symbol_table.clean_namespace(caller_type.raw_name)] + arg_type_list
         dynamic_methods: list[MethodName] = self._symbol_table.find_methods(
-            self._symbol_table.clean_namespace(self._caller.return_type.raw_name), self._attr, dynamic_arg_type_list, kwarg_type_dict
+            self._symbol_table.clean_namespace(caller_type.raw_name), self._attr, dynamic_arg_type_list, kwarg_type_dict
         )
         static_methods: list[MethodName] = self._symbol_table.find_methods(
-            self._symbol_table.clean_namespace(self._caller.return_type.raw_name), self._attr, arg_type_list, kwarg_type_dict
+            self._symbol_table.clean_namespace(caller_type.raw_name), self._attr, arg_type_list, kwarg_type_dict
         )
         if len(dynamic_methods) == 1:
             return dynamic_methods[0]
@@ -1829,11 +1845,11 @@ class AttrOp(Expression):
             return static_methods[0]
         if len(dynamic_methods) > 1 or len(static_methods) > 1:
             raise CompilerException(
-                f"Ambiguous method call: {self._caller.return_type.raw_name}.{self._attr}",
+                f"Ambiguous method call: {caller_type.raw_name}.{self._attr}",
                 self._src_info
             )
         raise CompilerException(
-            f"Method not found: {self._caller.return_type.raw_name}.{self._attr}({', '.join(arg_type_list)})",
+            f"Method not found: {caller_type.raw_name}.{self._attr}({', '.join(arg_type_list)})",
             self._src_info
         )
 
@@ -2183,7 +2199,40 @@ class CallOp(Expression):
         Raises:
             CompilerException: 缺少参数且无默认值时抛出。
         """
-        if isinstance(expr, ClassRef):
+        if isinstance(expr, (ClassRef, TypeRef)) and isinstance(expr.return_type, ClassName):
+            attr_op = AttrOp(self._src_info, self._symbol_table)
+            attr_op.set_caller(expr)
+            attr_op.set_attr("__new__")
+            self._func = attr_op.find_method(
+                list(map(lambda x: x.return_type.name, self._arg_list)),
+                dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
+            ).as_function()
+            self._func_expr = attr_op
+        elif isinstance(expr.return_type, ClassName) and isinstance(expr, VariableRef) \
+                and (expr.var.name, None) not in self._symbol_table:
+            # 自动创建的 VariableRef（如 Container_0::<int>），是构造函数调用
+            attr_op = AttrOp(self._src_info, self._symbol_table)
+            attr_op.set_caller(expr)
+            attr_op.set_attr("__new__")
+            self._func = attr_op.find_method(
+                list(map(lambda x: x.return_type.name, self._arg_list)),
+                dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
+            ).as_function()
+            self._func_expr = attr_op
+        elif isinstance(expr.return_type, ClassName) and isinstance(expr, VariableRef) \
+                and (expr.var.name, None) not in self._symbol_table:
+            # 自动创建的 VariableRef（如 Container_0::<int>），是构造函数调用
+            attr_op = AttrOp(self._src_info, self._symbol_table)
+            attr_op.set_caller(expr)
+            attr_op.set_attr("__new__")
+            self._func = attr_op.find_method(
+                list(map(lambda x: x.return_type.name, self._arg_list)),
+                dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
+            ).as_function()
+            self._func_expr = attr_op
+        elif isinstance(expr.return_type, ClassName) and isinstance(expr, VariableRef) \
+                and (expr.var.name, None) not in self._symbol_table:
+            # 自动创建的 VariableRef（如 Container_0::<int>），是构造函数调用
             attr_op = AttrOp(self._src_info, self._symbol_table)
             attr_op.set_caller(expr)
             attr_op.set_attr("__new__")

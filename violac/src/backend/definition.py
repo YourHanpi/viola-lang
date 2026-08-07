@@ -9,7 +9,7 @@ from .symbol import FunctionName, VariableName, LocalVariableName, VariableState
 from utils import CompilerException, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
-from copy import deepcopy
+from copy import copy, deepcopy
 import os
 from typing import Optional
 
@@ -268,15 +268,17 @@ class SqDef(Definition):
 
     def instantiation(self, cls_decl: ClassName, type_args: dict[GenericArgument, TypeName]) -> "SqDef":
         """将函数作为类方法进行泛型实例化。"""
-        if not self._decl.type.is_generic:
-            raise CompilerException("Function is not generic.", self._src_info)
         new_sq = deepcopy(self)
         type_args_tuple: tuple[TypeName, ...] = tuple(map(lambda x: type_args[x], cls_decl.generic_args))
-        new_sq._method_decl = self._method_decl.set_cls(
-            self._symbol_table.get_generic_cls_instance(cls_decl, type_args_tuple), 0
+        inst_cls = self._symbol_table.get_generic_cls_instance(cls_decl, type_args_tuple)
+        new_sq._method_decl = self._method_decl.set_cls(inst_cls, 0)
+        # 将原类到实例化类的映射也加入 type_args，使 this 的类型被替换
+        type_args_with_cls = dict(type_args)
+        type_args_with_cls[GenericArgument(self._src_info, cls_decl.name)] = inst_cls
+        new_sq._decl = self._method_decl.as_function().instantiation(
+            new_sq._method_decl.as_function().name, type_args_with_cls
         )
-        new_sq._decl = self._method_decl.as_function()
-        new_sq._body = new_sq._body.instantiation(type_args)
+        new_sq._body = new_sq._body.instantiation(type_args_with_cls)
         return new_sq
 
     def instantiation_full(self, type_args: tuple[TypeName, ...]) -> "SqDef":
@@ -1095,7 +1097,7 @@ class Closure(Expression):
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         """将闭包中的变量名映射为内联变量。"""
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._inline_mapping = inline_mapping
         new_expr._inline_mapping[self._var_name] = self._symbol_table.get_counter()
         new_expr._var_name = new_expr.inline_mapping[self._var_name]
@@ -1133,7 +1135,7 @@ class Closure(Expression):
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
         """泛型实例化闭包内部的函数定义。"""
-        new_expr: Closure = deepcopy(self)
+        new_expr: Closure = copy(self)
         new_expr._sq_def = self._sq_def.instantiation_full_by_dict(type_args)
         return new_expr
 
@@ -1237,11 +1239,14 @@ class GenericCall(CompilingItem):
             self._instance: AttrOp = AttrOp(self._src_info, self._symbol_table)
             self._instance.set_caller(self._generic_symbol.caller)
             self._instance.set_attr(method.self_name)
-        elif isinstance(self._generic_symbol, ClassRef):
+        elif isinstance(self._generic_symbol, (ClassRef, TypeRef)):
             cls = self._generic_symbol.return_type
             # noinspection PyTypeChecker
-            cls = self._symbol_table.get_generic_cls_instance(cls, tuple(self._type_args))
-            self._instance = ClassRef(self._src_info, self._symbol_table, cls)
+            if isinstance(cls, ClassName):
+                cls = self._symbol_table.get_generic_cls_instance(cls, tuple(self._type_args))
+                self._instance = ClassRef(self._src_info, self._symbol_table, cls)
+            else:
+                raise CompilerException(f"{cls.raw_name} is not a class.", self._src_info)
         else:
             raise CompilerException(f"{self._generic_symbol} is not a function or method or class.", self._src_info)
         self._is_finished = True

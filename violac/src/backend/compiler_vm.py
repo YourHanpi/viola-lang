@@ -248,7 +248,6 @@ class CompilerVM:
         lines: list[str] = cmd.split("\n")
         for i, line in enumerate(lines):
             self._exec_line(line)
-            print(i)
 
     def get(self) -> project.SourceFile:
         """获取栈底的源文件对象，完成写入并返回。"""
@@ -580,7 +579,7 @@ class CompilerVM:
 
     def __call_set_generic_expr(self) -> None:
         """设置泛型调用的泛型表达式。"""
-        self.__check_type(self._stack[-1], [expression.VariableRef, expression.AttrOp, expression.ClassRef])
+        self.__check_type(self._stack[-1], [expression.VariableRef, expression.AttrOp, expression.ClassRef, expression.TypeRef])
         self.__check_type(self._stack[-2], [definition.GenericCall])
         # noinspection PyUnresolvedReferences
         self._stack[-2].set_generic_expr(self._stack[-1])

@@ -6,13 +6,13 @@ from typing import Optional
 
 
 class Token:
-    """表示词法分析中的令牌，包含文本内容、类型及起始列信息。"""
+    """表示词法分析中的token，包含文本内容、类型及起始列信息。"""
 
     def __init__(self, children: str | list[str], token_type: list[str], src_info: SourceInfo = None) -> None:
         """
         初始化Token。
-        :param children: 令牌内容，字符串或子令牌列表。
-        :param token_type: 令牌类型列表。
+        :param children: token内容，字符串或子token列表。
+        :param token_type: token类型列表。
         :param src_info: 源码信息。
         """
         self._text: str = children if isinstance(children, str) else ""
@@ -20,11 +20,11 @@ class Token:
         self._src_info: SourceInfo = src_info if src_info is not None else VIOLA_INIT
 
     def add_types(self, new_types: list[str]) -> None:
-        """为令牌添加新的类型标签。"""
+        """为token添加新的类型标签。"""
         self._type += new_types
 
     def set_types(self, new_types: list[str]) -> None:
-        """设置令牌的类型标签。"""
+        """设置token的类型标签。"""
         self._type = new_types
 
     @property
@@ -52,7 +52,7 @@ class StateNode:
         self._transfers: dict[str, "StateNode"] = {}
 
     def add_transfer(self, token_type: str, next_state: "StateNode") -> None:
-        """添加基于令牌类型的状态转移规则。"""
+        """添加基于token类型的状态转移规则。"""
         self._transfers[token_type] = next_state
 
     @property
@@ -64,7 +64,7 @@ class StateNode:
         self._output = output
 
     def transfer(self, token: Token) -> Optional["StateNode"]:
-        """根据令牌类型进行状态转移，若无匹配则返回None。"""
+        """根据token类型进行状态转移，若无匹配则返回None。"""
         for t in token.type:
             if t in self._transfers:
                 return self._transfers[t]
@@ -91,7 +91,7 @@ class FSM(ABC):
         self._current = self._start
 
     def transfer(self, token: Token) -> Optional[StateNode]:
-        """将令牌传入当前状态进行转移，返回下一状态或None。"""
+        """将token传入当前状态进行转移，返回下一状态或None。"""
         return self._current.transfer(token)
 
     @abstractmethod

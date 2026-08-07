@@ -354,11 +354,13 @@ class ExprParser(GlobalParser):
                 if not expect_dot:
                     self._raise("Unexpected token: " + self._get_current().text)
                     return None
+                if is_prefix:
+                    is_prefix = False
+                    command += self.__handle_id_prefix(id_list)
                 expr_result = self._parse_generic_expr()
                 if expr_result is None:
                     return None
                 command = ["MAKE EXPR GENERIC_CALL"] + command + ["CALL SET_GENERIC_EXPR"] + expr_result + ["CALL FINISH_GENERIC"]
-                is_prefix = False
             elif self._match_type("DOT"):
                 if not expect_dot:
                     self._raise("Unexpected token: " + self._get_current().text)
