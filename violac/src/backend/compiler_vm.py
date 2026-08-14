@@ -248,6 +248,7 @@ class CompilerVM:
         lines: list[str] = cmd.split("\n")
         for i, line in enumerate(lines):
             self._exec_line(line)
+            print(i)
 
     def get(self) -> project.SourceFile:
         """获取栈底的源文件对象，完成写入并返回。"""
@@ -435,9 +436,9 @@ class CompilerVM:
     def __call_finish(self) -> None:
         """完成栈顶编译项的构建。"""
         self.__check_type(self._stack[-1], [
-            definition.SqDef, definition.ClassDef, definition.EnumDef, statement.DeclStmt, statement.AssignStmt,
-            statement.TryStmt, statement.BlockStmt, statement.CStmt, expression.ArrayRef, expression.TupleRef,
-            expression.TupleTypeRef, expression.UpdateExpr
+            definition.SqDef, definition.ClassDef, definition.EnumDef, definition.GenericCall, statement.DeclStmt,
+            statement.AssignStmt, statement.TryStmt, statement.BlockStmt, statement.CStmt, expression.ArrayRef,
+            expression.TupleRef, expression.TupleTypeRef, expression.UpdateExpr
         ])
         # noinspection PyUnresolvedReferences
         self._stack[-1].finish()

@@ -1239,7 +1239,7 @@ class GenericCall(CompilingItem):
             self._instance: AttrOp = AttrOp(self._src_info, self._symbol_table)
             self._instance.set_caller(self._generic_symbol.caller)
             self._instance.set_attr(method.self_name)
-        elif isinstance(self._generic_symbol, (ClassRef, TypeRef)):
+        elif isinstance(self._generic_symbol, TypeRef):
             cls = self._generic_symbol.return_type
             # noinspection PyTypeChecker
             if isinstance(cls, ClassName):

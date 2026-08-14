@@ -98,6 +98,7 @@ class SourceFile(CompilingItem):
     def _initialize_all_symbols(self) -> None:
         """初始化所有泛型符号的实例化。"""
         generics: list[Definition] = list(filter(lambda x: x.is_generic, self._definitions))
+        self._definitions = list(filter(lambda x: not x.is_generic, self._definitions))
         for g in generics:
             self._instances.extend(g.instantiation_full_all())
 
