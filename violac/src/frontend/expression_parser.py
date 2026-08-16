@@ -179,7 +179,7 @@ class ExprParser(GlobalParser):
             return TaskResult(TaskResultState.FAILURE)
         os.makedirs(os.path.dirname(cache_file_path), exist_ok=True)
         with open(cache_file_path, "w", encoding=self._ENCODING) as f:
-            f.write("\n".join(command).replace("\n\n", "\n")[:-1])
+            f.write("\n".join(command).replace("\n\n", "\n"))
         self._logger.info(f"Successfully parsed expressions from {file_path}")
         return TaskResult(TaskResultState.SUCCESS, [["violac", "run-vm", file_path]])
 

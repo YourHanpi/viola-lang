@@ -60,7 +60,7 @@ class GlobalParser:
         self._current: int = 0
         self._messages: list[str] = []
         self._exceptions: list[CompilerException] = []
-        self._src_info: SourceInfo = VIOLA_INIT
+        self._src_info: SourceInfo = VIOLA_INIT.copy()
         self._imports: dict[str, str] = {}
         self._parser_generic_table: ParserGenericTable = ParserGenericTable()
         self._symbol_types: dict[str, tuple[str, list[str]]] = {}
@@ -95,6 +95,7 @@ class GlobalParser:
                 command += result[0]
                 symbol += result[1]
         if len(self._tasks) > 0:
+            self._tasks.insert(0, ["violac", "parse", self._src_info.path])
             return None
         while not self._match_type("_EOF"):
             result = self._parse_def()
@@ -1705,7 +1706,8 @@ class GlobalParser:
         移除文件解析锁。
         :param path: 文件路径。
         """
-        os.remove(path + PARSING_LOCK_POSTFIX)
+        if os.path.exists(path + PARSING_LOCK_POSTFIX):
+            os.remove(path + PARSING_LOCK_POSTFIX)
         
     @staticmethod
     def _set_file_lock(path: str) -> None:
