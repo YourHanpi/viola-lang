@@ -37,6 +37,10 @@ class Lexer(FSM):
         """
         self._src_info = SourceInfo(path)
         self._is_error = False
+        self._start_line: int = 1
+        self._start_col: int = 1
+        self._end_line: int = 1
+        self._end_col: int = 1
         with open(path, "r", encoding=COMPILER_PARAMS["encoding"]) as f:
             text: str = f.read()
         text_lines: list[str] = text.split("\n")

@@ -2324,8 +2324,8 @@ class SymbolTable:
             return item[0] in self.symbols.values()
         item = self.clean_namespace(item[0]), item[1]
         if item not in self.symbols:
+            functions: list[tuple[str, Optional[tuple[TypeName, ...]]]] = [k for k in self.symbols.keys() if k[0] == item[0]]
             if isinstance(item[0], str) and item[1] is None:
-                functions = [k for k in self.symbols.keys() if k[0] == item[0]]
                 if len(functions) > 0:
                     return True
                 item2 = item[0].replace(".", "$")
@@ -2336,11 +2336,21 @@ class SymbolTable:
                     if (self.clean_namespace(t.name), None) not in self.symbols:
                         return False
                 return True
-            return (item[0], None) in self.symbols
+            for f in functions:
+                if f[1] is None or len(item[1]) > len(f[1]):
+                    continue
+                contains: bool = True
+                for i, t0 in enumerate(item[1]):
+                    if t0 != f[1][i]:
+                        contains = False
+                        break
+                if contains:
+                    return True
+            return False
         return item in self.symbols
 
     def __delitem__(self, key: tuple[str, Optional[tuple[TypeName, ...]]]) -> None:
-        for i, sym in self._symbols:
+        for i, sym in enumerate(self._symbols):
             if key in sym:
                 del self._symbols[i][key]
                 break
@@ -2827,7 +2837,7 @@ class SymbolTable:
         item_name: str = item[1]
         item_type: str = item[0]
         # noinspection PyTypeChecker
-        self.add(GlobalVariableName(self.namespace, item_name, self[item_type], self._src_info), item_name, None)
+        self.add(GlobalVariableName(self._src_info, self.namespace, item_name, self[item_type, None]), item_name, None)
 
     def _read_method_decl(self, item: list[str]) -> None:
         """

@@ -532,8 +532,9 @@ class ValueRef(Expression, ABC):
 
     @property
     def outer_text(self) -> Optional[str]:
-        if self._unpack_expr is not None:
-            return self._unpack_expr.outer_text
+        # 注意：不能委托给 self._unpack_expr.outer_text。
+        # UnpackExpr.outer_text 会委托回 self._to_unpack.outer_text（即本对象的 outer_text），
+        # 二者互相引用会形成无限递归。需要外部文本的子类（如 ArrayRef、TupleRef）会自行覆写本属性。
         return None
 
     def set_returns(self, returns: list[VariableName]) -> bool:

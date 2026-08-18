@@ -33,7 +33,8 @@ class MainController:
         self._expr_parser_controller: ExprParserController = ExprParserController(workspace)
         self._compiler_vm_controller: CompilerVMController = CompilerVMController(self._project)
         self._thread_num: int = thread_num
-        self._controllers: list[Controller] = [EmptyController()] * thread_num
+        self._empty_controller: EmptyController = EmptyController()
+        self._controllers: list[Controller] = [self._empty_controller] * thread_num
         self._task_stack: TaskStack = TaskStack()
         LOGGER_CONTROLLER.config_workspace(workspace, output_path)
         self._logger: Logger = Logger("Main")
@@ -77,25 +78,29 @@ class MainController:
         not_busy_count: int = len(not_busy)
         for i in not_busy:
             result = self._controllers[i].join()
+            if result.state != TaskResultState.PASSED:
+                self._task_stack.finish_task()
+                self._controllers[i] = self._empty_controller
             if result.state == TaskResultState.FAILURE:
                 self._logger.critical("Critical error occurred. Stop.")
                 raise CommandException("")
             if result.state == TaskResultState.DELAYED or result.state == TaskResultState.SUCCESS:
                 for task in result.data:
                     self._task_stack.put(task)
-                print(self._task_stack)
             if self._task_stack.is_empty:
                 break
             command = self._task_stack.get()
             if command[0] == "violac":
                 if command[1] == "add-make":
                     self._maker.add_make(command[2])
+                    self._task_stack.finish_task()
                 else:
                     self._controllers[i] = self._get_controller(command)
                     self._controllers[i].handle(command[1:] + [f"--thread-index={i}"])
                     not_busy_count -= 1
             else:
                 subprocess.run(command)
+                self._task_stack.finish_task()
         return not_busy_count >= len(self._controllers) and self._task_stack.is_empty
 
     def _get_controller(self, command: list[str]) -> Controller:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .utils import ParserGenericTable, ParsingResult, TokenStreamIO
 from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS
-from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TYPE_POSTFIX, CACHE_DIR
+from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, CACHE_DIR
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -78,6 +78,8 @@ class GlobalParser:
         :return: 解析结果对象，失败返回None。
         """
         self._tasks.clear()
+        self._expr_tokens.clear()
+        self._symbol_types.clear()
         self._load_tokens(tokens)
         self._move_to_first_token()
         command: list[str] = []
@@ -114,9 +116,11 @@ class GlobalParser:
         从文件中读取记号流并进行解析。
         :param file_path: 缓存文件路径。
         :param src_path: 源文件路径。
+        :param src_path: 源文件路径，如果为空则使用缓存文件路径。
         :return: 解析结果对象，失败返回None。
         """
         file_path = os.path.abspath(file_path)
+        self._tasks.clear()
         self._set_file_lock(file_path)
         if not os.path.exists(file_path + TOKEN_POSTFIX):
             self._add_task(["violac", "lex", src_path if src_path else file_path])
@@ -139,9 +143,9 @@ class GlobalParser:
         file_abs_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_abs_path, self._workspace)
         cache_file_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
+        self._src_info: SourceInfo = SourceInfo(file_abs_path)
         self._logger.info(f"Start parsing {file_path}")
         result = self.parse_from_file(cache_file_path, file_abs_path)
-        self._src_info: SourceInfo = SourceInfo(file_abs_path)
         if result is None:
             if len(self._tasks) == 0:
                 self._logger.error(f"Failed to parse {file_path}")
@@ -286,7 +290,7 @@ class GlobalParser:
             path = os.path.join(root_path, namespace.replace(".", os.sep) + ".vla")
             cache_path = os.path.join(root_path, CACHE_DIR, namespace.replace(".", os.sep) + ".vla")
             if os.path.exists(path):
-                return cache_path + SYMBOL_TYPE_POSTFIX, cache_path + SYMBOL_TYPE_POSTFIX, cache_path + PARSING_LOCK_POSTFIX, path
+                return cache_path + SYMBOL_TABLE_POSTFIX, cache_path + SYMBOL_TYPE_POSTFIX, cache_path + PARSING_LOCK_POSTFIX, path
         self._raise(f"Cannot find module {namespace}")
         return None
 
@@ -333,26 +337,39 @@ class GlobalParser:
             else:
                 self._add_task(["violac", "parse", token_path])
                 return None
-        with open(symbol_table_path, "r", encoding=GlobalParser._ENCODING) as file:
-            texts: str = file.read().split("---", 1)[1]
-        text_list = texts.split("\n")
+        with open(symbol_table_path, "r") as file:
+            text_list: list[str] = file.read().split("\n")
+        # 符号表文件头部固定为三行：源路径、缓存目录、分隔符
+        if len(text_list) > 2 and text_list[2].strip() == "---":
+            text_list = text_list[3:]
         if to_load is None:
-            return text_list
+            # return text_list
+            return []
+        load_all: bool = "*" in to_load
         current_line: int = 0
         total_lines: int = len(text_list)
         to_load_locations: list[int] = []
         while current_line < total_lines:
             head: str = text_list[current_line].strip()
             current_line += 1
+            # 跳过空行与条目尾部的分隔符（函数条目尾部可能连续出现多个）
+            if head in ["", "---"]:
+                continue
+            if current_line >= total_lines:
+                break
             line: str = text_list[current_line].strip()
-            if head in ["BASE", "FUNC", "METHOD"] and line.split(" ", 1)[0] in to_load:
-                to_load_locations.append(current_line - 1)
-            elif head in ["CLASS", "ENUM"] and line.split("%", 1)[0] in to_load:
-                to_load_locations.append(current_line - 1)
-            elif head == "VAR" and line.split("%")[1] in to_load:
-                to_load_locations.append(current_line - 1)
+            matched: bool = load_all
+            if head in ["BASE", "FUNC", "FUNCTION", "METHOD"]:
+                matched = matched or line.split(" ", 1)[0] in to_load
+            elif head in ["CLASS", "ENUM"]:
+                matched = matched or line.split("%", 1)[0] in to_load
+            elif head == "VAR":
+                line_parts: list[str] = line.split("%")
+                matched = matched or (len(line_parts) > 1 and line_parts[1] in to_load)
             else:
                 self._logger.warning(f"Unknown symbol table head: {head}")
+            if matched:
+                to_load_locations.append(current_line - 1)
             while current_line < total_lines and text_list[current_line].strip() != "---":
                 current_line += 1
         symbols: list[str] = []
@@ -815,8 +832,8 @@ class GlobalParser:
         if stmt_result is None:
             return None
         command += stmt_result[0] + ["CALL SET_STMT"]
-        symbol = stmt_result[1]
-        command += ["CALL FINISH", "CALL ADD_DEF"]
+        symbol = ["VAR"] + stmt_result[1]
+        command += ["CALL FINISH"]
         return command, symbol
 
     @_set_loc_command
@@ -939,7 +956,6 @@ class GlobalParser:
         elif self._match_type("ENUM"):
             result = self._parse_enum(prefixes)
         else:
-            print(self._get_current().text)
             result = self._parse_const_def(prefixes)
         if result is None:
             return None
@@ -1113,10 +1129,11 @@ class GlobalParser:
         self._load_symbol_type_list(module_path, module_path, import_symbols)
         if len(self._tasks) > 0:
             return None
-        command: list[str] = [f"MAKE FROM_IMPORT {module_path} " + " ".join(import_symbols)]
+        command: list[str] = [f"MAKE DEF FROM_IMPORT {module_path} " + " ".join(import_symbols)]
         symbol = self._load_symbol(module_path, import_symbols)
         if symbol is None:
             return None
+        self._next()
         return command, symbol
 
     @_set_loc_command
@@ -1321,7 +1338,7 @@ class GlobalParser:
         if symbol is None:
             return None
         self._next()
-        return ["CALL IMPORT " + module_path], symbol
+        return ["MAKE DEF IMPORT " + module_path], symbol
 
     @_set_loc_command
     def _parse_import_line(self) -> Optional[tuple[list[str], list[str]]]:
@@ -1749,6 +1766,7 @@ class GlobalParser:
         bracket_level: int = 0
         segments_num: int = 0
         local_token_buffer: list[Token] = []
+        last_was_dot: bool = False
         for token in token_buffer:
             if bracket_level == 0:
                 if "ARROW" in token.type:
@@ -1762,9 +1780,10 @@ class GlobalParser:
                     else:
                         local_token_buffer.clear()
                 elif "DOT" not in token.type:
-                    segments_num += 1
-                elif "ASSIGN" in token.type:
-                    return segments_num + 1
+                    # DOT 连接的限定名链（如 collections.print_msg_0）作为一个整体只计一段
+                    if not last_was_dot:
+                        segments_num += 1
+                last_was_dot = "DOT" in token.type
             if "L_BRACKET" in token.type:
                 bracket_level += 1
             elif "R_BRACKET" in token.type:

@@ -221,6 +221,7 @@ class CompilerVM:
             self._logger.debug(f"Required: {cache_path + SYMBOL_TABLE_POSTFIX}")
             self._logger.debug(f"Required: {cache_path + COMMAND_POSTFIX}")
             return TaskResult(TaskResultState.DELAYED, [["violac", "parse", src_path]])
+        print(cache_path + SYMBOL_TABLE_POSTFIX)
         self._symbol_table = symbol.SymbolTable.read_from(cache_path + SYMBOL_TABLE_POSTFIX)
         self._var_state_table = symbol.VariableStateTable(src_path, self._workspace)
         self._stack.clear()
@@ -435,9 +436,9 @@ class CompilerVM:
     def __call_finish(self) -> None:
         """完成栈顶编译项的构建。"""
         self.__check_type(self._stack[-1], [
-            definition.SqDef, definition.ClassDef, definition.EnumDef, definition.GenericCall, statement.DeclStmt,
-            statement.AssignStmt, statement.TryStmt, statement.BlockStmt, statement.CStmt, expression.ArrayRef,
-            expression.TupleRef, expression.TupleTypeRef, expression.UpdateExpr
+            definition.SqDef, definition.ClassDef, definition.ConstDef, definition.EnumDef, definition.GenericCall,
+            statement.DeclStmt, statement.AssignStmt, statement.TryStmt, statement.BlockStmt, statement.CStmt,
+            expression.ArrayRef, expression.TupleRef, expression.TupleTypeRef, expression.UpdateExpr
         ])
         # noinspection PyUnresolvedReferences
         self._stack[-1].finish()

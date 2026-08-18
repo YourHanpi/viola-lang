@@ -113,6 +113,11 @@ class ConstDef(Definition):
         """获取常量定义是否已完成。"""
         return self._define_stmt is not None
 
+    def finish(self) -> None:
+        """完成常量定义的构建（语句已在set_stmt时完整构建）。"""
+        if self._define_stmt is None:
+            raise InternalCompilerException("ConstDef has not been set with a statement.", self._src_info)
+
     @property
     def header(self) -> str:
         """获取常量在头文件中的声明文本。"""
