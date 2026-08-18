@@ -50,11 +50,17 @@ class Controller(ABC):
         :param matching_command: 匹配的命令列表。
         """
         self._matching_command = matching_command
+        self._current_command: list[str] = []
+
+    @property
+    def current_command(self) -> list[str]:
+        """获取当前正在处理的命令。"""
+        return self._current_command
 
     @abstractmethod
     def handle(self, command: list[str]) -> None:
         """处理命令。"""
-        pass
+        self._current_command = command
 
     @property
     @abstractmethod
@@ -107,11 +113,13 @@ class SingleController(Controller, ABC):
 
     def handle(self, command: list[str]) -> None:
         """处理命令并调用内部处理方法。"""
+        super().handle(command)
         if command[0] in self._matching_command:
             try:
                 self._handle(*self._get_params(command[1:]))
             except Exception as exc:
                 self._handle_error(exc)
+                exit(1)
 
     @property
     def is_busy(self) -> bool:

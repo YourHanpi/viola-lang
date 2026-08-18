@@ -83,6 +83,7 @@ class MainController:
             if result.state == TaskResultState.DELAYED or result.state == TaskResultState.SUCCESS:
                 for task in result.data:
                     self._task_stack.put(task)
+                print(self._task_stack)
             if self._task_stack.is_empty:
                 break
             command = self._task_stack.get()

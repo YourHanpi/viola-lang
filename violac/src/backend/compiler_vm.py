@@ -248,7 +248,6 @@ class CompilerVM:
         lines: list[str] = cmd.split("\n")
         for i, line in enumerate(lines):
             self._exec_line(line)
-            print(i)
 
     def get(self) -> project.SourceFile:
         """获取栈底的源文件对象，完成写入并返回。"""

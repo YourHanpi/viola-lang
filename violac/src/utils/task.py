@@ -46,6 +46,9 @@ class TaskStack:
         self._tasks: list[list[str]] = []
         self._executing_tasks_count: int = 0
 
+    def __str__(self) -> str:
+        return f"TaskStack(tasks={self._tasks}, executing_tasks_count={self._executing_tasks_count})"
+
     def finish_task(self) -> None:
         """标记一个任务已完成。"""
         with Lock():

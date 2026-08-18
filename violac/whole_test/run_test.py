@@ -15,7 +15,7 @@ def __test_one_project(compiler_path: str, project_dir: str) -> None:
     print(f"Testing: {project_dir}")
     if os.name == "nt":
         subprocess.run(
-            [compiler_path, "compile", f"\"{project_dir}\"", f"-i=\"{main_file}\"", f"-o=\"{output_dir}\"", "-j",
+            [compiler_path, "compile", f"\"{project_dir}\"", f"-i=\"{main_file}\"", f"-o=\"{output_dir}\"",
              "--clear-cache", "--clear-output", "--clear-log"],
             text=True,
             shell=True,
