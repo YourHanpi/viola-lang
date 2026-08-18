@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from utils import COMPILER_PARAMS, SourceInfo, VIOLA_INIT, Token
-from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, EXPR_TOKENS_POSTFIX
+from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, EXPR_TOKENS_POSTFIX, IMPORTS_POSTFIX
 
 from abc import ABC, abstractmethod
 import os
@@ -334,18 +334,21 @@ class ParsingResult:
     解析结果类，包含命令、符号表、表达式记号以及来源标记。
     """
 
-    def __init__(self, command: list[str], symbol: list[str], expr_tokens: list[list[Token]], from_global_parser: bool) -> None:
+    def __init__(self, command: list[str], symbol: list[str], expr_tokens: list[list[Token]], from_global_parser: bool,
+                 imports: Optional[dict[str, str]] = None) -> None:
         """
         初始化解析结果对象。
         :param command: 命令列表。
         :param symbol: 符号列表。
         :param expr_tokens: 表达式记号列表。
         :param from_global_parser: 是否来自全局解析器。
+        :param imports: 导入映射表（别名限定名 -> 真实限定名）。
         """
         self._command: list[str] = command
         self._symbol: list[str] = symbol
         self._expr_tokens: list[list[Token]] = expr_tokens
         self._from_global_parser: bool = from_global_parser
+        self._imports: Optional[dict[str, str]] = imports
 
     @property
     def command(self) -> list[str]:
@@ -360,6 +363,13 @@ class ParsingResult:
         获取表达式记号列表。
         """
         return self._expr_tokens
+
+    @property
+    def imports(self) -> Optional[dict[str, str]]:
+        """
+        获取导入映射表。
+        """
+        return self._imports
 
     @classmethod
     def read(cls, path: str) -> "ParsingResult":
@@ -382,7 +392,16 @@ class ParsingResult:
             expr_tokens = TokenStreamIO.read_lists(path + EXPR_TOKENS_POSTFIX)
         else:
             expr_tokens = []
-        return cls(command, symbol, expr_tokens, from_global_parser)
+        imports: Optional[dict[str, str]] = None
+        if os.path.exists(path + IMPORTS_POSTFIX):
+            imports = {}
+            with open(path + IMPORTS_POSTFIX, "r") as f:
+                for line in f.readlines():
+                    line = line.strip()
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        imports[key] = value
+        return cls(command, symbol, expr_tokens, from_global_parser, imports)
 
     @property
     def symbol(self) -> list[str]:
@@ -412,3 +431,7 @@ class ParsingResult:
                     f.write('\n')
         if self._from_global_parser:
             TokenStreamIO.write_lists(path + EXPR_TOKENS_POSTFIX, self._expr_tokens)
+        if self._imports:
+            with open(path + IMPORTS_POSTFIX, "w") as f:
+                for key, value in self._imports.items():
+                    f.write(f"{key}={value}\n")

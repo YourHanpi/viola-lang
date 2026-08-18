@@ -748,13 +748,36 @@ class CompilerVM:
     def __make_variable_ref(self, cmd: list[str]) -> expression.Expression:
         """创建变量引用表达式，根据作用域级别决定是全局变量还是局部变量。"""
         var_type_name = " ".join(cmd[:-1])
+        var_name: str = cmd[-1]
+        overloaded_func: Optional[symbol.FunctionName] = None
         # noinspection PyTypeChecker
         # noinspection PyUnresolvedReferences
         if var_type_name != "auto":
             var_type = self._symbol_table[var_type_name, None]
         else:
-            var_type = self._symbol_table[cmd[-1], None]
-        var_name: str = cmd[-1]
+            try:
+                var_type = self._symbol_table[var_name, None]
+            except CompilerException:
+                # 重载函数没有默认查找键：结合栈顶调用表达式的参数类型解析具体重载
+                if len(self._stack) > 0 and isinstance(self._stack[-1], expression.CallOp) and \
+                        self._stack[-1]._func_expr is None:
+                    call: expression.CallOp = self._stack[-1]
+                    funcs = self._symbol_table.find_functions(
+                        var_name,
+                        [t.name for t in call.arg_types],
+                        call.kwarg_types
+                    )
+                    if len(funcs) == 1:
+                        overloaded_func = funcs[0]
+                        var_type = overloaded_func
+                    else:
+                        raise
+                else:
+                    raise
+        if overloaded_func is not None:
+            expr: expression.VariableRef = expression.VariableRef(self._src_info, self._symbol_table, overloaded_func)
+            self.__make(expr)
+            return expr
         if (var_name, None) in self._symbol_table:
             var = self._symbol_table[var_name, None]
             # noinspection PyTypeChecker

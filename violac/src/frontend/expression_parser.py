@@ -173,6 +173,7 @@ class ExprParser(GlobalParser):
         cache_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
         cache_file_path = cache_path + COMMAND_POSTFIX
         parsing_result: ParsingResult = ParsingResult.read(cache_path)
+        self._imports = parsing_result.imports if parsing_result.imports is not None else {}
         command = self.parse_all_expr(parsing_result)
         if command is None:
             self._logger.error(f"Failed to parse {file_path}")

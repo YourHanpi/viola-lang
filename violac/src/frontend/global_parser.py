@@ -80,6 +80,7 @@ class GlobalParser:
         self._tasks.clear()
         self._expr_tokens.clear()
         self._symbol_types.clear()
+        self._imports = {}
         self._load_tokens(tokens)
         self._move_to_first_token()
         command: list[str] = []
@@ -109,7 +110,7 @@ class GlobalParser:
                 symbol += result[1]
         if is_error:
             return None
-        return ParsingResult(command, symbol, self._expr_tokens, True)
+        return ParsingResult(command, symbol, self._expr_tokens, True, self._imports)
     
     def parse_from_file(self, file_path: str, src_path: str = "") -> Optional[ParsingResult]:
         """
@@ -343,8 +344,7 @@ class GlobalParser:
         if len(text_list) > 2 and text_list[2].strip() == "---":
             text_list = text_list[3:]
         if to_load is None:
-            # return text_list
-            return []
+            return self._qualify_symbol_entries(text_list, namespace)
         load_all: bool = "*" in to_load
         current_line: int = 0
         total_lines: int = len(text_list)
@@ -377,6 +377,111 @@ class GlobalParser:
             while text_list[loc].strip() != "---":
                 symbols.append(text_list[loc])
                 loc += 1
+            symbols.append("---")
+        return symbols
+
+    @staticmethod
+    def _qualify_type_name(type_name: str, namespace: str, module_names: set[str]) -> str:
+        """
+        若类型名属于导入模块，则加上模块命名空间限定。
+        :param type_name: 类型名。
+        :param namespace: 模块命名空间。
+        :param module_names: 模块自身定义的符号名集合。
+        :return: 限定后的类型名。
+        """
+        if type_name in module_names:
+            return namespace + "." + type_name
+        return type_name
+
+    @staticmethod
+    def _qualify_symbol_entry(head: str, entry: list[str], namespace: str, module_names: set[str]) -> list[str]:
+        """
+        对导入模块的单个符号条目做模块命名空间限定，供 `import X;` 使用。
+        :param head: 条目头（FUNCTION/METHOD/VAR/CLASS等）。
+        :param entry: 条目内容（不含条目头与尾部分隔符）。
+        :param namespace: 模块命名空间。
+        :param module_names: 模块自身定义的符号名集合。
+        :return: 限定后的条目内容。
+        """
+        if not entry:
+            return []
+        result: list[str] = entry.copy()
+        if head in ["FUNC", "FUNCTION", "METHOD"]:
+            # 名称行：函数名或"类名 方法名"（后接修饰符）
+            name_parts: list[str] = result[0].split(" ")
+            name_parts[0] = namespace + "." + name_parts[0]
+            result[0] = " ".join(name_parts)
+            # 参数行与返回行中的类型名（%分隔的偶数位）
+            for i in range(1, len(result)):
+                if "%" not in result[i]:
+                    continue
+                segments: list[str] = result[i].split("%")
+                for j in range(0, len(segments), 2):
+                    segments[j] = GlobalParser._qualify_type_name(segments[j], namespace, module_names)
+                result[i] = "%".join(segments)
+        elif head == "VAR":
+            for i in range(len(result)):
+                parts: list[str] = result[i].split("%")
+                if len(parts) > 1:
+                    parts[0] = GlobalParser._qualify_type_name(parts[0], namespace, module_names)
+                    parts[1] = namespace + "." + parts[1]
+                    result[i] = "%".join(parts)
+        elif head == "CLASS":
+            # 名称行：类名%父类名（后接修饰符）
+            name_line: list[str] = result[0].split(" ")
+            cls_parent: list[str] = name_line[0].split("%")
+            cls_parent[0] = namespace + "." + cls_parent[0]
+            if len(cls_parent) > 1 and cls_parent[1] in module_names:
+                cls_parent[1] = namespace + "." + cls_parent[1]
+            name_line[0] = "%".join(cls_parent)
+            result[0] = " ".join(name_line)
+            # 属性行：<位置> 类型%名称 [修饰符]（泛型行不含位置标记，跳过）
+            for i in range(1, len(result)):
+                line: str = result[i].strip()
+                if line == "END CLASS":
+                    break
+                parts = line.split(" ")
+                if len(parts) > 1 and ":" in parts[0] and "%" in parts[1]:
+                    type_parts: list[str] = parts[1].split("%")
+                    type_parts[0] = GlobalParser._qualify_type_name(type_parts[0], namespace, module_names)
+                    parts[1] = "%".join(type_parts)
+                    result[i] = " ".join(parts)
+        return result
+
+    def _qualify_symbol_entries(self, text_list: list[str], namespace: str) -> list[str]:
+        """
+        为导入模块的符号表条目添加模块命名空间限定，供 `import X;` 使用。
+        :param text_list: 模块符号表条目（已去除文件头）。
+        :param namespace: 模块命名空间。
+        :return: 限定后的符号条目列表。
+        """
+        file_path = self._find_import(namespace)
+        if file_path is None:
+            return []
+        _, symbol_types_path, _, _ = file_path
+        module_names: set[str] = set()
+        if os.path.exists(symbol_types_path):
+            with open(symbol_types_path, "r") as file:
+                for text in file.readlines():
+                    kv_list: list[str] = text.strip().split("%")
+                    if len(kv_list) > 0 and kv_list[0]:
+                        module_names.add(kv_list[0])
+        symbols: list[str] = []
+        current_line: int = 0
+        total_lines: int = len(text_list)
+        while current_line < total_lines:
+            head: str = text_list[current_line].strip()
+            current_line += 1
+            if head in ["", "---"]:
+                continue
+            if current_line >= total_lines:
+                break
+            entry: list[str] = []
+            while current_line < total_lines and text_list[current_line].strip() != "---":
+                entry.append(text_list[current_line])
+                current_line += 1
+            symbols.append(head)
+            symbols += self._qualify_symbol_entry(head, entry, namespace, module_names)
             symbols.append("---")
         return symbols
                 
@@ -1129,7 +1234,7 @@ class GlobalParser:
         self._load_symbol_type_list(module_path, module_path, import_symbols)
         if len(self._tasks) > 0:
             return None
-        command: list[str] = [f"MAKE DEF FROM_IMPORT {module_path} " + " ".join(import_symbols)]
+        command: list[str] = [f"MAKE DEF FROM_IMPORT {module_path} " + " ".join(import_symbols), "CALL ADD_DEF"]
         symbol = self._load_symbol(module_path, import_symbols)
         if symbol is None:
             return None
@@ -1338,7 +1443,7 @@ class GlobalParser:
         if symbol is None:
             return None
         self._next()
-        return ["MAKE DEF IMPORT " + module_path], symbol
+        return ["MAKE DEF IMPORT " + module_path, "CALL ADD_DEF"], symbol
 
     @_set_loc_command
     def _parse_import_line(self) -> Optional[tuple[list[str], list[str]]]:

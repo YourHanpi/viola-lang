@@ -78,6 +78,8 @@ class MainController:
         not_busy_count: int = len(not_busy)
         for i in not_busy:
             result = self._controllers[i].join()
+            if result is None:
+                break
             if result.state != TaskResultState.PASSED:
                 self._task_stack.finish_task()
                 self._controllers[i] = self._empty_controller

@@ -541,8 +541,10 @@ class TestGlobalParserFileOperations(unittest.TestCase):
         mock_file.assert_called_once()
 
     @patch("os.remove")
-    def test_remove_file_lock_removes_lock_file(self, mock_remove):
+    @patch("os.path.exists")
+    def test_remove_file_lock_removes_lock_file(self, mock_exists, mock_remove):
         """_remove_file_lock should remove the lock file."""
+        mock_exists.return_value = True
         GlobalParser._remove_file_lock("/test/file")
         mock_remove.assert_called_once()
 

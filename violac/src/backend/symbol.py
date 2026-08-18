@@ -2763,6 +2763,15 @@ class SymbolTable:
             case "ENUM":
                 self._read_enum_decl(item_args)
 
+    @staticmethod
+    def _split_qualified_name(name: str) -> tuple[list[NamespaceName], str]:
+        """
+        拆分点号限定的符号名，返回其命名空间与自身名。
+        name: 点号限定的符号名。
+        """
+        parts: list[str] = name.split(".")
+        return [NamespaceName(p) for p in parts[:-1]], parts[-1]
+
     def _read_base_type_def(self, item: list[str]) -> None:
         """
         读取基本数据类型。记载格式如下：
@@ -2813,8 +2822,9 @@ class SymbolTable:
         func_type = FunctionTypeName(self._src_info, args, returns, generic_args)
         if item_name not in self._func_overload_times:
             self._func_overload_times[item_name] = 0
-        func = FunctionName(self._src_info, self.namespace,
-                            f"{item_name}$_{self._func_overload_times[item_name]}", func_type,
+        func_namespace, func_self_name = SymbolTable._split_qualified_name(item_name)
+        func = FunctionName(self._src_info, func_namespace,
+                            f"{func_self_name}$_{self._func_overload_times[item_name]}", func_type,
                             item_args[1::2] if len(item_args) > 1 else [],
                             item_returns[1::2] if len(item_returns) > 1 else [], export)
         self._func_overload_times[item_name] += 1
@@ -2836,8 +2846,9 @@ class SymbolTable:
         item: list[str] = item[0].split("%")
         item_name: str = item[1]
         item_type: str = item[0]
+        var_namespace, var_self_name = SymbolTable._split_qualified_name(item_name)
         # noinspection PyTypeChecker
-        self.add(GlobalVariableName(self._src_info, self.namespace, item_name, self[item_type, None]), item_name, None)
+        self.add(GlobalVariableName(self._src_info, var_namespace, var_self_name, self[item_type, None]), item_name, None)
 
     def _read_method_decl(self, item: list[str]) -> None:
         """
@@ -2909,6 +2920,7 @@ class SymbolTable:
         cls_name: str = item[0].split(" ")[0].split("%")[0]
         if (cls_name, None) in self:
             raise CompilerException(f"Class {cls_name} already exists.", self._src_info)
+        cls_namespace, cls_self_name = SymbolTable._split_qualified_name(cls_name)
         parent: ClassName = Object
         if item[0].split(" ")[0].split("%")[1] != "object":
             parent_name = item[0].split(" ")[0].split("%")[1]
@@ -2919,7 +2931,7 @@ class SymbolTable:
         is_abstract: bool = "abstract" in item[0].split(" ")[1:]
         is_c_part: bool = "c" in item[0].split(" ")[1:]
         generic_args: list[str] = item[1].split(" ")
-        cls = ClassName(self._src_info, self.namespace, cls_name, parent, is_abstract, is_c_part, generic_args)
+        cls = ClassName(self._src_info, cls_namespace, cls_self_name, parent, is_abstract, is_c_part, generic_args)
         if len(generic_args) > 0:
             self._generic_table.add_cls_def(cls)
         # noinspection PyTypeChecker
@@ -2932,7 +2944,7 @@ class SymbolTable:
             vtable: ClassName = ClassName(self._src_info, [], cls.name + "$$vtable", None, False,
                                           False)
             self.add(vtable, self.clean_namespace(cls.raw_name) + ".$$vtable", None)
-            cls.add_property(self._src_info, "$$vtable", vtable, Modifier.PUBLIC, True)
+            # cls.add_property(self._src_info, "$$vtable", vtable, Modifier.PUBLIC, True)
         item_loc: int = 2
         while not item[item_loc] == "END CLASS":
             item_text: list[str] = item[item_loc].split(" ")
