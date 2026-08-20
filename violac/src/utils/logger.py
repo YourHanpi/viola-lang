@@ -131,6 +131,7 @@ class LoggerController:
 
 
 LOGGER_CONTROLLER: LoggerController = LoggerController()
+LOGGER_LOCK: Lock = Lock()
 
 
 class Logger:
@@ -166,7 +167,7 @@ class Logger:
         """
         if level >= LOGGER_CONTROLLER.log_level:
             msg = LogMessage(level, self._name, message)
-            with Lock():
+            with LOGGER_LOCK:
                 if level.value <= LogLevel.WARNING.value:
                     print(msg)
                 else:

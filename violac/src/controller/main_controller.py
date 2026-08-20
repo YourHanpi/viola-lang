@@ -8,7 +8,6 @@ from utils.file_marks import CACHE_DIR, LOG_DIR
 from utils.logger import LOGGER_CONTROLLER, Logger
 from utils.task import TaskStack, TaskResultState
 
-from copy import copy
 import os
 import shutil
 import subprocess
@@ -28,13 +27,8 @@ class MainController:
         :param kwargs: 其他参数。
         """
         self._project: Project = Project(workspace, entry_path, output_path)
-        self._lexer_controller: LexerController = LexerController(workspace)
-        self._parser_controller: GlobalParserController = GlobalParserController(workspace)
-        self._expr_parser_controller: ExprParserController = ExprParserController(workspace)
-        self._compiler_vm_controller: CompilerVMController = CompilerVMController(self._project)
         self._thread_num: int = thread_num
-        self._empty_controller: EmptyController = EmptyController()
-        self._controllers: list[Controller] = [self._empty_controller] * thread_num
+        self._controllers: list[Controller] = [EmptyController() for _ in range(thread_num)]
         self._task_stack: TaskStack = TaskStack()
         LOGGER_CONTROLLER.config_workspace(workspace, output_path)
         self._logger: Logger = Logger("Main")
@@ -73,16 +67,14 @@ class MainController:
             LOGGER_CONTROLLER.close()
 
     def _post_task(self) -> bool:
-        """处理任务队列中的下一个任务。"""
+        """处理任务队列中的下一个任务，返回所有任务是否已完成。"""
         not_busy: list[int] = self._wait()
-        not_busy_count: int = len(not_busy)
+        progressed: bool = False
         for i in not_busy:
             result = self._controllers[i].join()
-            if result is None:
-                break
             if result.state != TaskResultState.PASSED:
                 self._task_stack.finish_task()
-                self._controllers[i] = self._empty_controller
+                self._controllers[i] = EmptyController()
             if result.state == TaskResultState.FAILURE:
                 self._logger.critical("Critical error occurred. Stop.")
                 raise CommandException("")
@@ -90,8 +82,9 @@ class MainController:
                 for task in result.data:
                     self._task_stack.put(task)
             if self._task_stack.is_empty:
-                break
+                continue
             command = self._task_stack.get()
+            progressed = True
             if command[0] == "violac":
                 if command[1] == "add-make":
                     self._maker.add_make(command[2])
@@ -99,33 +92,36 @@ class MainController:
                 else:
                     self._controllers[i] = self._get_controller(command)
                     self._controllers[i].handle(command[1:] + [f"--thread-index={i}"])
-                    not_busy_count -= 1
             else:
                 subprocess.run(command)
                 self._task_stack.finish_task()
-        return not_busy_count >= len(self._controllers) and self._task_stack.is_empty
+        if not progressed and not self._task_stack.is_finished:
+            # 任务栈为空但仍有任务在执行时，短暂休眠避免忙等
+            time.sleep(0.05)
+        return self._task_stack.is_finished
 
     def _get_controller(self, command: list[str]) -> Controller:
-        """根据命令获取对应的控制器副本。"""
+        """根据命令创建对应的控制器，每个任务使用独立的控制器实例。"""
         if command[1] == "lex":
-            return copy(self._lexer_controller)
+            return LexerController(self._workspace)
         elif command[1] == "parse":
-            return copy(self._parser_controller)
+            return GlobalParserController(self._workspace)
         elif command[1] == "parse-expr":
-            return copy(self._expr_parser_controller)
+            return ExprParserController(self._workspace)
         elif command[1] == "run-vm":
-            return copy(self._compiler_vm_controller)
+            return CompilerVMController(self._project)
         else:
             raise CommandException("Invalid command")
 
     def _wait(self) -> list[int]:
-        """等待至少一个控制器空闲。"""
+        """等待至少一个控制器空闲，返回所有空闲控制器的索引。"""
         not_busy: list[int] = []
         while len(not_busy) == 0:
             if len(self._controllers) == 0:
                 return [0]
-            time.sleep(0.1)
             for i, controller in enumerate(self._controllers):
                 if not controller.is_busy:
                     not_busy.append(i)
+            if len(not_busy) == 0:
+                time.sleep(0.1)
         return not_busy

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .utils import ParserGenericTable, ParsingResult, TokenStreamIO
 from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS
-from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, CACHE_DIR
+from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -115,22 +115,24 @@ class GlobalParser:
     def parse_from_file(self, file_path: str, src_path: str = "") -> Optional[ParsingResult]:
         """
         从文件中读取记号流并进行解析。
+        注意：调用方需自行管理文件解析锁（见parse_to_file）。
         :param file_path: 缓存文件路径。
-        :param src_path: 源文件路径。
         :param src_path: 源文件路径，如果为空则使用缓存文件路径。
-        :return: 解析结果对象，失败返回None。
+        :return: 解析结果对象，失败或需要其他任务时返回None。
         """
         file_path = os.path.abspath(file_path)
         self._tasks.clear()
-        self._set_file_lock(file_path)
+        src_path = src_path if src_path else file_path
         if not os.path.exists(file_path + TOKEN_POSTFIX):
-            self._add_task(["violac", "lex", src_path if src_path else file_path])
-            self._remove_file_lock(file_path)
+            self._add_task(["violac", "lex", src_path])
             return None
+        if os.path.exists(file_path + SYMBOL_TABLE_POSTFIX) and \
+                os.path.getmtime(src_path) < os.path.getmtime(file_path + SYMBOL_TABLE_POSTFIX):
+            # 已解析过且源文件未更新，直接复用已有结果
+            return ParsingResult.read(file_path)
         tokens: list[Token] = TokenStreamIO.read(file_path + TOKEN_POSTFIX)
         result = self.parse(tokens)
         self._dump_symbol_type_list(file_path)
-        self._remove_file_lock(file_path)
         return result
 
     def parse_to_file(self, file_path: str, thread_index: int = 0) -> TaskResult:
@@ -146,20 +148,27 @@ class GlobalParser:
         cache_file_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
         self._src_info: SourceInfo = SourceInfo(file_abs_path)
         self._logger.info(f"Start parsing {file_path}")
-        result = self.parse_from_file(cache_file_path, file_abs_path)
-        if result is None:
-            if len(self._tasks) == 0:
-                self._logger.error(f"Failed to parse {file_path}")
+        if not self._set_file_lock(cache_file_path):
+            # 该文件正在被其他线程解析，重新入队等待
+            self._logger.debug("File is being parsed by another thread")
+            return TaskResult(TaskResultState.DELAYED, [["violac", "parse", file_path]])
+        try:
+            result = self.parse_from_file(cache_file_path, file_abs_path)
+            if result is None:
+                if len(self._tasks) == 0:
+                    self._logger.error(f"Failed to parse {file_path}")
+                else:
+                    self._logger.debug("Required some other modules")
             else:
-                self._logger.debug("Required some other modules")
-        else:
-            self._logger.info(f"Successfully parsed {file_path}")
-        if result is not None:
-            result.write(cache_file_path)
-            return TaskResult(TaskResultState.SUCCESS, [["violac", "parse-expr", file_path]])
-        elif len(self._tasks) > 0:
-            return TaskResult(TaskResultState.DELAYED, self._tasks)
-        return TaskResult(TaskResultState.FAILURE)
+                self._logger.info(f"Successfully parsed {file_path}")
+            if result is not None:
+                result.write(cache_file_path)
+                return TaskResult(TaskResultState.SUCCESS, [["violac", "parse-expr", file_path]])
+            elif len(self._tasks) > 0:
+                return TaskResult(TaskResultState.DELAYED, self._tasks)
+            return TaskResult(TaskResultState.FAILURE)
+        finally:
+            self._remove_file_lock(cache_file_path)
 
     def _add_parsing_slice(self, expr_tokens: list[Token]) -> str:
         """
@@ -331,13 +340,13 @@ class GlobalParser:
         if file_path is None:
             return None
         symbol_table_path, _, parsing_lock_path, token_path = file_path
+        if os.path.exists(parsing_lock_path):
+            # 目标模块正被其他线程处理，等待其完成后再读取符号表
+            while os.path.exists(parsing_lock_path):
+                time.sleep(0.1)
         if not os.path.exists(symbol_table_path):
-            if os.path.exists(parsing_lock_path):
-                while os.path.exists(parsing_lock_path):
-                    time.sleep(0.1)
-            else:
-                self._add_task(["violac", "parse", token_path])
-                return None
+            self._add_task(["violac", "parse", token_path])
+            return None
         with open(symbol_table_path, "r") as file:
             text_list: list[str] = file.read().split("\n")
         # 符号表文件头部固定为三行：源路径、缓存目录、分隔符
@@ -496,13 +505,13 @@ class GlobalParser:
         if file_path is None:
             return
         _, symbol_types_path, parsing_lock_path, token_path = file_path
+        if os.path.exists(parsing_lock_path):
+            # 目标模块正被其他线程处理，等待其完成后再读取符号类型表
+            while os.path.exists(parsing_lock_path):
+                time.sleep(0.1)
         if not os.path.exists(symbol_types_path):
-            if os.path.exists(parsing_lock_path):
-                while os.path.exists(parsing_lock_path):
-                    time.sleep(0.1)
-            else:
-                self._add_task(["violac", "parse", token_path])
-                return
+            self._add_task(["violac", "parse", token_path])
+            return
         with open(symbol_types_path, "r") as file:
             texts: list[str] = file.readlines()
         for text in texts:
@@ -1828,18 +1837,16 @@ class GlobalParser:
         移除文件解析锁。
         :param path: 文件路径。
         """
-        if os.path.exists(path + PARSING_LOCK_POSTFIX):
-            os.remove(path + PARSING_LOCK_POSTFIX)
-        
+        remove_file_lock(path)
+    
     @staticmethod
-    def _set_file_lock(path: str) -> None:
+    def _set_file_lock(path: str) -> bool:
         """
         设置文件解析锁（防止并发解析）。
         :param path: 文件路径。
+        :return: 锁文件已存在（其他线程正在解析）时返回False，否则返回True。
         """
-        os.makedirs(os.path.dirname(path + PARSING_LOCK_POSTFIX), exist_ok=True)
-        with open(path + PARSING_LOCK_POSTFIX, "w") as file:
-            file.write("")
+        return set_file_lock(path)
 
     def __back_loc(self) -> None:
         """

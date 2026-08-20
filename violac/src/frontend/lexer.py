@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .utils import TokenStreamIO
 from utils import SourceInfo, CompilerException, COMPILER_PARAMS, VIOLA_INIT
-from utils.file_marks import TOKEN_POSTFIX, CACHE_DIR
+from utils.file_marks import TOKEN_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
 from utils.fsm import Token, StateNode, FSM
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
@@ -100,18 +100,24 @@ class Lexer(FSM):
         file_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_path, self._workspace)
         cache_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
-        if os.path.exists(file_path) and os.path.exists(cache_path + TOKEN_POSTFIX) and \
-                os.path.getmtime(file_path) < os.path.getmtime(cache_path + TOKEN_POSTFIX):
-            self._logger.info(f"Passed: {file_path}")
-            return TaskResult(TaskResultState.SUCCESS)
-        self._logger.info(f"Lexing: {file_path}")
-        result = self.lex(file_path)
-        if self._is_error:
-            self._logger.error(f"Failed to lex: {file_path}")
-            return TaskResult(TaskResultState.FAILURE)
-        TokenStreamIO.write(cache_path + TOKEN_POSTFIX, result)
-        self._logger.info(f"Successfully lexed: {file_path}")
-        return TaskResult(TaskResultState.SUCCESS, [["violac", "parse", file_path]])
+        if not set_file_lock(cache_path):
+            # 该文件正在被其他线程处理，重新入队等待
+            return TaskResult(TaskResultState.DELAYED, [["violac", "lex", file_path]])
+        try:
+            if os.path.exists(file_path) and os.path.exists(cache_path + TOKEN_POSTFIX) and \
+                    os.path.getmtime(file_path) < os.path.getmtime(cache_path + TOKEN_POSTFIX):
+                self._logger.info(f"Passed: {file_path}")
+                return TaskResult(TaskResultState.SUCCESS)
+            self._logger.info(f"Lexing: {file_path}")
+            result = self.lex(file_path)
+            if self._is_error:
+                self._logger.error(f"Failed to lex: {file_path}")
+                return TaskResult(TaskResultState.FAILURE)
+            TokenStreamIO.write(cache_path + TOKEN_POSTFIX, result)
+            self._logger.info(f"Successfully lexed: {file_path}")
+            return TaskResult(TaskResultState.SUCCESS, [["violac", "parse", file_path]])
+        finally:
+            remove_file_lock(cache_path)
 
     def _get_char_token(self, char: str) -> Token:
         """

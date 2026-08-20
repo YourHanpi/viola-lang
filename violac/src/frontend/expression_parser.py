@@ -2,7 +2,7 @@
 from .global_parser import GlobalParser
 from .utils import ParsingResult
 from utils import Token, SourceInfo
-from utils.file_marks import COMMAND_POSTFIX, CACHE_DIR
+from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, CACHE_DIR
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -172,17 +172,29 @@ class ExprParser(GlobalParser):
         file_relpath = os.path.relpath(file_abs_path, self._workspace)
         cache_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
         cache_file_path = cache_path + COMMAND_POSTFIX
-        parsing_result: ParsingResult = ParsingResult.read(cache_path)
-        self._imports = parsing_result.imports if parsing_result.imports is not None else {}
-        command = self.parse_all_expr(parsing_result)
-        if command is None:
-            self._logger.error(f"Failed to parse {file_path}")
-            return TaskResult(TaskResultState.FAILURE)
-        os.makedirs(os.path.dirname(cache_file_path), exist_ok=True)
-        with open(cache_file_path, "w", encoding=self._ENCODING) as f:
-            f.write("\n".join(command).replace("\n\n", "\n"))
-        self._logger.info(f"Successfully parsed expressions from {file_path}")
-        return TaskResult(TaskResultState.SUCCESS, [["violac", "run-vm", file_path]])
+        global_command_path = cache_path + GLOBAL_COMMAND_POSTFIX
+        if not self._set_file_lock(cache_path):
+            # 该文件正在被其他线程解析，重新入队等待
+            return TaskResult(TaskResultState.DELAYED, [["violac", "parse-expr", file_path]])
+        try:
+            if os.path.exists(cache_file_path) and os.path.exists(global_command_path) and \
+                    os.path.getmtime(cache_file_path) >= os.path.getmtime(global_command_path):
+                # 已解析过表达式且全局命令未更新，直接复用已有结果
+                self._logger.info(f"Passed: {file_path}")
+                return TaskResult(TaskResultState.SUCCESS, [["violac", "run-vm", file_path]])
+            parsing_result: ParsingResult = ParsingResult.read(cache_path)
+            self._imports = parsing_result.imports if parsing_result.imports is not None else {}
+            command = self.parse_all_expr(parsing_result)
+            if command is None:
+                self._logger.error(f"Failed to parse {file_path}")
+                return TaskResult(TaskResultState.FAILURE)
+            os.makedirs(os.path.dirname(cache_file_path), exist_ok=True)
+            with open(cache_file_path, "w", encoding=self._ENCODING) as f:
+                f.write("\n".join(command).replace("\n\n", "\n"))
+            self._logger.info(f"Successfully parsed expressions from {file_path}")
+            return TaskResult(TaskResultState.SUCCESS, [["violac", "run-vm", file_path]])
+        finally:
+            self._remove_file_lock(cache_path)
 
     def parse_single_expr(self, expr_tokens: list[Token]) -> Optional[list[str]]:
         """

@@ -6,7 +6,7 @@ import backend.project as project
 import backend.statement as statement
 import backend.symbol as symbol
 from utils import SourceInfo, InternalCompilerException, VIOLA_INIT, COMPILER_PARAMS, CompilerException
-from utils.file_marks import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX, CACHE_DIR
+from utils.file_marks import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -221,28 +221,37 @@ class CompilerVM:
             self._logger.debug(f"Required: {cache_path + SYMBOL_TABLE_POSTFIX}")
             self._logger.debug(f"Required: {cache_path + COMMAND_POSTFIX}")
             return TaskResult(TaskResultState.DELAYED, [["violac", "parse", src_path]])
-        print(cache_path + SYMBOL_TABLE_POSTFIX)
-        self._symbol_table = symbol.SymbolTable.read_from(cache_path + SYMBOL_TABLE_POSTFIX)
-        self._var_state_table = symbol.VariableStateTable(src_path, self._workspace)
-        self._stack.clear()
-        self._stack.append(project.SourceFile(
-            self._src_info, self._symbol_table, self._var_state_table, src_path, output_path,
-            self._symbol_table.namespace
-        ))
-        with open(cache_path + COMMAND_POSTFIX, "r", encoding=CompilerVM._ENCODING) as f:
-            commands = f.read()
+        if not set_file_lock(cache_path):
+            # 该文件正在被其他线程处理，重新入队等待
+            return TaskResult(TaskResultState.DELAYED, [["violac", "run-vm", src_path]])
         try:
-            self.exec(commands)
-            src_file = self.get()
-        except CompilerException:
-            self._logger.error(format_exc())
-            return TaskResult(TaskResultState.FAILURE)
-        except Exception as e:
-            self._logger.error(format_exc())
-            raise e
-        self._project.add_source_file(src_file)
-        self._logger.info(f"Successfully compiled: {src_path}")
-        return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
+            if CompilerVM._check_skip(src_path, output_path):
+                # 等待期间该文件已被其他线程编译完成
+                self._logger.debug(f"Skipped: {src_path}")
+                return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
+            self._symbol_table = symbol.SymbolTable.read_from(cache_path + SYMBOL_TABLE_POSTFIX)
+            self._var_state_table = symbol.VariableStateTable(src_path, self._workspace)
+            self._stack.clear()
+            self._stack.append(project.SourceFile(
+                self._src_info, self._symbol_table, self._var_state_table, src_path, output_path,
+                self._symbol_table.namespace
+            ))
+            with open(cache_path + COMMAND_POSTFIX, "r", encoding=CompilerVM._ENCODING) as f:
+                commands = f.read()
+            try:
+                self.exec(commands)
+                src_file = self.get()
+            except CompilerException:
+                self._logger.error(format_exc())
+                return TaskResult(TaskResultState.FAILURE)
+            except Exception as e:
+                self._logger.error(format_exc())
+                raise e
+            self._project.add_source_file(src_file)
+            self._logger.info(f"Successfully compiled: {src_path}")
+            return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
+        finally:
+            remove_file_lock(cache_path)
 
     def exec(self, cmd: str) -> None:
         """逐行执行编译命令字符串。"""

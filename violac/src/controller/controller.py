@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
+from utils import CommandException
 from utils.task import TaskResult, TaskResultState
 
 from abc import ABC, abstractmethod
 from threading import Thread
+from traceback import format_exc
 from typing import Optional, Callable
 
 
@@ -19,7 +21,8 @@ class ThreadWithResult:
 
     @property
     def is_busy(self) -> bool:
-        return self._result is None
+        """获取线程是否仍在运行。未启动或已结束时均视为空闲。"""
+        return self._thread is not None and self._result is None
 
     def join(self) -> TaskResult:
         """等待线程执行完毕并获取返回值。"""
@@ -31,14 +34,20 @@ class ThreadWithResult:
 
     def start(self, *args, **kwargs) -> None:
         """启动线程。"""
+        if self.is_busy:
+            raise CommandException("Thread is already running.")
         self._result = None
         self._thread = Thread(target=self._target, args=args, kwargs=kwargs)
         self._thread.start()
 
     def __target_wrapper(self, target: Callable[[...], TaskResult]) -> Callable[[...], None]:
-        """包装目标函数，将返回值保存到实例变量中。"""
+        """包装目标函数，将返回值保存到实例变量中，并将异常转为失败结果。"""
         def wrapper(*args, **kwargs):
-            self._result = target(*args, **kwargs)
+            try:
+                self._result = target(*args, **kwargs)
+            except Exception:
+                print(format_exc())
+                self._result = TaskResult(TaskResultState.FAILURE)
         return wrapper
 
 
@@ -119,7 +128,7 @@ class SingleController(Controller, ABC):
                 self._handle(*self._get_params(command[1:]))
             except Exception as exc:
                 self._handle_error(exc)
-                exit(1)
+                raise CommandException(str(exc)) from exc
 
     @property
     def is_busy(self) -> bool:

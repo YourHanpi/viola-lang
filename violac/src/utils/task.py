@@ -45,20 +45,21 @@ class TaskStack:
         """
         self._tasks: list[list[str]] = []
         self._executing_tasks_count: int = 0
+        self._lock: Lock = Lock()
 
     def __str__(self) -> str:
         return f"TaskStack(tasks={self._tasks}, executing_tasks_count={self._executing_tasks_count})"
 
     def finish_task(self) -> None:
         """标记一个任务已完成。"""
-        with Lock():
+        with self._lock:
             if self._executing_tasks_count == 0:
                 raise CommandException("No task to finish.")
             self._executing_tasks_count -= 1
 
     def get(self) -> list[str]:
         """从栈顶取出一个待执行任务。"""
-        with Lock():
+        with self._lock:
             if len(self._tasks) == 0:
                 raise CommandException("No task to execute.")
             task = self._tasks.pop()
@@ -67,15 +68,17 @@ class TaskStack:
 
     @property
     def is_empty(self) -> bool:
-        return len(self._tasks) == 0
+        with self._lock:
+            return len(self._tasks) == 0
 
     @property
     def is_finished(self) -> bool:
-        return len(self._tasks) == 0 and self._executing_tasks_count == 0
+        with self._lock:
+            return len(self._tasks) == 0 and self._executing_tasks_count == 0
 
     def put(self, command: list[str]) -> None:
         """向栈顶压入一个任务。"""
-        with Lock():
+        with self._lock:
             self._tasks.append(command)
 
 

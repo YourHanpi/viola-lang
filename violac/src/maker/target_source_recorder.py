@@ -22,8 +22,10 @@ class TargetSourceRecorder:
         self._config_path: str = os.path.join(output_path, os.path.basename(output_path) + MAKE_CONFIG_POSTFIX)
 
     def add_make(self, target_path: str) -> None:
-        """添加一个编译目标及其对应的目标文件路径。"""
-        self._make_targets.append((target_path + ".c", target_path + ".c.o"))
+        """添加一个编译目标及其对应的目标文件路径（重复目标将被忽略）。"""
+        make_target: tuple[str, str] = (target_path + ".c", target_path + ".c.o")
+        if make_target not in self._make_targets:
+            self._make_targets.append(make_target)
 
     def set_compile_flags(self, flags: list[str]) -> None:
         """设置编译标志。"""

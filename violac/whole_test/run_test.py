@@ -50,7 +50,7 @@ def main() -> None:
         print(os.path.abspath(compiler))
     if compiler.startswith("\"") and compiler.endswith("\"") or compiler.startswith("'") and compiler.endswith("'"):
         compiler = compiler[1:-1]
-    test_projects(compiler, 88)
+    test_projects(compiler, 96)
     # test_projects(compiler)
 
 
