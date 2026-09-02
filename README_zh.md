@@ -36,7 +36,7 @@ Viola是一个以内存安全、高并发简化和高性能为设计目标的编
 3. 类型检查：尝试对类型进行静态检查，以及生成dynamic cast代码。
 4. 类继承和接口实现检查。
 5. 变量生命周期检查，并在生命周期结束时自动插入释放代码。
-6. 导入符号检查 **（未完成）**。
+6. 导入符号检查。
 
 目标代码生成部分预计包含以下功能：
 
@@ -53,7 +53,7 @@ Viola是一个以内存安全、高并发简化和高性能为设计目标的编
 
 ## viola.lang
 
-- `array<T>`类。
+- `array::<T>`类。
 - `expand`函数，声明为`sq expand::<T>(T[] inputs, (T[]) -> (T) predicate, size_t size) -> (T[] results);`，运行时将调用predicate函数对最后input.length个元素进行迭代，并返回迭代至长度为size的数组。
 - `filter`函数，声明为`fn filter::<T>(T[] inputs, (T) -> (bool) predicate, bool useAsync) -> (T[] results);`。
 - `map`函数，声明为`fn map::<T, U>(T[] inputs, (T) -> (U) mapper, bool useAsync) -> (U[] results);`。
@@ -62,13 +62,22 @@ Viola是一个以内存安全、高并发简化和高性能为设计目标的编
 
 ### viola.lang.thread
 
+接口：
+
+- `addThread`Viola函数，声明为`sq addThread(uint32 number) -> ();`。
+- `delThread`Viola函数，声明为`sq delThread(uint32 number) -> ();`。此函数执行的任务是：如果有空闲线程则直接移除；如果空闲线程不足，则等待直到一个线程完成当前任务，然后移除该线程，并且将线程的所有未执行任务移入任务队列。
+- `getThreadsNum`Viola函数，声明为`fn getThreadsNum() -> (uint32 number);`。
+- `setThreadsNum`Viola函数，声明为`sq setThreadsNum(uint32 number) -> ();`。
+
+内部实现内容：
+
 - `enqueue`C函数，声明为`void viola$lang$thread$enqueue(FuncCall *call);`。
-- `FuncCall`C结构体。
+- `FuncCall`C结构体。实际暴露接口为`viola$lang$thread$FuncCall`。
 - `initListener`C函数，声明为`void viola$lang$thread$initListener(Listener *listener, uint32_t executerThreadId);`。
-- `Listener`C结构体。
+- `Listener`C结构体。实际暴露接口为`viola$lang$thread$Listener`。
 - `popStackA`和`popStackB`C函数，声明为`void viola$lang$thread$popStackA(uint32_t threadId);`和`void viola$lang$thread$popStackB(uint32_t threadId);`。
 - `pushStackA`和`pushStackB`C函数，声明为`void viola$lang$thread$pushStackA(uint32_t threadId, viola$lang$string *string);`和`void viola$lang$thread$pushStackB(uint32_t threadId, viola$lang$thread$ThreadInfo threadInfo);`。
-- `StackA`和`StackB`C结构体。关于这两个结构体的解释见traceback的实现。
+- `StackA`和`StackB`C结构体。关于这两个结构体的解释见traceback的实现。实际暴露接口为`viola$lang$thread$StackA`和`viola$lang$thread$StackB`。
 - `waitListener`C函数，声明为`void viola$lang$thread$waitListener(Listener *listener);`。此函数会销毁传入的Listener。
 
 ### traceback的实现
@@ -86,7 +95,7 @@ typedef struct {
 
 - A栈每当调用函数时就压栈，函数返回时退栈；B栈调用异步函数时压栈，异步函数返回时退栈。
 - B栈的压栈操作在从任务队列获取任务时完成，退栈操作在异步包装函数中完成。stackASize从委托方线程传入的listener中获取。
-- traceback打印代码：
+- traceback打印代码（草稿，未测试）：
 
 ```c
 viola$lang$string *viola_getTraceback(uint32_t threadId) {

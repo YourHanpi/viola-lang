@@ -341,18 +341,23 @@ class Lexer(FSM):
             "fn",
             "from",
             "if",
+            "impl",
             "import",
+            "interface",
             "public",
             "private",
             "protected",
             "return",
             "sq",
+            "super",
             "static",
             "this",
             "throw",
             "true",
             "try",
-            "using"
+            "unsafe",
+            "using",
+            "wrapper"
         ]
         for keyword in keywords:
             current: StateNode = first

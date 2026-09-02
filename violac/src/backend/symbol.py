@@ -355,7 +355,7 @@ UINT8: BaseTypeName = BaseTypeName("uint8", "u8")
 UINT16: BaseTypeName = BaseTypeName("uint16", "u16")
 UINT32: BaseTypeName = BaseTypeName("uint32", "u32")
 UINT64: BaseTypeName = BaseTypeName("uint64", "u64")
-SIZE_T: BaseTypeName = BaseTypeName("size_t", "sz")
+SIZE_T: BaseTypeName = UINT64
 
 FLOAT: BaseTypeName = BaseTypeName("float", "f")
 FLOAT32: BaseTypeName = BaseTypeName("float32", "f32")
@@ -957,6 +957,18 @@ class ArrayTypeName(ClassName):
                 False, [], [], Modifier.PRIVATE, True
             )
         )
+
+    @property
+    def c_alloc_name(self) -> str:
+        return f"{self._element_type.name}$$array"
+
+    @property
+    def c_assigning_name(self) -> str:
+        return f"{self._element_type.name}$$array **"
+
+    @property
+    def c_calling_name(self) -> str:
+        return f"{self._element_type.name}$$array *"
 
     def convertable_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
@@ -2941,6 +2953,13 @@ class SymbolTable:
         if parent is not None:
             for name, prop in parent.properties.items():
                 cls.add_property_object(name, prop)
+            # 继承父类的方法：将父类方法并入子类的方法表，使子类实例
+            # 可以直接调用继承的方法。__del__ 不复制，每个类都会生成
+            # 自己的析构方法。
+            for key, method in parent.methods.items():
+                if key[0] == "__del__" or key in cls._methods:
+                    continue
+                cls._methods[key] = method
             vtable: ClassName = ClassName(self._src_info, [], cls.name + "$$vtable", None, False,
                                           False)
             self.add(vtable, self.clean_namespace(cls.raw_name) + ".$$vtable", None)

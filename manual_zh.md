@@ -33,7 +33,6 @@ Viola支持面向对象的程序设计，包括封装、继承、多态和抽象
     - `uint16` - 16位无符号整型（相当于C `uint16_t`）
     - `uint32` - 32位无符号整型（相当于C `uint32_t`）
     - `uint64` - 64位无符号整型（相当于C `uint64_t`）
-    - `size_t` - 数据长度类型（相当于C `size_t`）
 - `float` - 浮点型（相当于C `float`）
     - `float32` - 32位浮点型（相当于C `float32_t`）
     - `float64` - 64位浮点型（相当于C `float64_t`）
@@ -350,7 +349,7 @@ arr2 = arr1 => {
 sq forEach::<T, U>(T[] iterable, (T) -> (U) mapper) -> (U[] result);
 sq forEach::<T>(T[] iterable, (T) -> () mapper) -> ();
 sq while::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result);
-sq doWhile::<T>(T inputs, (T) -> (T) updater) -> (T result);
+sq doWhile::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result);
 ```
 
 ## 分支
@@ -698,7 +697,7 @@ class Image {
     static public sq load(string path) -> (Image img) {...} // 静态方法，指不使用类实例的方法
     
     static public fn black(uint channels, uint height, uint width) -> (Image img) {
-        pixels = zeros<uint8>(height * width * channels);
+        pixels = zeros::<uint8>(height * width * channels);
         img = Image(channels, height, width, pixels);
     }
     
@@ -728,7 +727,7 @@ class Image {
 Image img0; // 声明一个对象变量
 Image img1 = Image.black(3, 100, 100); // 注意：这里调用的是静态方法
 img2 = img1.drawLine(0, 0, 100, 100, [255, 255, 255]); // 这里既可以调用静态方法，也可以调用实例方法
-Image img3(3, 100, 100, zeros<uint8>(30000)); // 相当于Image img3 = Image(3, 100, 100, zeros<uint8>(30000));
+Image img3(3, 100, 100, zeros::<uint8>(30000)); // 相当于Image img3 = Image(3, 100, 100, zeros<uint8>(30000));
 ```
 
 类似基本数据类型，我们也可以直接将类类型的数据传入函数。例如：
