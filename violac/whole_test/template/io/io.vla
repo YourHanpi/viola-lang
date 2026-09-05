@@ -1,0 +1,37 @@
+// Viola I/O Test Template
+// Tests: print, perror, input, file open/read/write
+
+sq main() -> () {
+    // Standard output
+    print("${PRINT_MSG_1}");
+    print("${PRINT_MSG_2}");
+    print("");
+
+    // Standard error output
+    perror("${PERROR_MSG}");
+
+    // File writing
+    file f1 = open("${OUTPUT_FILE}", "${WRITE_MODE}", "${ENCODING}");
+    write(f1, "${FILE_CONTENT_LINE1}\n");
+    write(f1, "${FILE_CONTENT_LINE2}\n");
+    write(f1, "${FILE_CONTENT_LINE3}\n");
+
+    // File reading
+    file f2 = open("${OUTPUT_FILE}", "${READ_MODE}", "${ENCODING}");
+    string fileContent = read(f2);
+
+    // Print the read content
+    print("${READ_MSG}");
+    print(fileContent);
+
+    // Binary file operations
+    uint8[] ${BIN_DATA} = [${BIN_VALUES}];
+    file f3 = open("${BIN_FILE}", "${BIN_MODE}");
+    writeBytes(f3, ${BIN_DATA});
+
+    file f4 = open("${BIN_FILE}", "${BIN_READ_MODE}");
+    uint8[] readBinData = readBytes(f4);
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

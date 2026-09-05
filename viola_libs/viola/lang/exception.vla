@@ -1,0 +1,15 @@
+// Viola异常运行库声明。
+//
+// 命名空间：viola.lang.exception
+// 实现位于viola_libs/viola/lang/exception.c。
+// 异常类型为编译器内置类型，此处以wrapper类提供其原生方法的Viola声明
+// （分号代替函数体）。
+
+import cpart "runtime.h";
+
+wrapper class Exception {
+    // 获取异常消息
+    public fn what() -> (string result);
+    // 释放异常对象
+    public sq __del__() -> ();
+}

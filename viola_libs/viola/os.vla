@@ -1,0 +1,18 @@
+// Viola操作系统接口库声明。
+//
+// 命名空间：viola.os
+// 实现位于viola_libs/viola/os.c（绑定Windows与POSIX接口）。
+// 本文件仅为C实现的函数提供Viola声明（分号代替函数体）。
+
+import cpart "runtime.h";
+
+// 休眠指定毫秒数
+sq sleep(uint64 milliseconds) -> ();
+// 退出程序并返回退出码（不会返回）
+sq exit(int32 code) -> ();
+// 获取环境变量的值（不存在时返回空字符串）
+fn getEnv(string name) -> (string result);
+// 获取当前Unix时间戳（毫秒）
+fn time() -> (uint64 result);
+// 执行系统命令并返回退出码
+sq system(string command) -> (int32 result);

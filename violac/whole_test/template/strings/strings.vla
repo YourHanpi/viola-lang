@@ -1,0 +1,35 @@
+// Viola Strings Test Template
+// Tests: string declaration, concatenation, slicing, methods
+
+sq main() -> () {
+    // String declaration and definition
+    string ${STR_VAR_1} = "${STR_VALUE_1}";
+    string ${STR_VAR_2} = "${STR_VALUE_2}";
+
+    // String concatenation with + operator
+    string ${CONCAT_PLUS} = ${STR_VAR_1} + ${STR_VAR_2};
+
+    // String repetition with * operator
+    string ${REPEAT_STAR} = ${STR_VAR_1} * ${REPEAT_COUNT};
+
+    // String concatenation with .concat()
+    string ${CONCAT_METHOD} = ${STR_VAR_1}.concat(${STR_VAR_2});
+
+    // String repetition with .repeat()
+    string ${REPEAT_METHOD} = ${STR_VAR_1}.repeat(${REPEAT_COUNT});
+
+    // String slicing
+    string ${SLICE_1} = ${STR_VAR_1}[${STR_SLICE_START}:${STR_SLICE_END}];
+    string ${SLICE_2} = ${STR_VAR_1}[${STR_SLICE_FROM}:];
+    string ${SLICE_3} = ${STR_VAR_1}[:${STR_SLICE_TO}];
+
+    // String methods
+    string[] ${SPLIT_VAR} = ${STR_VAR_1}.split("${SPLIT_DELIM}");
+    string ${REPLACE_VAR} = ${STR_VAR_1}.replace("${REPLACE_OLD}", "${REPLACE_NEW}");
+    size_t ${LEN_VAR} = ${STR_VAR_1}.length();
+    bool ${STARTS_VAR} = ${STR_VAR_1}.startsWith("${STARTS_WITH}");
+    bool ${ENDS_VAR} = ${STR_VAR_1}.endsWith("${ENDS_WITH}");
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

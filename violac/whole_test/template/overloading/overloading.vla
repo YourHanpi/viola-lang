@@ -1,0 +1,72 @@
+// Viola Overloading Test Template
+// Tests: function overloading and operator overloading
+
+// Function overloading - same name, different parameter types
+sq printValue(int value) -> () {
+    print("${INT_PREFIX}");
+    print("${SEPARATOR}");
+}
+
+sq printValue(double value) -> () {
+    print("${FLOAT_PREFIX}");
+    print("${SEPARATOR}");
+}
+
+sq printValue(string value) -> () {
+    print("${STR_PREFIX}");
+    print("${SEPARATOR}");
+}
+
+// Operator overloading example class
+class Vector2D {
+    double x;
+    double y;
+
+    public sq __new__(double x, double y) -> (this) {
+        this.x = x;
+        this.y = y;
+    }
+
+    // Overload + operator
+    public fn __add__(Vector2D other) -> (Vector2D result) {
+        result = Vector2D(this.x + other.x, this.y + other.y);
+    }
+
+    // Overload - operator
+    public fn __sub__(Vector2D other) -> (Vector2D result) {
+        result = Vector2D(this.x - other.x, this.y - other.y);
+    }
+
+    // Overload * operator (scalar multiplication)
+    public fn __mul__(double scalar) -> (Vector2D result) {
+        result = Vector2D(this.x * scalar, this.y * scalar);
+    }
+
+    // Overload == operator
+    public fn __eq__(Vector2D other) -> (bool result) {
+        result = (this.x == other.x) && (this.y == other.y);
+    }
+}
+
+sq main() -> () {
+    // Test function overloading
+    int ${INT_VAR} = ${INT_VAL};
+    double ${FLOAT_VAR} = ${FLOAT_VAL};
+    string ${STR_VAR} = "${STR_VAL}";
+
+    printValue(${INT_VAR});
+    printValue(${FLOAT_VAR});
+    printValue(${STR_VAR});
+
+    // Test operator overloading
+    Vector2D v1(${V1_X}, ${V1_Y});
+    Vector2D v2(${V2_X}, ${V2_Y});
+
+    Vector2D v3 = v1 + v2;
+    Vector2D v4 = v1 - v2;
+    Vector2D v5 = v1 * ${SCALAR_VAL};
+    bool areEqual = v1 == v2;
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

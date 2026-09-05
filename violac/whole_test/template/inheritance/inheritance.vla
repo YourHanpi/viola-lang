@@ -1,0 +1,37 @@
+// Viola Inheritance Test Template
+// Tests: class inheritance and method overriding
+
+// Base class
+class ${ABSTRACT_CLASS} {
+    ${PROP_A_TYPE} ${PROP_A_NAME};
+
+    public sq __new__(${PROP_A_TYPE} ${PROP_A_NAME}) -> (this) {
+        this.${PROP_A_NAME} = ${PROP_A_NAME};
+    }
+
+    // Concrete method
+    public fn get${PROP_A_NAME_CAP}() -> (${PROP_A_TYPE} result) {
+        result = this.${PROP_A_NAME};
+    }
+}
+
+// Concrete subclass
+class ${SUBCLASS_1} extends ${ABSTRACT_CLASS} {
+    ${PROP_B_TYPE} ${PROP_B_NAME};
+
+    public sq __new__(${PROP_A_TYPE} ${PROP_A_NAME}, ${PROP_B_TYPE} ${PROP_B_NAME}) -> (this) {
+        this.${PROP_A_NAME} = ${PROP_A_NAME};
+        this.${PROP_B_NAME} = ${PROP_B_NAME};
+    }
+}
+
+sq main() -> () {
+    // Create instance of subclass
+    ${SUBCLASS_1} obj1(${INIT_VAL_A}, ${INIT_VAL_B});
+
+    // Call inherited method
+    ${PROP_A_TYPE} val = obj1.get${PROP_A_NAME_CAP}();
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

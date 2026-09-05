@@ -1,0 +1,68 @@
+// Viola数学库声明。
+//
+// 命名空间：viola.math
+// 实现位于viola_libs/viola/math.c（绑定C标准库<math.h>）。
+// 本文件仅为C实现的函数提供Viola声明（分号代替函数体）。
+
+import cpart "runtime.h";
+
+// ================= 一元浮点函数 =================
+
+// 平方根
+fn sqrt(float64 x) -> (float64 result);
+// 正弦
+fn sin(float64 x) -> (float64 result);
+// 余弦
+fn cos(float64 x) -> (float64 result);
+// 正切
+fn tan(float64 x) -> (float64 result);
+// 反正弦
+fn asin(float64 x) -> (float64 result);
+// 反余弦
+fn acos(float64 x) -> (float64 result);
+// 反正切
+fn atan(float64 x) -> (float64 result);
+// 双曲正弦
+fn sinh(float64 x) -> (float64 result);
+// 双曲余弦
+fn cosh(float64 x) -> (float64 result);
+// 双曲正切
+fn tanh(float64 x) -> (float64 result);
+// e的x次幂
+fn exp(float64 x) -> (float64 result);
+// 自然对数
+fn log(float64 x) -> (float64 result);
+// 常用对数（以10为底）
+fn log10(float64 x) -> (float64 result);
+// 以2为底的对数
+fn log2(float64 x) -> (float64 result);
+// 绝对值
+fn fabs(float64 x) -> (float64 result);
+// 向下取整
+fn floor(float64 x) -> (float64 result);
+// 向上取整
+fn ceil(float64 x) -> (float64 result);
+// 四舍五入
+fn round(float64 x) -> (float64 result);
+// 截断小数部分
+fn trunc(float64 x) -> (float64 result);
+
+// ================= 二元浮点函数 =================
+
+// x的y次幂
+fn pow(float64 x, float64 y) -> (float64 result);
+// 反正切（y/x的反正切，考虑象限）
+fn atan2(float64 x, float64 y) -> (float64 result);
+// 浮点取余
+fn fmod(float64 x, float64 y) -> (float64 result);
+// 取较小值
+fn fmin(float64 x, float64 y) -> (float64 result);
+// 取较大值
+fn fmax(float64 x, float64 y) -> (float64 result);
+
+// ================= 常量 =================
+
+// 圆周率π
+fn pi() -> (float64 result);
+// 自然常数e
+fn e() -> (float64 result);

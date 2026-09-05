@@ -1,0 +1,57 @@
+// Viola Object Update Operator Test Template
+// Tests: object update operator for classes and arrays
+
+class ${CLASS_NAME} {
+    public ${PROP_TYPE_1} ${PROP_NAME_1};
+    public ${PROP_TYPE_2} ${PROP_NAME_2};
+    public ${PROP_TYPE_3} ${PROP_NAME_3};
+
+    public sq __new__(${PROP_TYPE_1} ${PROP_NAME_1}, ${PROP_TYPE_2} ${PROP_NAME_2}, ${PROP_TYPE_3} ${PROP_NAME_3}) -> (this) {
+        this.${PROP_NAME_1} = ${PROP_NAME_1};
+        this.${PROP_NAME_2} = ${PROP_NAME_2};
+        this.${PROP_NAME_3} = ${PROP_NAME_3};
+    }
+}
+
+sq main() -> () {
+    // Original object
+    ${CLASS_NAME} ${ORIG_OBJ}(${VAL_1}, ${VAL_2}, ${VAL_3});
+
+    // Object update - change properties
+    ${CLASS_NAME} ${UPDATED_OBJ_1} = ${ORIG_OBJ} => {
+        .${PROP_NAME_1} = ${NEW_VAL_1}
+    };
+
+    // Object update - change multiple properties
+    ${CLASS_NAME} ${UPDATED_OBJ_2} = ${ORIG_OBJ} => {
+        .${PROP_NAME_1} = ${NEW_VAL_1},
+        .${PROP_NAME_2} = ${NEW_VAL_2}
+    };
+
+    // Object update - change all properties
+    ${CLASS_NAME} ${UPDATED_OBJ_3} = ${ORIG_OBJ} => {
+        .${PROP_NAME_1} = ${NEW_VAL_1},
+        .${PROP_NAME_2} = ${NEW_VAL_2},
+        .${PROP_NAME_3} = ${NEW_VAL_3}
+    };
+
+    // Array object update - single index
+    int[] ${ORIG_ARR} = [${ARR_VALS}];
+    int[] ${UPDATED_ARR_1} = ${ORIG_ARR} => {
+        [${ARR_IDX_1}] = ${ARR_NEW_VAL_1}
+    };
+
+    // Array object update - multiple indices
+    int[] ${UPDATED_ARR_2} = ${ORIG_ARR} => {
+        [${ARR_IDX_1}] = ${ARR_NEW_VAL_1},
+        [${ARR_IDX_2}] = ${ARR_NEW_VAL_2}
+    };
+
+    // Array object update - slice replacement
+    int[] ${UPDATED_ARR_3} = ${ORIG_ARR} => {
+        [${SLICE_START}:${SLICE_END}] = [${SLICE_VALS}]
+    };
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

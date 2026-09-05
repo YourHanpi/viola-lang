@@ -1,0 +1,60 @@
+// Viola Generics Test Template
+// Tests: generic classes
+
+// Generic class
+class ${GENERIC_CLASS}::<${TYPE_PARAM}> {
+    ${TYPE_PARAM} ${PROP_NAME_1};
+    int ${PROP_NAME_2};
+
+    public sq __new__(${TYPE_PARAM} ${PROP_NAME_1}, int ${PROP_NAME_2}) -> (this) {
+        this.${PROP_NAME_1} = ${PROP_NAME_1};
+        this.${PROP_NAME_2} = ${PROP_NAME_2};
+    }
+
+    // Non-generic method
+    public fn getValue() -> (${TYPE_PARAM} result) {
+        result = this.${PROP_NAME_1};
+    }
+
+    public fn getCount() -> (int result) {
+        result = this.${PROP_NAME_2};
+    }
+}
+
+// Generic pair class
+class Pair::<${TYPE_PARAM_A}, ${TYPE_PARAM_B}> {
+    ${TYPE_PARAM_A} first;
+    ${TYPE_PARAM_B} second;
+
+    public sq __new__(${TYPE_PARAM_A} first, ${TYPE_PARAM_B} second) -> (this) {
+        this.first = first;
+        this.second = second;
+    }
+
+    public fn getFirst() -> (${TYPE_PARAM_A} result) {
+        result = this.first;
+    }
+
+    public fn getSecond() -> (${TYPE_PARAM_B} result) {
+        result = this.second;
+    }
+}
+
+sq main() -> () {
+    // Use generic class with int
+    ${GENERIC_CLASS}::<int> ${INT_INST}(${INT_VAL}, ${COUNT_VAL});
+    int val1 = ${INT_INST}.getValue();
+    int cnt1 = ${INT_INST}.getCount();
+
+    // Use generic class with string
+    ${GENERIC_CLASS}::<string> ${STR_INST}("${STR_VAL}", ${COUNT_VAL});
+    string val2 = ${STR_INST}.getValue();
+
+    // Use generic pair
+    Pair::<int, string> pair(${PAIR_INT_VAL}, "${PAIR_STR_VAL}");
+    int first = pair.getFirst();
+    string second = pair.getSecond();
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

@@ -1,0 +1,19 @@
+// Viola C Compatibility Test Template
+// Tests: cpart functions and cpart imports
+
+// Import C headers
+import cpart "${C_HEADER_1}";
+import cpart <${C_HEADER_2}>;
+
+// C-style function using cpart sq
+cpart sq ${CPART_FUNC_NAME}(int a, int b) -> (int result) {
+    return a ${CPART_OP} b;
+}
+
+sq main() -> () {
+    // Call cpart function
+    int ${CPART_RESULT} = ${CPART_FUNC_NAME}(${CPART_ARG_A}, ${CPART_ARG_B});
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

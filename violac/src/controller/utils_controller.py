@@ -3,8 +3,10 @@ from typing import Callable
 
 
 class UtilsController:
+    """工具控制器类，处理辅助命令（帮助、版本信息等）。"""
 
     def __init__(self) -> None:
+        """初始化工具控制器，注册命令映射表。"""
         self._commands: dict[str, Callable[[list[str], dict[str, str]], None]] = {
             "about": lambda args, kwargs: self._about(),
             "help": lambda args, kwargs: self._help(),
@@ -12,8 +14,16 @@ class UtilsController:
             "version": lambda args, kwargs: self._version()
         }
 
+    def run(self, command: str, args: list[str], kwargs: dict[str, str]) -> None:
+        """运行指定的工具命令。"""
+        if command not in self._commands:
+            print("Invalid command. Use 'violac help' to see available commands.")
+            return
+        self._commands[command](args, kwargs)
+
     @staticmethod
     def _about() -> None:
+        """显示关于信息。"""
         print("Viola - A safe, fast and easy to asynchronous programming language")
         print("Author: 白霜渡鸦_Corvus")
         print("Github: https://github.com/YourHanpi/viola-lang/")
@@ -23,6 +33,7 @@ class UtilsController:
 
     @staticmethod
     def _help() -> None:
+        """显示帮助信息。"""
         print("""
 Usage: violac [command] [options] [arguments]
 
@@ -41,10 +52,12 @@ Commands:
 
     @staticmethod
     def _license() -> None:
+        """显示许可证信息。"""
         with open("LICENSE", "r", encoding="utf-8") as f:
             print(f.read())
 
     @staticmethod
     def _version() -> None:
+        """显示版本信息。"""
         with open(".version", "r", encoding="utf-8") as f:
             print(f"Viola compiler version: {f.read()}")

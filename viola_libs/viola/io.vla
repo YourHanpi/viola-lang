@@ -1,0 +1,37 @@
+// Viola标准输入输出与文件读写声明。
+//
+// 命名空间：viola.io
+// 实现位于viola_libs/viola/io/print.c与viola_libs/viola/io/file.c。
+// 本文件仅为C实现的函数提供Viola声明（分号代替函数体）。
+
+import cpart "runtime.h";
+
+// ================= 标准输入输出 =================
+
+// 向标准输出打印字符串
+sq print(string text) -> ();
+// 向标准错误输出字符串
+sq perror(string text) -> ();
+// 从标准输入读取一行（去除末尾换行）
+sq input() -> (string result);
+
+// ================= 文件读写 =================
+
+// 打开文件（mode如"r"/"w"，encoding如"utf-8"）
+sq open(string path, string mode, string encoding) -> (file f);
+// 读取文件全部内容
+fn read(file f) -> (string result);
+// 读取文件全部内容为字节数组
+fn readBytes(file f) -> (uint8[] result);
+// 向文件写入字符串
+sq write(file f, string content) -> ();
+// 向文件写入字节数组
+sq writeBytes(file f, uint8[] content) -> ();
+
+// ================= 文件类型 =================
+
+// 文件对象（编译器内置类型，此处以wrapper类提供其原生方法的Viola声明）
+wrapper class file {
+    // 关闭文件并释放资源
+    public sq __del__() -> ();
+}

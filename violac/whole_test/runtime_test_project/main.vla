@@ -1,0 +1,75 @@
+// Viola 0.1 运行库综合测试
+// 测试：viola.lang.string、viola.io（print/文件读写）、viola.math、
+//       viola.os、viola.threads、viola.util.control_flow、viola.util.functools
+
+import viola.util.control_flow as control_flow;
+import viola.util.functools as functools;
+
+fn doubleValue(int x) -> (int result) {
+    result = x * 2;
+}
+
+fn isEven(int x) -> (bool result) {
+    result = (x % 2) == 0;
+}
+
+fn sumChunk(int[] chunk) -> (int result) {
+    result = chunk[0] + chunk[1];
+}
+
+fn increment(int x) -> (int r) {
+    r = x + 1;
+}
+
+fn lessThanFive(int x) -> (bool c) {
+    c = x < 5;
+}
+
+sq main() -> () {
+    // 字符串操作
+    string greeting = "Hello";
+    string world = "World";
+    string combined = greeting + ", " + world + "!";
+    print(combined);
+    string upper = combined.upper();
+    print(upper);
+    string lower = upper.lower();
+    print(lower);
+    string[] parts = combined.split(", ");
+    size_t partCount = parts.length();
+    bool starts = combined.startsWith("Hello");
+    string repeated = greeting.repeat(2);
+    print(repeated);
+
+    // 文件读写
+    file f = open("test_output.txt", "w", "utf-8");
+    write(f, "line1\n");
+    write(f, "line2\n");
+    file fr = open("test_output.txt", "r", "utf-8");
+    string content = read(fr);
+    print(content);
+
+    // 数学
+    double root = sqrt(16.0);
+    double power = pow(2.0, 10.0);
+    double piValue = pi();
+    print("math ok");
+
+    // 线程
+    uint32 threadCount = getThreadsNum();
+    addThread(1);
+    uint32 newCount = getThreadsNum();
+    print("threads ok");
+
+    // control_flow：forEach 与 while
+    int[] numbers = [1, 2, 3, 4];
+    int[] doubled = control_flow.forEach::<int, int>(numbers, doubleValue);
+    int loopResult = control_flow.while::<int>(1, increment, lessThanFive);
+
+    // functools：map/filter/reduce
+    int[] mapped = functools.map::<int, int>(numbers, doubleValue, false);
+    int[] filtered = functools.filter::<int>(numbers, isEven, false);
+    int reduced = functools.reduce::<int>([1, 2, 3, 4, 5, 6], sumChunk, 2, false);
+
+    print("0.1 runtime library test completed");
+}

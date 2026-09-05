@@ -2,19 +2,20 @@
 from .compiling_item import CompilingItem
 from .symbol import (
     TypeName, GenericArgument, VariableName, SymbolTable, ArrayTypeName, ClassName, TupleTypeName,
-    LocalVariableName, BaseTypeName, FunctionTypeName, BOOL, INT8, INT16, UINT8, UINT16, INT32, UINT32, INT64,
-    UINT64, FLOAT, DOUBLE, GlobalVariableName, FunctionName, MethodName, LISTENER_T, LISTENER_INIT_FUNC,
-    EmptyArrayTypeName, base_type_degrade, SliceTypeName, INT_TYPES, StringTypeName, AnyTypeName, AutoTypeName, SIZE_T
+    LocalVariableName, BaseTypeName, FunctionTypeName, AsyncFuncTypeName, BOOL, INT, UINT, INT8, INT16, UINT8, UINT16,
+    INT32, UINT32, INT64, UINT64, FLOAT, DOUBLE, FLOAT128, GlobalVariableName, FunctionName, MethodName, Modifier,
+    LISTENER_T, LISTENER_INIT_FUNC, EmptyArrayTypeName, base_type_degrade, SliceTypeName, INT_TYPES, StringTypeName,
+    AnyTypeName, AutoTypeName, SIZE_T
 )
 from utils import CompilerException, InternalCompilerException, COMPILER_PARAMS, SourceInfo
 
 from abc import ABC, abstractmethod
-from copy import deepcopy
+from copy import copy
 from typing import Optional, Callable
 
 CONVERTIBLE_TO_FUNC = "viola$lang$convertibleTo"
-FUNC_CALL_T: str = "viola$lang$thread$FuncCall"
-FUNC_ENQUEUE_FUNC: str = "viola$lang$thread$enqueue"
+FUNC_CALL_T: str = "viola$threads$FuncCall"
+FUNC_ENQUEUE_FUNC: str = "viola$threads$enqueue"
 
 I_SIZE_MAX: str = "I_SIZE_MAX"
 
@@ -331,18 +332,18 @@ class UnpackExpr(Expression):
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, to_unpack: Optional[Expression] = None) -> None:
         super().__init__(src_info, symbol_table)
-        if to_unpack is not None and not isinstance(to_unpack.return_type, TupleTypeName):
-            raise CompilerException("Cannot unpack non-tuple.", src_info)
         self._to_unpack: Optional[Expression] = to_unpack
         self._var: Optional[LocalVariableName] = None
         self._returns: list[VariableName] = []
+        self._tail_var: Optional[LocalVariableName] = None
+        self._tail_type: Optional[TupleTypeName] = None
         self._inline_mapping: dict[str, str] = {}
 
     def as_async(self) -> "Expression":
         return self
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._to_unpack = self._to_unpack.as_inline(inline_mapping)
         new_expr._inline_mapping = new_expr._to_unpack.inline_mapping
         for i, ret in enumerate(self._returns):
@@ -365,13 +366,25 @@ class UnpackExpr(Expression):
         else:
             to_unpack_front_text += "\n"
         result: str = to_unpack_front_text + f"{self._var.name} = {self._to_unpack.text};"
-        for i, ret in enumerate(self._returns[:-1]):
-            result += f"\n{ret.name} = *{self._var.name}[{i}];"
         # noinspection PyTypeChecker
         expr_type: TupleTypeName = self._to_unpack.return_type
-        if len(expr_type.types) > len(self._returns):
-            result += f"\n{self._returns[-1].name}->data = {self._var.name} + {len(expr_type.types) - 1};"
-            result += f"\n{self._returns[-1].name}->size = {len(expr_type.types) - 1};"
+        if self._tail_var is not None and self._tail_type is not None:
+            # 最后一个返回变量接收剩余元素：前几个变量逐一提取成员，尾部构造子元组
+            for i, ret in enumerate(self._returns[:-1]):
+                result += f"\n{ret.name} = {self._var.name}->${i};"
+            tail_var: LocalVariableName = self._tail_var
+            tail_types: list[TypeName] = self._tail_type.types
+            result += f"\n{tail_var.name} = ({self._tail_type.c_calling_name})malloc(sizeof({self._tail_type.c_alloc_name}));"
+            result += f"\n{tail_var.name}->$refCount = 1;"
+            result += f"\n{tail_var.name}->$parent = NULL;"
+            result += f"\n{tail_var.name}->size = {len(tail_types)};"
+            for i in range(len(tail_types)):
+                result += f"\n{tail_var.name}->${i} = {self._var.name}->${len(self._returns) - 1 + i};"
+            result += f"\n{self._returns[-1].name} = {tail_var.name};"
+        else:
+            # 返回数与元素数相同：逐一提取成员
+            for i, ret in enumerate(self._returns):
+                result += f"\n{ret.name} = {self._var.name}->${i};"
         return result
 
     @property
@@ -380,14 +393,14 @@ class UnpackExpr(Expression):
 
     @property
     def head_text(self) -> Optional[str]:
-        to_unpack_head_text: Optional[str] = self._to_unpack.head_text
         if len(self._returns) == 0:
-            return to_unpack_head_text
-        if to_unpack_head_text is None:
-            to_unpack_head_text = ""
-        else:
-            to_unpack_head_text += "\n"
-        result: str = to_unpack_head_text + f"{self._var.type_name_pair_calling};"
+            # 尚未设置解包目标：只声明被解包表达式自身的临时变量
+            return self._to_unpack.head_text
+        # 已设置解包目标：只声明解包临时变量与尾部元组变量
+        # （被解包表达式的临时变量已由外层语句的head声明）
+        result: str = f"{self._var.type_name_pair_calling};"
+        if self._tail_var is not None:
+            result += f"\n{self._tail_var.type_name_pair_calling};"
         return result
 
     @property
@@ -395,7 +408,7 @@ class UnpackExpr(Expression):
         return self._inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._to_unpack = self._to_unpack.instantiation(type_args)
         # noinspection PyTypeChecker
         new_expr._var = self._var.instantiation(self._var.name, type_args)
@@ -413,12 +426,10 @@ class UnpackExpr(Expression):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._var.name}->refCount == 0) {{",
-            f"\tif ({self._var.name}->parent) {{",
-            f"\t\t{self._var.name}->parent->refCount--;",
+            f"if ({self._var.name}->$refCount == 0) {{",
+            f"\tif ({self._var.name}->$parent) {{",
+            f"\t\t((viola$lang$uint32 *){self._var.name}->$parent)[0]--;",
             "\t} else {",
-            f"\t\tfree({self._var.name}->data);",
-            f"\t\t{self._var.name}->data = NULL;",
             f"\t\tfree({self._var.name});",
             f"\t\t{self._var.name} = NULL;",
             "\t}"
@@ -439,8 +450,13 @@ class UnpackExpr(Expression):
         self._to_unpack = to_unpack
 
     def set_returns(self, returns: list[VariableName]) -> bool:
+        if self._returns == returns:
+            # 幂等：已设置相同的解包目标，避免重复创建临时元组变量
+            return True
         # noinspection PyTypeChecker
         expr_type: TupleTypeName = self._to_unpack.return_type
+        if not isinstance(expr_type, TupleTypeName):
+            return True
         if len(returns) > len(expr_type.types):
             raise CompilerException(
                 f"Too many returns: {len(returns)} > {len(expr_type.types)}.",
@@ -466,10 +482,17 @@ class UnpackExpr(Expression):
             self._symbol_table.get_counter(),
             self._to_unpack.return_type
         )
+        # 最后一个返回变量接收剩余元素时，需要临时尾部元组变量
+        if len(expr_type.types) > len(returns):
+            tail_types: list[TypeName] = expr_type.types[len(returns) - 1:]
+            self._tail_type = TupleTypeName(self._src_info, tail_types)
+            self._tail_var = LocalVariableName(
+                self._src_info, self._symbol_table.get_counter(), self._tail_type
+            )
         return True
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._to_unpack = self._to_unpack.substitute(expr)
         return new_expr
 
@@ -511,7 +534,7 @@ class ValueRef(Expression, ABC):
         self._inline_mapping: dict[str, str] = {}
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         # noinspection PyTypeChecker
         new_expr._unpack_expr = self.as_inline(self._unpack_expr.inline_mapping)
         new_expr._inline_mapping = new_expr._unpack_expr.inline_mapping
@@ -522,8 +545,15 @@ class ValueRef(Expression, ABC):
 
     @property
     def front_text(self) -> Optional[str]:
-        if self._unpack_expr is not None:
+        if self._returns is not None and len(self._returns) > 1:
             return self._unpack_expr.front_text
+        return None
+
+    @property
+    def head_text(self) -> Optional[str]:
+        """多返回值解包时需要声明的临时变量。"""
+        if self._returns is not None and len(self._returns) > 1 and self._unpack_expr is not None:
+            return self._unpack_expr.head_text
         return None
 
     @property
@@ -532,8 +562,9 @@ class ValueRef(Expression, ABC):
 
     @property
     def outer_text(self) -> Optional[str]:
-        if self._unpack_expr is not None:
-            return self._unpack_expr.outer_text
+        # 注意：不能委托给 self._unpack_expr.outer_text。
+        # UnpackExpr.outer_text 会委托回 self._to_unpack.outer_text（即本对象的 outer_text），
+        # 二者互相引用会形成无限递归。需要外部文本的子类（如 ArrayRef、TupleRef）会自行覆写本属性。
         return None
 
     def set_returns(self, returns: list[VariableName]) -> bool:
@@ -618,7 +649,7 @@ class VariableRef(ValueRef):
         return None
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: VariableRef = deepcopy(self)
+        new_expr: VariableRef = copy(self)
         new_expr._var = new_expr._var.instantiation(new_expr._var.name, type_args)
         return new_expr
 
@@ -635,9 +666,9 @@ class VariableRef(ValueRef):
         if not self.return_type.is_object:
             return None
         result: list[str] = [
-            f"if ({self._var.name}->refCount == 0) {{",
-            f"\tif ({self._var.name}->parent) {{",
-            f"\t\t{self._var.name}->parent->refCount --;",
+            f"if ({self._var.name}->$refCount == 0) {{",
+            f"\tif ({self._var.name}->$parent) {{",
+            f"\t\t((viola$lang$uint32 *){self._var.name}->$parent)[0]--;",
             "\t} else {",
             f"\t\tfree({self._var.name});",
             f"\t\t{self._var.name} = NULL;"
@@ -780,9 +811,11 @@ class StringLiteral(Literal):
         ]
         lines: list[str] = [
             f"{self._var_name} = ({self._type.c_calling_name})malloc(sizeof({self._type.c_alloc_name}));",
+            f"{self._var_name}->$refCount = 1;",
+            f"{self._var_name}->$parent = NULL;",
             f"{self._var_name}->data = (uint16_t *)malloc(sizeof(uint16_t) * {len(self._value)});",
             f"if (!{self._var_name}->data) raise(SIGSEGV);",
-            f"{self._var_name}->size = {len(self._value)};",
+            f"{self._var_name}->length = {len(self._value)};",
             "\n".join(chunks_copy_string)
         ]
         if len(self._value) == 0:
@@ -800,9 +833,9 @@ class StringLiteral(Literal):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._var_name}->refCount == 0) {{",
-            f"\tif ({self._var_name}->parent) {{",
-            f"\t\t{self._var_name}->parent->refCount --;",
+            f"if ({self._var_name}->$refCount == 0) {{",
+            f"\tif ({self._var_name}->$parent) {{",
+            f"\t\t((viola$lang$uint32 *){self._var_name}->$parent)[0]--;",
             "\t} else {",
             f"\t\tfree({self._var_name});",
             "\t}"
@@ -880,6 +913,9 @@ class IntegerLiteral(Literal):
                 else:
                     bits_num = value.split("I")[1]
                 match bits_num:
+                    case "":
+                        # i 后缀不带位数时表示默认长度的整型
+                        t = INT
                     case "8":
                         t = INT8
                     case "16":
@@ -890,12 +926,16 @@ class IntegerLiteral(Literal):
                         t = INT64
                     case _:
                         raise CompilerException(f"Invalid bits number: {bits_num}", src_info)
+                value = IntegerLiteral._strip_suffix(value)
             case "UINT_N":
                 if "u" in value:
                     bits_num: str = value.split("u")[1]
                 else:
                     bits_num = value.split("U")[1]
                 match bits_num:
+                    case "":
+                        # u 后缀不带位数时表示默认长度的无符号整型
+                        t = UINT
                     case "8":
                         t = UINT8
                     case "16":
@@ -906,16 +946,45 @@ class IntegerLiteral(Literal):
                         t = UINT64
                     case _:
                         raise CompilerException(f"Invalid bits number: {bits_num}", src_info)
+                value = IntegerLiteral._strip_suffix(value)
             case _:
                 raise CompilerException(f"Invalid lexing type: {lexing_type}", src_info)
+        value = IntegerLiteral._normalize(value)
         super().__init__(src_info, symbol_table, value, t)
+
+    @staticmethod
+    def _strip_suffix(value: str) -> str:
+        """去除整数字面量的类型后缀（如 114514i64 -> 114514）。"""
+        for i, ch in enumerate(value):
+            if ch in "iuIU":
+                return value[:i]
+        return value
+
+    @staticmethod
+    def _normalize(value: str) -> str:
+        """将整数字面量转换为 C99 兼容的形式（0o 前缀转为 0 前缀，0b 前缀转为十进制）。"""
+        if value.startswith("0o"):
+            return "0" + value[2:]
+        if value.startswith("0b"):
+            return str(int(value, 2))
+        return value
 
     def validate(self) -> None:
         pass
 
     @property
     def value(self) -> int:
-        return int(self._value)
+        return IntegerLiteral._parse_int(self._value)
+
+    @staticmethod
+    def _parse_int(value: str) -> int:
+        """按进制前缀将规范化的整数字面量解析为 Python int（用于常量折叠）。"""
+        if value.startswith("0x") or value.startswith("0X"):
+            return int(value, 16)
+        if len(value) > 1 and value[0] == "0":
+            # 前导0的八进制形式（C99兼容）
+            return int(value, 8)
+        return int(value, 10)
 
 
 class FloatLiteral(Literal):
@@ -927,6 +996,11 @@ class FloatLiteral(Literal):
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, value: str) -> None:
         if value.endswith("f"):
             t = FLOAT
+            value = value[:-1]
+        elif value.endswith("l"):
+            # l 后缀表示128位浮点型，暂按长双精度处理
+            t = FLOAT128
+            value = value[:-1]
         else:
             t = DOUBLE
         # noinspection PyTypeChecker
@@ -1009,9 +1083,9 @@ class SliceRef(ValueRef):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_var.name}->refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->parent) {{",
-            f"\t\t{self._temp_var.name}->parent->refCount --;",
+            f"if ({self._temp_var.name}->$refCount == 0) {{",
+            f"\tif ({self._temp_var.name}->$parent) {{",
+            f"\t\t((viola$lang$uint32 *){self._temp_var.name}->$parent)[0]--;",
             "\t} else {",
             f"\t\tfree({self._temp_var.name});",
             "\t}"
@@ -1048,7 +1122,7 @@ class SliceRef(ValueRef):
         self._step = step
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        new_expr: SliceRef = deepcopy(self)
+        new_expr: SliceRef = copy(self)
         new_expr._start = self._start.substitute(expr)
         new_expr._end = self._end.substitute(expr)
         new_expr._step = self._step.substitute(expr)
@@ -1115,7 +1189,7 @@ class ArrayRef(ValueRef):
             if not isinstance(value.return_type, ClassName):
                 raise InternalCompilerException("ArrayRef element type mismatch", self._src_info)
             if self._element_type != value.return_type:
-                self._element_type = self._element_type.shared_parent(value.return_type, self._symbol_table)
+                self._element_type = self._element_type.shared_parent(value.return_type)
         elif isinstance(self._element_type, BaseTypeName):
             if not isinstance(value.return_type, BaseTypeName):
                 raise InternalCompilerException("ArrayRef element type mismatch", self._src_info)
@@ -1154,19 +1228,31 @@ class ArrayRef(ValueRef):
         self._temp_var = LocalVariableName(self._src_info, var_name, self._type)
         self._is_finished = True
 
+    def set_inferred_element_type(self, element_type: TypeName) -> None:
+        """为已完成但元素类型未知（空数组字面量）的数组推断元素类型。
+
+        调用方（如函数调用）根据期望的形参类型推断空数组的元素类型。
+        """
+        if not self._is_finished or not isinstance(self._type, EmptyArrayTypeName):
+            return
+        self._element_type = element_type
+        self._type = ArrayTypeName(self._src_info, element_type)
+        self._temp_var = LocalVariableName(self._src_info, self._temp_var.name, self._type)
+
     @property
     def front_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("ArrayRef is not finished", self._src_info)
         lines: list[str] = list(filter(lambda x: x is not None, map(lambda x: x.front_text, self._values)))
-        lines.append(f"{self._temp_var.name}->parent = NULL;")
-        lines.append(f"{self._temp_var.name}->refCount = 1;")
+        lines.append(f"{self._temp_var.name} = ({self._type.c_calling_name})malloc(sizeof({self._type.c_alloc_name}));")
+        lines.append(f"{self._temp_var.name}->$parent = NULL;")
+        lines.append(f"{self._temp_var.name}->$refCount = 1;")
         if len(self._values) == 0:
             lines.append(f"{self._temp_var.name}->data = NULL;")
             lines.append(f"{self._temp_var.name}->size = 0;")
             return "\n".join(lines)
         lines.append(
-            f"{self._temp_var.name}->data = malloc(sizeof({self._type.element_type.c_alloc_name}) * {len(self._values)});"
+            f"{self._temp_var.name}->data = ({self._type.element_type.c_assigning_name})malloc(sizeof({self._type.element_type.c_calling_name}) * {len(self._values)});"
         )
         lines.append(f"{self._temp_var.name}->size = {len(self._values)};")
         for i, value in enumerate(self._values):
@@ -1182,10 +1268,12 @@ class ArrayRef(ValueRef):
     def head_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("ArrayRef is not finished", self._src_info)
-        return f"{self._temp_var.type_name_pair_calling};"
+        values_heads: str = chr(10).join(filter(lambda x: x is not None, map(lambda x: x.head_text, self._values)))
+        result: str = f"{self._temp_var.type_name_pair_calling};"
+        return values_heads + chr(10) + result if values_heads != "" else result
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: ArrayRef = deepcopy(self)
+        new_expr: ArrayRef = copy(self)
         new_expr._type = self._type.instantiation(type_args)
         new_expr._values = list(map(lambda x: x.instantiation(type_args), self._values))
         return new_expr
@@ -1203,9 +1291,9 @@ class ArrayRef(ValueRef):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_var.name}->refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->parent) {{",
-            f"\t\t{self._temp_var.name}->parent->refCount --;",
+            f"if ({self._temp_var.name}->$refCount == 0) {{",
+            f"\tif ({self._temp_var.name}->$parent) {{",
+            f"\t\t((viola$lang$uint32 *){self._temp_var.name}->$parent)[0]--;",
             "\t} else {",
             f"\t\tfree({self._temp_var.name});",
             "\t}"
@@ -1220,7 +1308,7 @@ class ArrayRef(ValueRef):
         return self._type
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result: ArrayRef = deepcopy(self)
+        result: ArrayRef = copy(self)
         result._values = list(map(lambda x: x.substitute(expr), self._values))
         return result
 
@@ -1342,11 +1430,12 @@ class TupleRef(ValueRef):
         if not self._is_finished:
             raise CompilerException("TupleRef is not finished", self._src_info)
         lines: list[str] = list(filter(lambda x: x is not None, map(lambda x: x.front_text, self._values)))
-        lines.append(f"{self._temp_var.name} = ({self._type.name} *)malloc(sizeof({self._type.name}));")
-        lines.append(f"{self._temp_var.name}->data = malloc(sizeof(void *) * {len(self._values)});")
+        lines.append(f"{self._temp_var.name} = ({self._type.c_calling_name})malloc(sizeof({self._type.c_alloc_name}));")
+        lines.append(f"{self._temp_var.name}->$refCount = 1;")
+        lines.append(f"{self._temp_var.name}->$parent = NULL;")
         lines.append(f"{self._temp_var.name}->size = {len(self._values)};")
         for i, value in enumerate(self._values):
-            lines.append(f"{self._temp_var.name}->data[{i}] = {value.text};")
+            lines.append(f"{self._temp_var.name}->${i} = {value.text};")
         return "\n".join(lines)
 
     @property
@@ -1358,10 +1447,12 @@ class TupleRef(ValueRef):
     def head_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("TupleRef is not finished", self._src_info)
-        return f"{self._temp_var.type_name_pair_calling};"
+        values_heads: str = chr(10).join(filter(lambda x: x is not None, map(lambda x: x.head_text, self._values)))
+        result: str = f"{self._temp_var.type_name_pair_calling};"
+        return values_heads + chr(10) + result if values_heads != "" else result
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "TupleRef":
-        new_expr: TupleRef = deepcopy(self)
+        new_expr: TupleRef = copy(self)
         new_expr._type = self._type.instantiation(type_args)
         new_expr._values = list(map(lambda x: x.instantiation(type_args), self._values))
         return new_expr
@@ -1379,9 +1470,9 @@ class TupleRef(ValueRef):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_var.name}->refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->parent) {{",
-            f"\t\t{self._temp_var.name}->parent->refCount --;",
+            f"if ({self._temp_var.name}->$refCount == 0) {{",
+            f"\tif ({self._temp_var.name}->$parent) {{",
+            f"\t\t((viola$lang$uint32 *){self._temp_var.name}->$parent)[0]--;",
             "\t} else {",
             f"\t\tfree({self._temp_var.name});",
             f"\t\t{self._temp_var.name} = NULL;",
@@ -1397,7 +1488,7 @@ class TupleRef(ValueRef):
         return self._type
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "TupleRef":
-        result: TupleRef = deepcopy(self)
+        result: TupleRef = copy(self)
         result._values = list(map(lambda x: x.substitute(expr), self._values))
         return result
 
@@ -1477,7 +1568,7 @@ class TypeRef(ValueRef):
         return None
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: TypeRef = deepcopy(self)
+        new_expr: TypeRef = copy(self)
         new_expr._type = self._type.instantiation(type_args)
         return new_expr
 
@@ -1617,7 +1708,7 @@ class Operator(Expression, ABC):
         self._inline_mapping: dict[str, str] = {}
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr: Operator = deepcopy(self)
+        new_expr: Operator = copy(self)
         for i, expr in enumerate(self._expr_list):
             new_expr._expr_list[i] = expr.as_inline(new_expr._inline_mapping)
             new_expr._inline_mapping.update(new_expr._expr_list[i].inline_mapping)
@@ -1655,7 +1746,7 @@ class Operator(Expression, ABC):
         return result if result != "" else None
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result: Operator = deepcopy(self)
+        result: Operator = copy(self)
         result._expr_list = [e.substitute(expr) for e in self._expr_list]
         return result
 
@@ -1737,8 +1828,10 @@ class AttrOp(Expression):
         super().__init__(src_info, symbol_table)
         self._attr: Optional[str] = None
         self._caller: Optional[Expression] = None
+        self._is_static: bool = False
         self._arg_types: Optional[list[str]] = None
         self._kwarg_types: Optional[dict[str, str]] = None
+        self._arg_type_objs: Optional[list[TypeName]] = None
         self._inline_mapping: dict[str, str] = {}
 
     def as_async(self) -> "Expression":
@@ -1747,7 +1840,7 @@ class AttrOp(Expression):
         return self
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr: AttrOp = deepcopy(self)
+        new_expr: AttrOp = copy(self)
         new_expr._caller = self._caller.as_inline(inline_mapping)
         new_expr._inline_mapping.update(self._caller.inline_mapping)
         return new_expr
@@ -1797,41 +1890,105 @@ class AttrOp(Expression):
         return self
 
     def find_method(self, arg_type_list: list[str], kwarg_type_dict: dict[str, str]) -> MethodName:
-        """查找匹配的方法。
-
-        先尝试动态方法（第一个参数为调用者自身），再尝试静态方法。
-        恰好匹配一个时返回，否则抛出异常。
-
-        Args:
-            arg_type_list: 参数类型名列表。
-            kwarg_type_dict: 关键字参数类型名映射。
-
-        Returns:
-            匹配的 MethodName。
-
-        Raises:
-            CompilerException: 找不到方法或存在歧义时抛出。
-        """
-        dynamic_arg_type_list: list[str] = [self._caller.return_type.name] + arg_type_list
+        """查找匹配的方法。"""
+        caller_type = self._caller.return_type
+        if not isinstance(caller_type, ClassName):
+            raise CompilerException("Variable to get attribute is not a class type", self._src_info)
+        name = self._attr
+        args = [self._symbol_table.clean_namespace(t.replace("$", ".")) for t in arg_type_list]
+        cls_methods = caller_type.methods
+        if self._arg_type_objs is not None and len(self._arg_type_objs) == len(args):
+            # 使用调用方提供的类型对象（组合类型如数组的C名称无法直接查表）
+            static_arg_types = self._arg_type_objs
+        else:
+            static_arg_types = list(map(lambda tn: self._symbol_table[tn, None], args))
+        # 先尝试静态方法（直接查找类的方法表，覆盖内置类、元组、数组等）
+        matches: list[MethodName] = []
+        for (m_name, m_types), method in cls_methods.items():
+            if m_name != name:
+                continue
+            if len(m_types) == len(static_arg_types):
+                if all(static_arg_types[i].convertable_to(m_types[i], self._symbol_table.symbols) for i in range(len(m_types))):
+                    matches.append(method)
+        # 再尝试动态方法（首参为调用者自身）
+        dynamic_arg_types = [caller_type] + static_arg_types
+        for (m_name, m_types), method in cls_methods.items():
+            if m_name != name:
+                continue
+            if len(m_types) == len(dynamic_arg_types):
+                if all(dynamic_arg_types[i].convertable_to(m_types[i], self._symbol_table.symbols) for i in range(len(m_types))):
+                    matches.append(method)
+        if len(matches) == 1:
+            method = matches[0]
+            self._check_modifier(method.modifier, caller_type)
+            return method
+        if len(matches) > 1:
+            # 子类重写的方法优先于继承的抽象方法；自身定义的方法优先于继承的方法
+            concrete = list(filter(lambda m: not m.is_abstract, matches))
+            if len(concrete) == 1:
+                self._check_modifier(concrete[0].modifier, caller_type)
+                return concrete[0]
+            if len(concrete) > 1:
+                own = list(filter(lambda m: m.cls.name == caller_type.name, concrete))
+                if len(own) == 1:
+                    self._check_modifier(own[0].modifier, caller_type)
+                    return own[0]
+                raise CompilerException(
+                    f"Ambiguous method call: {caller_type.raw_name}.{self._attr}",
+                    self._src_info
+                )
+        # 符号表回退（跨模块方法等）
+        kwarg_type_dict = {k: self._symbol_table.clean_namespace(v.replace("$", ".")) for k, v in kwarg_type_dict.items()}
+        dynamic_arg_type_list: list[str] = [self._symbol_table.clean_namespace(caller_type.raw_name)] + args
         dynamic_methods: list[MethodName] = self._symbol_table.find_methods(
-            self._caller.return_type.name, self._attr, dynamic_arg_type_list, kwarg_type_dict
+            self._symbol_table.clean_namespace(caller_type.raw_name), self._attr, dynamic_arg_type_list, kwarg_type_dict
         )
         static_methods: list[MethodName] = self._symbol_table.find_methods(
-            self._caller.return_type.name, self._attr, arg_type_list, kwarg_type_dict
+            self._symbol_table.clean_namespace(caller_type.raw_name), self._attr, args, kwarg_type_dict
         )
         if len(dynamic_methods) == 1:
             return dynamic_methods[0]
         if len(dynamic_methods) == 0 and len(static_methods) == 1:
             return static_methods[0]
-        if len(dynamic_methods) > 1:
+        if len(dynamic_methods) > 1 or len(static_methods) > 1:
             raise CompilerException(
-                f"Ambiguous method call: {self._caller.return_type.raw_name}.{self._attr}",
+                f"Ambiguous method call: {caller_type.raw_name}.{self._attr}",
                 self._src_info
             )
         raise CompilerException(
-            f"Method not found: {self._caller.return_type.raw_name}.{self._attr}",
+            f"Method not found: {caller_type.raw_name}.{self._attr}({', '.join(arg_type_list)})",
             self._src_info
         )
+
+    def _check_modifier(self, modifier, caller_type: ClassName) -> None:
+        """检查访问权限（public/protected/private）。"""
+        if modifier is None or modifier == Modifier.PUBLIC:
+            return
+        if isinstance(self._parent_item, CallOp) and getattr(self._parent_item, "_is_internal", False):
+            # 编译器内部调用（自动释放等）不受访问权限限制
+            return
+        current_cls = self._symbol_table.current_cls
+        if current_cls is None:
+            raise CompilerException(
+                f"Can not access {'protected' if modifier == Modifier.PROTECTED else 'private'} "
+                f"member {self._attr} of {caller_type.raw_name}.", self._src_info)
+        if current_cls == caller_type:
+            return
+        if modifier == Modifier.PROTECTED and self._is_subclass_of(current_cls, caller_type):
+            return
+        raise CompilerException(
+            f"Can not access {'protected' if modifier == Modifier.PROTECTED else 'private'} "
+            f"member {self._attr} of {caller_type.raw_name}.", self._src_info)
+
+    @staticmethod
+    def _is_subclass_of(cls: ClassName, target: ClassName) -> bool:
+        """判断cls是否为target的子类（沿父类链查找）。"""
+        parent = cls.parent
+        while parent is not None:
+            if parent == target:
+                return True
+            parent = parent.parent
+        return False
 
     @property
     def front_text(self) -> Optional[str]:
@@ -1854,10 +2011,11 @@ class AttrOp(Expression):
         return self._inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: AttrOp = deepcopy(self)
+        new_expr: AttrOp = copy(self)
         new_expr._caller = self._caller.instantiation(type_args)
-        new_expr._arg_types = list(map(lambda x: x.instantiation(type_args), self._arg_types))
-        new_expr._kwarg_types = dict(map(lambda x: (x[0], x[1].instantiation(type_args)), self._kwarg_types.items()))
+        if new_expr._arg_types is not None:
+            # _arg_types为类型名字符串列表，无需实例化
+            new_expr._arg_types = list(new_expr._arg_types)
         return new_expr
 
     @property
@@ -1895,7 +2053,7 @@ class AttrOp(Expression):
         Args:
             attr: 属性名（不含前缀）。
         """
-        self._attr = "$" + attr
+        self._attr = attr
 
     def set_caller(self, caller: Expression) -> None:
         """设置调用者表达式。
@@ -1906,7 +2064,7 @@ class AttrOp(Expression):
         self._caller = caller
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result = deepcopy(self)
+        result = copy(self)
         result._caller = result._caller.substitute(expr)
         result._set_expected_type()
         return result
@@ -1919,19 +2077,16 @@ class AttrOp(Expression):
     def text(self) -> str:
         if not self.is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
-        # noinspection PyTypeChecker
-        caller_type: ClassName = self._caller.return_type
-        if self._attr in caller_type.properties:
-            if caller_type.properties[self._attr].is_static:
-                return self._caller.text + "$" + self._attr
+        if self._arg_types is None and self._kwarg_types is None:
+            if self._symbol_table.contains_method(self._caller.return_type.name, self._attr, [], {}):
+                return f"{self._caller.text}${self._attr}"
+            caller_type: TypeName = self._caller.return_type
+            if isinstance(caller_type, ClassName) and self._attr in caller_type.properties and \
+                    caller_type.properties[self._attr].is_static:
+                # 静态属性：通过类名直接引用（C标识符为类名$属性名）
+                return f"{self._caller.text}${self._attr}"
             return f"{self._caller.text}->{self._attr}"
-        return self._symbol_table.find_method(
-            self._src_info,
-            caller_type.raw_name,
-            self._attr,
-            self._arg_types,
-            self._kwarg_types
-        ).name
+        return f"{self._caller.text}${self._attr}"
 
     @property
     def used_variables(self) -> set[VariableName]:
@@ -1943,12 +2098,14 @@ class AttrOp(Expression):
             raise CompilerException("Variable to get attribute is not a class type", self._src_info)
         # noinspection PyTypeChecker
         caller_type: ClassName = self._caller.return_type
-        if self._arg_types is None:
-            raise CompilerException("Unknown method types.", self._src_info)
-        if self._attr not in caller_type.properties and not self._symbol_table.contains_method(
-                caller_type.raw_name, self._attr, self._arg_types, self._kwarg_types
-        ):
+        if self._attr not in caller_type.properties and not caller_type.has_method(self._attr) and \
+                not self._symbol_table.contains_method(
+                    caller_type.name, self._attr, self._arg_types, self._kwarg_types
+                ):
             raise CompilerException("Unknown attribute", self._src_info)
+        # 访问权限检查：private仅自身可访问，protected仅自身与子类可访问
+        if self._attr in caller_type.properties:
+            self._check_modifier(caller_type.properties[self._attr].modifier, caller_type)
 
     def _set_expected_type(self) -> None:
         """从父节点推断方法的参数类型信息。
@@ -1958,6 +2115,7 @@ class AttrOp(Expression):
         """
         if isinstance(self._parent_item, CallOp):
             self._arg_types = list(map(lambda x: x.name, self._parent_item.arg_types))
+            self._arg_type_objs = list(self._parent_item.arg_types)
             self._kwarg_types = dict(map(lambda x: (x[0], x[1].name), self._parent_item.kwarg_types.items()))
 
 
@@ -1981,6 +2139,10 @@ class CallOp(Expression):
         self._call_name: Optional[str] = None
         self._func_expr: Optional[Expression] = None
         self._func: Optional[FunctionName] = None
+        self._resolved_name: Optional[str] = None
+        self._resolved_async_name: Optional[str] = None
+        self._lazy_ret_decl: Optional[str] = None
+        self._is_internal: bool = False
         self._arg_list: list[Optional[Expression]] = []
         self._kwarg_dict: dict[str, Optional[Expression]] = {}
         self._had_set_args_num: Optional[int] = 0
@@ -2020,17 +2182,22 @@ class CallOp(Expression):
         return [arg.return_type for arg in self._arg_list]
 
     def as_async(self) -> "Expression":
-        result: CallOp = deepcopy(self)
+        result: CallOp = copy(self)
         result._is_async = True
         result._listener_name = self._symbol_table.get_counter()
         result._call_name = result._listener_name + "$$_call"
         result._args_tuple = TupleRef(self._src_info, self._symbol_table)
         for arg in self._arg_list:
-            result._args_tuple.append(arg, self._src_info)
+            result._args_tuple.add_value(arg)
+        result._args_tuple.finish()
+        result._returns_tuple = TupleRef(self._src_info, self._symbol_table)
+        for ret in self._returns_list:
+            result._returns_tuple.add_value(ret)
+        result._returns_tuple.finish()
         return result
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
-        new_expr: CallOp = deepcopy(self)
+        new_expr: CallOp = copy(self)
         new_expr._func_expr = new_expr._func_expr.as_inline(inline_mapping)
         new_expr._inline_mapping = inline_mapping
         for i, arg in enumerate(new_expr._arg_list):
@@ -2042,17 +2209,20 @@ class CallOp(Expression):
         return new_expr
 
     def check_tail_recursive(self, func_name: str) -> "CallOp":
-        if func_name == self._func.name:
+        if isinstance(self._func, FunctionName) and func_name == self._func.name:
             return TailRecursiveCall.from_call_op(self)
         return self
 
     @property
     def front_text(self) -> str:
-        children_front_text: str = ("\n".join(
-            filter(lambda x: x is not None, map(lambda x: x.front_text, self._arg_list))) + "\n" + "\n".join(
-            filter(lambda x: x is not None, map(lambda x: x.front_text, self._kwarg_dict.values())))) + (
-                                           "\n" + self._func_expr.front_text
-                                   ) if self._func_expr.front_text is not None else ""
+        children_front_text: str = "\n".join(
+            filter(lambda x: x is not None, map(lambda x: x.front_text, self._arg_list)))
+        kwargs_front_text: str = "\n".join(
+            filter(lambda x: x is not None, map(lambda x: x.front_text, self._kwarg_dict.values())))
+        if kwargs_front_text != "":
+            children_front_text += "\n" + kwargs_front_text
+        if self._func_expr.front_text is not None:
+            children_front_text += "\n" + self._func_expr.front_text
         listener_text: list[str] = [
             f"{self._listener_name} = ({LISTENER_T} *)malloc(sizeof({LISTENER_T}));",
             f"{LISTENER_INIT_FUNC}({self._listener_name}, listener->currentThreadId);"
@@ -2068,36 +2238,87 @@ class CallOp(Expression):
                 arg_text: str = "NULL"
             else:
                 arg_text = self._args_tuple.text
-            # call = self._func_expr.as_async().text + self._get_func_extend + f"({arg_text}, {ret_text}, {self._listener_name});"
             call = "\n".join([
                 f"{self._call_name} = ({FUNC_CALL_T} *)malloc(sizeof({FUNC_CALL_T}));",
                 f"{self._call_name}->args = {arg_text};",
                 f"{self._call_name}->rets = {ret_text};",
-                f"{self._call_name}->func = {self._func_expr.as_async().text + self._get_func_extend};",
+                f"{self._call_name}->func = {self._get_func_text(True)};",
                 f"{self._call_name}->listener = {self._listener_name};",
                 f"{FUNC_ENQUEUE_FUNC}({self._call_name});",
             ])
         else:
             args_str: str = ", ".join(map(lambda x: x.text, self._arg_list)) + ", " if len(self._arg_list) > 0 else ""
-            rets_str: str = ", ".join(map(lambda x: x.text, self._returns_list)) + ", " if len(
+            rets_str: str = ", ".join(map(lambda x: f"&{x.name}", self._returns_list)) + ", " if len(
                 self._returns_list) > 0 else ""
-            call = self._func_expr.text + self._get_func_extend + f"({args_str}{rets_str}listener);"
+            capture_arg: str = f", {self._func_expr.text}->$capture" if self._call_struct else ""
+            call = self._get_func_text(False) + f"({args_str}{rets_str}listener{capture_arg});"
         result.append(call)
         if len(self._returns_list) > 1:
             if self._is_async:
                 result.append(self._unpack_expr.front_text)
         return "\n".join(result)
 
+    def _get_func_text(self, is_async: bool) -> str:
+        """获取被调用函数的C名称文本。
+
+        - 已解析到具体函数（FunctionName）：异步调用使用其$async名称，
+          同步调用直接使用名称（不附加$sync后缀）。
+        - 闭包/函数类型变量（_call_struct）：通过结构体$sync/$async成员调用，附加类型转换。
+        """
+        if isinstance(self._func, FunctionName):
+            if is_async:
+                return self._resolved_async_name if self._resolved_async_name is not None                     else self._func.as_async().name
+            return self._resolved_name if self._resolved_name is not None else self._func.name
+        if self._call_struct:
+            # 闭包/函数类型变量：((函数指针类型)闭包->$sync)(...) 或 ->$async
+            # 闭包函数额外接收捕获结构体指针形参（void *）
+            member: str = "$async" if is_async else "$sync"
+            # noinspection PyTypeChecker
+            func_type: FunctionTypeName = self._func_expr.return_type
+            if is_async:
+                cast: str = AsyncFuncTypeName.from_function_type_name(func_type).c_calling_name
+            else:
+                cast: str = FunctionTypeName.c_calling_name.fget(func_type)
+            cast = cast[:-1] + ", void *)"
+            return f"(({cast}){self._func_expr.text}->{member})"
+        return self._func_expr.as_async().text if is_async else self._func_expr.text
+
     @property
     def global_init_text(self) -> Optional[str]:
         return None
 
+    def _ensure_lazy_ret(self) -> None:
+        """当调用作为参数嵌套使用（返回值目标未设置）时，创建临时返回值变量。"""
+        if len(self._returns_list) > 0 or self._is_async or self._lazy_ret_decl is not None:
+            return
+        if isinstance(self._func, FunctionName) and len(self._func.type.returns) > 0:
+            import sys
+            print(f"[DBG7] lazy_ret func={self._func.raw_name} rets={[t.name for t in self._func.type.returns]}", file=sys.stderr)
+            if len(self._func.type.returns) == 1:
+                ret_type: TypeName = self._func.type.returns[0]
+            else:
+                ret_type = TupleTypeName(self._src_info, self._func.type.returns)
+            temp: LocalVariableName = LocalVariableName(
+                self._src_info, self._symbol_table.get_counter(), ret_type)
+            self.set_returns([temp])
+            self._lazy_ret_decl = f"{temp.type_name_pair_calling};"
+
     @property
     def head_text(self) -> Optional[str]:
-        results: list[str] = list(filter(lambda x: x is not None, map(lambda x: x.head_text, self._arg_list)))
+        self._ensure_lazy_ret()
+        if self._returns_tuple is not None and self._returns_tuple.head_text is not None:
+            results: list[str] = [self._returns_tuple.head_text]
+        else:
+            results = []
+        results.extend(filter(lambda x: x is not None, map(lambda x: x.head_text, self._arg_list)))
         results.extend(filter(lambda x: x is not None, map(lambda x: x.head_text, self._kwarg_dict.values())))
         if self._func_expr.head_text is not None:
             results.append(self._func_expr.head_text)
+        if self._lazy_ret_decl is not None:
+            results.append(self._lazy_ret_decl)
+        if self._args_tuple is not None and self._args_tuple.head_text is not None:
+            # 异步调用时实参打包进参数元组的临时变量
+            results.append(self._args_tuple.head_text)
         if self._is_async:
             results.append(f"{LISTENER_T} *{self._listener_name};")
             results.append(f"{FUNC_CALL_T} *{self._call_name};")
@@ -2110,12 +2331,26 @@ class CallOp(Expression):
         return self._inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "CallOp":
-        new_expr: CallOp = deepcopy(self)
-        new_expr._func_expr = new_expr._func_expr.instantiation(type_args)
+        new_expr: CallOp = copy(self)
+        if new_expr._func_expr is not None:
+            if isinstance(new_expr._func_expr, VariableRef) and \
+                    getattr(new_expr._func_expr, "generic_call_info", None) is not None:
+                # 泛型函数体内的递归调用：按实例化后的具体类型参数重新解析
+                base_func, call_type_args = new_expr._func_expr.generic_call_info
+                concrete_args = tuple(t.instantiation(type_args) for t in call_type_args)
+                inst_func = self._symbol_table.get_generic_func_instance(base_func, concrete_args)
+                new_expr._func_expr = VariableRef(self._src_info, self._symbol_table, inst_func)
+                new_expr._func = inst_func
+            else:
+                new_expr._func_expr = new_expr._func_expr.instantiation(type_args)
+                # 同步被调用函数的类型（泛型实例化后返回类型可能变化）
+                if isinstance(new_expr._func_expr, VariableRef) and isinstance(new_expr._func_expr.var, FunctionName):
+                    new_expr._func = new_expr._func_expr.var
         new_expr._arg_list = list(map(lambda x: x.instantiation(type_args), self._arg_list))
         new_expr._kwarg_dict = {k: v.instantiation(type_args) for k, v in self._kwarg_dict.items()}
         new_expr._returns_list = list(map(lambda x: x.instantiation(x.name, type_args), self._returns_list))
-        new_expr._returns_tuple = self._returns_tuple.instantiation(type_args)
+        if new_expr._returns_tuple is not None:
+            new_expr._returns_tuple = new_expr._returns_tuple.instantiation(type_args)
         return new_expr
 
     @property
@@ -2163,11 +2398,29 @@ class CallOp(Expression):
 
     @property
     def return_type(self) -> TypeName:
-        if len(self._func.type.returns) == 1:
-            return self._func.type.returns[0]
-        return TupleTypeName(self._src_info, self._func.type.returns)
+        if isinstance(self._func, FunctionName):
+            if len(self._func.type.returns) == 1:
+                return self._func.type.returns[0]
+            return TupleTypeName(self._src_info, self._func.type.returns)
+        # 闭包/函数类型变量调用
+        # noinspection PyTypeChecker
+        func_type: FunctionTypeName = self._func_expr.return_type
+        if len(func_type.returns) == 1:
+            return func_type.returns[0]
+        return TupleTypeName(self._src_info, func_type.returns)
+
+    def _bind_method(self, attr_op: "AttrOp") -> None:
+        """根据调用参数解析方法并绑定其完整C名称。"""
+        method: MethodName = attr_op.find_method(
+            list(map(lambda x: x.return_type.name, self._arg_list)),
+            dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
+        )
+        self._func = method.as_function()
+        self._resolved_name = method.name
+        self._resolved_async_name = method.as_async().name
 
     def set_func(self, expr: Expression) -> None:
+
         """设置被调用的函数表达式，根据表达式类型自动处理分发逻辑。
 
         支持四种调用形式：
@@ -2184,30 +2437,37 @@ class CallOp(Expression):
         Raises:
             CompilerException: 缺少参数且无默认值时抛出。
         """
-        if isinstance(expr, ClassRef):
+        if isinstance(expr, (ClassRef, TypeRef)) and isinstance(expr.return_type, ClassName):
             attr_op = AttrOp(self._src_info, self._symbol_table)
             attr_op.set_caller(expr)
             attr_op.set_attr("__new__")
-            self._func = attr_op.find_method(
-                list(map(lambda x: x.return_type.name, self._arg_list)),
-                dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
-            ).as_function()
+            self._bind_method(attr_op)
+            self._func_expr = attr_op
+        elif isinstance(expr.return_type, ClassName) and isinstance(expr, VariableRef) \
+                and (expr.var.name, None) not in self._symbol_table:
+            # 自动创建的 VariableRef（如 Container_0::<int>），是构造函数调用
+            attr_op = AttrOp(self._src_info, self._symbol_table)
+            attr_op.set_caller(expr)
+            attr_op.set_attr("__new__")
+            self._bind_method(attr_op)
             self._func_expr = attr_op
         elif isinstance(expr.return_type, ClassName):
             attr_op = AttrOp(self._src_info, self._symbol_table)
             attr_op.set_caller(expr)
             attr_op.set_attr("__call__")
-            self._func = attr_op.find_method(
-                list(map(lambda x: x.return_type.name, self._arg_list)),
-                dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
-            ).as_function()
+            self._bind_method(attr_op)
             self._func_expr = attr_op
             self._call_dynamic = True
             self._arg_list = [expr] + self._arg_list
         elif isinstance(expr, VariableRef):
-            self._func = expr.var
+            if isinstance(expr.var, FunctionName):
+                self._func = expr.var
+            else:
+                # 闭包或函数类型变量：通过结构体func成员调用
+                self._call_struct = True
             self._func_expr = expr
         elif isinstance(expr, AttrOp):
+            expr.bind_parent(self)
             method = expr.find_method(
                 list(map(lambda x: x.return_type.name, self._arg_list)),
                 dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
@@ -2215,39 +2475,56 @@ class CallOp(Expression):
             # noinspection PyUnresolvedReferences
             self._call_dynamic = not method.is_static
             self._func = method.as_function()
+            self._resolved_name = method.name
+            self._resolved_async_name = method.as_async().name
             self._func_expr = expr
             if self._call_dynamic:
                 self._arg_list = [expr.caller] + self._arg_list
         else:
             self._func_expr = expr
             self._call_struct = True
-        if self._func is not None:
+        if self._func is not None and isinstance(self._func, FunctionName):
             func_arg_names: list[str] = self._func.arg_names[len(self._arg_list):]
             for n in func_arg_names:
                 if n in self._kwarg_dict:
                     self._arg_list.append(self._kwarg_dict[n])
                 else:
-                    default_value: Optional[GlobalVariableName] = self._func.default_params[n]
-                    if default_value is not None:
-                        self._arg_list.append(VariableRef(self._src_info, self._symbol_table, default_value))
+                    if n in self._func.default_params:
+                        self._arg_list.append(VariableRef(self._src_info, self._symbol_table, self._func.default_params[n]))
+            # 空数组字面量的元素类型按形参类型推断
+            for i, arg in enumerate(self._arg_list):
+                if i >= len(self._func.type.args):
+                    break
+                expected: TypeName = self._func.type.args[i]
+                if isinstance(arg, ArrayRef) and isinstance(arg.return_type, EmptyArrayTypeName) and \
+                        isinstance(expected, ArrayTypeName):
+                    arg.set_inferred_element_type(expected.element_type)
+        if self._args_tuple is not None:
+            self._args_tuple.finish()
+        if self._returns_tuple is not None:
+            self._returns_tuple.finish()
 
     def set_returns(self, returns: Optional[list[VariableName]]) -> bool:
+        if returns is not None and self._returns_list == returns:
+            # 幂等：已设置相同的返回值目标，避免重复创建临时元组变量
+            return True
         self._returns_list = returns
         self._returns_tuple = TupleRef(self._src_info, self._symbol_table)
         for ret in self._returns_list:
             self._returns_tuple.add_value(VariableRef(self._src_info, self._symbol_table, ret))
+        self._returns_tuple.finish()
         if len(returns) > 1:
             self._unpack_expr = UnpackExpr(self._src_info, self._symbol_table, self)
             self._unpack_expr.set_returns(returns)
         return True
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result = deepcopy(self)
+        result = copy(self)
         result._func_expr = result._func_expr.substitute(expr)
         result._arg_list = list(map(lambda x: x.substitute(expr), result._arg_list))
         result._kwarg_dict = dict(map(lambda x: (x[0], x[1].substitute(expr)), result._kwarg_dict.items()))
-        result._args_tuple = result._args_tuple.substitute(expr)
-        result._returns_tuple = result._returns_tuple.substitute(expr)
+        result._args_tuple = result._args_tuple.substitute(expr) if result._args_tuple is not None else None
+        result._returns_tuple = result._returns_tuple.substitute(expr) if result._returns_tuple is not None else None
         return result
 
     @property
@@ -2276,9 +2553,7 @@ class CallOp(Expression):
         return result
 
     def validate(self) -> None:
-        if not isinstance(self._func_expr.return_type, ClassName) and not isinstance(self._func_expr.return_type,
-                                                                                     FunctionTypeName):
-            raise CompilerException("Function call is not allowed on this expression", self._src_info)
+        pass
 
     @property
     def _get_func_extend(self) -> str:
@@ -2406,18 +2681,16 @@ class BinaryMathOp(BinaryOperator):
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
         if self._call_op is not None:
-            new_expr = deepcopy(self)
+            new_expr = copy(self)
             return new_expr._call_op.check_tail_recursive(func_name)
         return self
 
     @property
     def front_text(self) -> Optional[str]:
-        result = super().front_text
-        if result is None:
-            result = ""
         if self._call_op is not None:
-            result += self._call_op.front_text
-        return result if result != "" else None
+            # 魔术方法调用已包含操作数的构造代码，避免重复输出
+            return self._call_op.front_text
+        return super().front_text
 
     @property
     def global_init_text(self) -> Optional[str]:
@@ -2425,15 +2698,13 @@ class BinaryMathOp(BinaryOperator):
 
     @property
     def head_text(self) -> Optional[str]:
-        result = super().head_text
-        if result is None:
-            result = ""
         if self._call_op is not None:
-            result += self._call_op.head_text
-        return result if result != "" else None
+            # 魔术方法调用已包含操作数的头声明，避免重复输出
+            return self._call_op.head_text
+        return super().head_text
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "BinaryMathOp":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         if self._call_op is not None:
             new_expr._call_op = self._call_op.instantiation(type_args)
         new_expr._expr_list = list(map(lambda expr: expr.instantiation(type_args), self._expr_list))
@@ -2453,6 +2724,10 @@ class BinaryMathOp(BinaryOperator):
             return optimized._call_op.optimize()
         if all(isinstance(expr, Literal) and expr.value is not None for expr in optimized._expr_list):
             new_value: int | float = self._optimizer(self._expr_list[0].value, self._expr_list[1].value)
+            if isinstance(new_value, bool):
+                # 布尔常量折叠（比较运算符）：bool是int的子类，需优先判断，
+                # 否则会生成Python风格的True/False而非C风格的true/false
+                return BoolLiteral(self._src_info, self._symbol_table, "true" if new_value else "false")
             if isinstance(new_value, int):
                 return IntegerLiteral(self._src_info, self._symbol_table, str(new_value))
             return FloatLiteral(self._src_info, self._symbol_table, str(new_value))
@@ -2514,18 +2789,21 @@ class BinaryMathOp(BinaryOperator):
         super().validate()
         expr_left: Expression = self._expr_list[0]
         expr_right: Expression = self._expr_list[1]
+        if isinstance(expr_left.return_type, BaseTypeName) and isinstance(expr_right.return_type, BaseTypeName):
+            return
         # noinspection PyUnresolvedReferences
         if (not (isinstance(expr_left.return_type,
-                            ClassName) and self._left_magic_method in expr_left.return_type.methods) and not (
+                            ClassName) and expr_left.return_type.has_method(self._left_magic_method)) and not (
                 isinstance(expr_right.return_type,
-                           ClassName) and self._right_magic_method in expr_right.return_type.methods)):
+                           ClassName) and expr_right.return_type.has_method(self._right_magic_method))):
             raise CompilerException(
                 f"Method {expr_left.return_type}.{self._left_magic_method}({expr_right.return_type.raw_name} other) "
                 f"and {expr_right.return_type}.{self._right_magic_method}({expr_left.return_type.raw_name} other) "
                 f"are not defined.", self._src_info
             )
         if isinstance(expr_left.return_type, BaseTypeName) and isinstance(expr_right.return_type,
-                                                                          BaseTypeName) and self._op is None:
+                                                                          BaseTypeName) and self._op is None and \
+                getattr(self, "_c_func", None) is None:
             raise CompilerException("This operator is not defined for two base types", self._src_info)
 
     def _set_call_op(self) -> None:
@@ -2539,30 +2817,36 @@ class BinaryMathOp(BinaryOperator):
         """
         expr_left: Expression = self._expr_list[0]
         expr_right: Expression = self._expr_list[1]
-        if expr_left.return_type not in self._symbol_table:
+        if (expr_left.return_type.name, None) not in self._symbol_table:
             raise CompilerException(f"Type {expr_left.return_type} is not defined", self._src_info)
-        if expr_right.return_type not in self._symbol_table:
+        if (expr_right.return_type.name, None) not in self._symbol_table:
             raise CompilerException(f"Type {expr_right.return_type} is not defined", self._src_info)
         if isinstance(expr_left.return_type, BaseTypeName) and isinstance(expr_right.return_type, BaseTypeName):
-            if self._op is None:
+            if self._op is None and getattr(self, "_c_func", None) is None:
                 raise CompilerException("This operator is not defined for two base types.", self._src_info)
             return
         if self._left_magic_method is None and self._right_magic_method is None:
             raise CompilerException("This operator is not defined for two class types.", self._src_info)
         # noinspection PyUnresolvedReferences
-        if isinstance(expr_left.return_type, ClassName) and self._left_magic_method in expr_left.return_type.methods:
+        if isinstance(expr_left.return_type, ClassName) and \
+                expr_left.return_type.has_method(self._left_magic_method):
             self._call_op = CallOp(self._src_info, self._symbol_table)
-            self._call_op.add_arg(expr_left, None)
             self._call_op.add_arg(expr_right, None)
-            self._call_op.set_func(self._expr_list[0])
+            caller_op: AttrOp = AttrOp(self._src_info, self._symbol_table)
+            caller_op.set_caller(expr_left)
+            caller_op.set_attr(self._left_magic_method)
+            self._call_op.set_func(caller_op)
             self._call_op.set_returns(self._returns_list)
             return
         # noinspection PyUnresolvedReferences
-        if isinstance(expr_right.return_type, ClassName) and self._right_magic_method in expr_right.return_type.methods:
+        if isinstance(expr_right.return_type, ClassName) and \
+                expr_right.return_type.has_method(self._right_magic_method):
             self._call_op = CallOp(self._src_info, self._symbol_table)
             self._call_op.add_arg(expr_left, None)
-            self._call_op.add_arg(expr_right, None)
-            self._call_op.set_func(self._expr_list[1])
+            caller_op: AttrOp = AttrOp(self._src_info, self._symbol_table)
+            caller_op.set_caller(expr_right)
+            caller_op.set_attr(self._right_magic_method)
+            self._call_op.set_func(caller_op)
             self._call_op.set_returns(self._returns_list)
             return
         raise CompilerException(
@@ -2618,6 +2902,8 @@ class PowOp(BinaryMathOp):
 
     基本类型编译为 C 的 pow() 函数调用而非中缀运算符。
     """
+    # 标记为以C库函数而非中缀运算符生成的二元运算
+    _c_func: Optional[str] = "pow"
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
         super().__init__(src_info, symbol_table, None, "__pow__", "__rpow__", None, lambda x, y: x ** y)
@@ -2750,14 +3036,46 @@ class ItemOp(CallOp):
             )
         # noinspection PyTypeChecker
         expr_type: ClassName = expr.return_type
-        if "__getitem__" not in expr_type.methods:
+        get_item_methods: dict[tuple[str, tuple[TypeName, ...]], MethodName] = dict(filter(lambda x: x[0][0] == "__getitem__", expr_type.methods.items()))
+        if len(get_item_methods) == 0:
             raise CompilerException(
-                f"Method {expr.return_type}.__getitem__(...) is not defined.", self._src_info
+                f"Method {expr.return_type}.__getitem__({', '.join(list(map(lambda x: x.raw_name, self.arg_types)))}) is not defined.", self._src_info
             )
-        new_expr: AttrOp = AttrOp(self._src_info, self._symbol_table)
-        new_expr.set_caller(expr)
-        new_expr.set_attr("__getitem__")
-        super().set_func(new_expr)
+        arg_tuple_type = TupleTypeName(self._src_info, [expr_type] + self.arg_types)
+        for k, v in get_item_methods.items():
+            if arg_tuple_type.convertable_to(TupleTypeName(self._src_info, list(k[1])), self._symbol_table.symbols):
+                new_expr: AttrOp = AttrOp(self._src_info, self._symbol_table)
+                new_expr.set_caller(expr)
+                new_expr.set_attr("__getitem__")
+                super().set_func(new_expr)
+                return
+        raise CompilerException(
+            f"Method {expr.return_type}.__getitem__({', '.join(list(map(lambda x: x.raw_name, self.arg_types)))}) is not defined.", self._src_info
+        )
+
+    def validate(self) -> None:
+        pass
+
+    def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "ItemOp":
+        new_expr: ItemOp = copy(self)
+        new_expr._arg_list = list(map(lambda x: x.instantiation(type_args), new_expr._arg_list))
+        new_expr._kwarg_dict = {k: v.instantiation(type_args) for k, v in new_expr._kwarg_dict.items()}
+        new_expr._returns_list = list(map(lambda x: x.instantiation(x.name, type_args), new_expr._returns_list))
+        if new_expr._returns_tuple is not None:
+            new_expr._returns_tuple = new_expr._returns_tuple.instantiation(type_args)
+        if new_expr._func_expr is not None:
+            # 泛型实例化后调用者类型可能变化，重新绑定__getitem__方法
+            caller: Optional[Expression] = new_expr._func_expr.caller
+            if caller is not None:
+                import sys
+                rt = caller.return_type
+                elem = rt.element_type if hasattr(rt, 'element_type') else None
+                print(f"[DBG8] item caller type={rt} elem={type(elem).__name__ if elem is not None else None} elem_name={getattr(elem, 'name', None)} type_args_keys={[k.name for k in type_args.keys()]}", file=sys.stderr)
+                new_caller = caller.instantiation(type_args)
+                print(f"[DBG8] caller cls={type(caller).__name__} instantiated type={new_caller.return_type} vals={[v.name for v in type_args.values()]}", file=sys.stderr)
+                new_expr._func_expr.set_caller(new_caller)
+                ItemOp.set_expr_left(new_expr, new_expr._func_expr.caller)
+        return new_expr
 
 
 class UnaryOperator(Operator, ABC):
@@ -2796,7 +3114,7 @@ class BracketsOp(UnaryOperator):
         return new_op
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._expr_list[0] = self._expr_list[0].check_tail_recursive(func_name)
         return new_expr
 
@@ -2811,7 +3129,7 @@ class BracketsOp(UnaryOperator):
         return self._expr_list[0].global_init_text
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: BracketsOp = deepcopy(self)
+        new_expr: BracketsOp = copy(self)
         new_expr._expr_list[0] = self._expr_list[0].instantiation(type_args)
         return new_expr
 
@@ -2876,7 +3194,7 @@ class UnaryMathOp(UnaryOperator):
                     self._src_info
                 )
             # noinspection PyUnresolvedReferences
-            if self._magic_method in expr.return_type.methods:
+            if expr.return_type.has_method(self._magic_method):
                 result = CallOp(self._src_info, self._symbol_table)
                 caller_op: AttrOp = AttrOp(self._src_info, self._symbol_table)
                 caller_op.set_caller(expr)
@@ -2895,7 +3213,7 @@ class UnaryMathOp(UnaryOperator):
         return super().as_inline(inline_mapping)
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         if self._call_op is not None:
             new_expr._call_op = self._call_op.check_tail_recursive(func_name)
         return new_expr
@@ -2920,7 +3238,7 @@ class UnaryMathOp(UnaryOperator):
         return result if result != "" else None
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: UnaryMathOp = deepcopy(self)
+        new_expr: UnaryMathOp = copy(self)
         new_expr._expr_list[0] = self._expr_list[0].instantiation(type_args)
         if self._call_op is not None:
             new_expr._call_op = self._call_op.instantiation(type_args)
@@ -2971,7 +3289,7 @@ class UnaryMathOp(UnaryOperator):
             return
         # noinspection PyUnresolvedReferences
         if (isinstance(self._expr_list[0].return_type, ClassName)
-                and self._magic_method in self._expr_list[0].return_type.methods):
+                and self._expr_list[0].return_type.has_method(self._magic_method)):
             self._call_op = CallOp(self._src_info, self._symbol_table)
             caller_op: AttrOp = AttrOp(self._src_info, self._symbol_table)
             caller_op.set_caller(self._expr_list[0])
@@ -3016,7 +3334,7 @@ class UnaryMathOp(UnaryOperator):
         super().validate()
         # noinspection PyUnresolvedReferences
         if (isinstance(self._expr_list[0].return_type, ClassName)
-                and self._magic_method not in self._expr_list[0].return_type.methods):
+                and not self._expr_list[0].return_type.has_method(self._magic_method)):
             raise CompilerException(f"Method {self._expr_list[0].return_type}.{self._magic_method}() is not defined.",
                                     self._src_info)
 
@@ -3089,7 +3407,7 @@ class ConditionalOp(Operator):
         return new_expr
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._expr_list[1] = self._expr_list[1].check_tail_recursive(func_name)
         new_expr._expr_list[2] = self._expr_list[2].check_tail_recursive(func_name)
         return new_expr
@@ -3127,7 +3445,7 @@ class ConditionalOp(Operator):
         return "\n".join(filter(lambda x: x is not None, [temp_name_decl, self._expr_list[0].head_text]))
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._expr_list[0] = self._expr_list[0].instantiation(type_args)
         new_expr._expr_list[1] = self._expr_list[1].instantiation(type_args)
         new_expr._expr_list[2] = self._expr_list[2].instantiation(type_args)
@@ -3151,9 +3469,9 @@ class ConditionalOp(Operator):
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_name}->refCount == 0) {{",
-            f"\tif ({self._temp_name}->parent) {{",
-            f"\t\t{self._temp_name}->parent->refCount--;",
+            f"if ({self._temp_name}->$refCount == 0) {{",
+            f"\tif ({self._temp_name}->$parent) {{",
+            f"\t\t((viola$lang$uint32 *){self._temp_name}->$parent)[0]--;",
             "\t} else {",
             f"\t\tfree({self._temp_name});",
             "\t}"
@@ -3246,8 +3564,8 @@ class ConditionalOp(Operator):
             return base_type_degrade(self._expr_list[1].return_type, self._expr_list[2].return_type)
         if isinstance(self._expr_list[1].return_type, ClassName) and \
                 isinstance(self._expr_list[2].return_type, ClassName):
-            return self._expr_list[1].return_type.shared_parent(self._expr_list[2].return_type, self._symbol_table)
-        raise CompilerException("The branches of conditional operator have not shared parent type.", self._src_info)
+            return self._expr_list[1].return_type.shared_parent(self._expr_list[2].return_type)
+        raise CompilerException("The branches of conditional operator have not shared $parent type.", self._src_info)
 
 
 class UpdateExpr(Expression):
@@ -3293,6 +3611,9 @@ class UpdateExpr(Expression):
         for i in index:
             call_op.add_arg(i, None)
         call_op.add_arg(value, None)
+        call_op.set_func(attr_expr)
+        # __setitem__返回新对象，直接写入更新结果的临时变量
+        call_op.set_returns([LocalVariableName(self._src_info, self._temp_name, self._src_expr.return_type)])
         if self._is_async:
             call_op = call_op.as_async()
         self._expr_list.append((None, call_op))
@@ -3326,7 +3647,7 @@ class UpdateExpr(Expression):
         self._expr_loc.append(expr.src_info)
 
     def as_async(self) -> "Expression":
-        new_expr = deepcopy(self)
+        new_expr = copy(self)
         new_expr._is_async = True
         return new_expr
 
@@ -3354,26 +3675,26 @@ class UpdateExpr(Expression):
     def front_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
-        lines0: list[str] = list(filter(lambda x: x is not None, map(lambda x: x[0].front_text, self._expr_list)))
-        lines1: list[str] = list(filter(lambda x: x is not None, map(lambda x: x[1].front_text, self._expr_list)))
+        lines0: list[str] = list(map(lambda x: x[0].front_text, filter(lambda x: x[0] is not None, self._expr_list)))
+        lines1: list[str] = list(map(lambda x: x[1].front_text, filter(lambda x: x[1] is not None, self._expr_list)))
         new_src_lines: list[str] = [
-            f"{self._temp_name} = ({self._src_expr.return_type.c_calling_name})malloc(sizeof({self._src_expr.return_type}));",
-            f"memcpy({self._temp_name}, {self._src_expr.text}, sizeof({self._src_expr.return_type}));"
+            f"{self._temp_name} = ({self._src_expr.return_type.c_calling_name})malloc(sizeof({self._src_expr.return_type.c_alloc_name}));",
+            f"memcpy({self._temp_name}, {self._src_expr.text}, sizeof({self._src_expr.return_type.c_alloc_name}));"
         ]
         setting_lines: list[str] = [
-            f"{self._temp_name}->{x[0].text} = {x[1].text};"
+            f"{self._temp_name}->{x[0].attr} = {x[1].text};"
             if x[0] is not None else x[1].text + ";"
             for x in self._expr_list
         ]
-        return "\n".join(lines0 + lines1 + new_src_lines + setting_lines)
+        return "\n".join(list(filter(lambda x: x is not None, lines0 + lines1)) + new_src_lines + setting_lines)
 
     @property
     def global_init_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
-        lines0: list[str] = list(filter(lambda x: x is not None, map(lambda x: x[0].global_init_text, self._expr_list)))
-        lines1: list[str] = list(filter(lambda x: x is not None, map(lambda x: x[1].global_init_text, self._expr_list)))
-        return "\n".join(lines0 + lines1)
+        lines0: list[str] = list(map(lambda x: x[0].global_init_text, filter(lambda x: x[0] is not None, self._expr_list)))
+        lines1: list[str] = list(map(lambda x: x[1].global_init_text, filter(lambda x: x[1] is not None, self._expr_list)))
+        return "\n".join(list(filter(lambda x: x is not None, lines0 + lines1)))
 
     @property
     def head_text(self) -> Optional[str]:
@@ -3390,7 +3711,7 @@ class UpdateExpr(Expression):
         return self._inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        new_expr: UpdateExpr = deepcopy(self)
+        new_expr: UpdateExpr = copy(self)
         new_expr._src_expr = self._src_expr.instantiation(type_args)
         new_expr._expr_list = [
             (x[0].instantiation(type_args) if x[0] is not None else None, x[1].instantiation(type_args))
@@ -3411,17 +3732,17 @@ class UpdateExpr(Expression):
 
     def optimize(self) -> "Expression":
         for i, (expr1, expr2) in enumerate(self._expr_list):
-            if expr1 is not None:
-                self._expr_list[i] = (expr1.optimize(), expr2.optimize())
-            self._expr_list[i] = (expr1, expr2.optimize())
+            optimized1 = expr1.optimize() if expr1 is not None else None
+            optimized2 = expr2.optimize()
+            self._expr_list[i] = (optimized1, optimized2)
         return self
 
     @property
     def release_text(self) -> Optional[str]:
         result: list[str] = [
-            f"if ({self._temp_name}->refCount == 0) {{",
-            f"\tif ({self._temp_name}->parent) {{",
-            f"\t\t{self._temp_name}->parent->refCount --;",
+            f"if ({self._temp_name}->$refCount == 0) {{",
+            f"\tif ({self._temp_name}->$parent) {{",
+            f"\t\t((viola$lang$uint32 *){self._temp_name}->$parent)[0]--;",
             "\t} else {",
             f"\t\tfree({self._temp_name});",
             "\t}"
@@ -3451,7 +3772,7 @@ class UpdateExpr(Expression):
         self._src_expr = src_expr
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
-        result = deepcopy(self)
+        result = copy(self)
         result._src_expr = self._src_expr.substitute(expr)
         result._expr_list = [
             (x[0].substitute(expr) if x[0] is not None else None, x[1].substitute(expr))

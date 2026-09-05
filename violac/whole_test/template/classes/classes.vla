@@ -1,0 +1,66 @@
+// Viola Classes Test Template
+// Tests: class declaration, constructors, static methods, instance methods, object creation
+
+class ${CLASS_NAME} {
+    // Properties
+    ${PROP_TYPE_1} ${PROP_NAME_1};
+    ${PROP_TYPE_2} ${PROP_NAME_2};
+    ${PROP_TYPE_3} ${PROP_NAME_3};
+
+    // Constructor
+    public sq __new__(${PROP_TYPE_1} ${PROP_NAME_1}, ${PROP_TYPE_2} ${PROP_NAME_2}, ${PROP_TYPE_3} ${PROP_NAME_3}) -> (this) {
+        this.${PROP_NAME_1} = ${PROP_NAME_1};
+        this.${PROP_NAME_2} = ${PROP_NAME_2};
+        this.${PROP_NAME_3} = ${PROP_NAME_3};
+    }
+
+    // Instance method
+    public fn get${PROP_NAME_CAP_1}() -> (${PROP_TYPE_1} result) {
+        result = this.${PROP_NAME_1};
+    }
+
+    // Instance method with computation
+    public fn compute() -> (int result) {
+        result = this.${PROP_NAME_1} + this.${PROP_NAME_2};
+    }
+
+    // Static factory method
+    static public fn default() -> (${CLASS_NAME} obj) {
+        obj = ${CLASS_NAME}(${DEFAULT_VAL_1}, ${DEFAULT_VAL_2}, ${DEFAULT_VAL_3});
+    }
+}
+
+// Simple value class
+class Point {
+    int x;
+    int y;
+
+    public sq __new__(int x, int y) -> (this) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+sq main() -> () {
+    // Object declaration
+    ${CLASS_NAME} ${OBJ_VAR_1};
+
+    // Object definition via constructor
+    ${CLASS_NAME} ${OBJ_VAR_2} = ${CLASS_NAME}(${INIT_VAL_1}, ${INIT_VAL_2}, ${INIT_VAL_3});
+
+    // Alternative object construction syntax
+    ${CLASS_NAME} ${OBJ_VAR_3}(${INIT_VAL_1}, ${INIT_VAL_2}, ${INIT_VAL_3});
+
+    // Object definition via static factory method
+    ${CLASS_NAME} ${OBJ_VAR_4} = ${CLASS_NAME}.default();
+
+    // Access instance method
+    ${PROP_TYPE_1} ${RESULT_VAR_1} = ${OBJ_VAR_2}.get${PROP_NAME_CAP_1}();
+    int ${RESULT_VAR_2} = ${OBJ_VAR_2}.compute();
+
+    // Passing object to a method chain
+    Point p1(${POINT_X}, ${POINT_Y});
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

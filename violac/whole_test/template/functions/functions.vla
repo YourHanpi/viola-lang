@@ -1,0 +1,58 @@
+// Viola Functions Test Template
+// Tests: function declaration, definition, calling, default values, anonymous functions
+
+// Sequential function (sq) - executes statements in order
+sq greet(string name) -> () {
+    print("${GREET_PREFIX}, ");
+    print(name);
+    print("${GREET_SUFFIX}");
+}
+
+// Demand-driven function (fn) - evaluates all results and returns
+fn add(int a, int b) -> (int result) {
+    result = a + b;
+}
+
+// Function with multiple return values
+fn divMod(int a, int b) -> (int quotient, int remainder) {
+    quotient = a / b;
+    remainder = a % b;
+}
+
+// Function with default parameter values
+fn power(double base, double exponent = ${DEFAULT_EXP}) -> (double result) {
+    // Simple power using multiplication for integer-like exponents
+    result = base;
+}
+
+// Named function that takes a function parameter
+fn apply(int x, (int) -> (int) func) -> (int result) {
+    result = func(x);
+}
+
+// A simple mapper function for apply
+fn doubleValue(int x) -> (int result) {
+    result = x * 2;
+}
+
+sq main() -> () {
+    // Call sequential function
+    greet("${NAME}");
+
+    // Call demand-driven function
+    int sum = add(${VAL_A}, ${VAL_B});
+
+    // Call function with multiple returns
+    int q;
+    int r;
+    q, r = divMod(${VAL_C}, ${VAL_D});
+
+    // Call function with default parameter
+    double p = power(${BASE_VAL});
+
+    // Call higher-order function
+    int doubled = apply(${APPLY_VAL}, doubleValue);
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

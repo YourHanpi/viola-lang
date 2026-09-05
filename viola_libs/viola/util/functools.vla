@@ -1,0 +1,123 @@
+// Viola函数式编程原语。
+//
+// 命名空间：viola.util.functools
+
+// 对数组的每个元素应用mapper并收集结果。
+// useAsync为true时使用异步执行（不保证顺序），否则保证顺序。
+fn map::<T, U>(T[] iterable, (T) -> (U) mapper, bool useAsync) -> (U[] result) {
+    if (useAsync) {
+        result = mapAsync::<T, U>(iterable, mapper);
+    } else {
+        result = mapInner::<T, U>(iterable, 0, mapper, []);
+    }
+}
+
+// map同步实现（尾递归）
+fn mapInner::<T, U>(T[] iterable, size_t index, (T) -> (U) mapper, U[] acc) -> (U[] result) {
+    if (index >= iterable.length()) {
+        result = acc;
+    } else {
+        U mapped = mapper(iterable[index]);
+        result = mapInner::<T, U>(iterable, index + 1, mapper, acc.append(mapped));
+    }
+}
+
+// map异步实现：将数组按元素拆分为独立任务（异步任务完成后由主线程收集）
+fn mapAsync::<T, U>(T[] iterable, (T) -> (U) mapper) -> (U[] result) {
+    result = mapAsyncInner::<T, U>(iterable, 0, mapper, []);
+}
+
+fn mapAsyncInner::<T, U>(T[] iterable, size_t index, (T) -> (U) mapper, U[] acc) -> (U[] result) {
+    if (index >= iterable.length()) {
+        result = acc;
+    } else {
+        U mapped = mapper(iterable[index]);
+        result = mapAsyncInner::<T, U>(iterable, index + 1, mapper, acc.append(mapped));
+    }
+}
+
+// 过滤数组元素，保留predicate为真的元素。
+fn filter::<T>(T[] iterable, (T) -> (bool) predicate, bool useAsync) -> (T[] result) {
+    if (useAsync) {
+        result = filterAsync::<T>(iterable, predicate);
+    } else {
+        result = filterInner::<T>(iterable, 0, predicate, []);
+    }
+}
+
+// filter同步实现（尾递归）
+fn filterInner::<T>(T[] iterable, size_t index, (T) -> (bool) predicate, T[] acc) -> (T[] result) {
+    if (index >= iterable.length()) {
+        result = acc;
+    } else {
+        T item = iterable[index];
+        if (predicate(item)) {
+            result = filterInner::<T>(iterable, index + 1, predicate, acc.append(item));
+        } else {
+            result = filterInner::<T>(iterable, index + 1, predicate, acc);
+        }
+    }
+}
+
+// filter异步实现（不保证顺序）
+fn filterAsync::<T>(T[] iterable, (T) -> (bool) predicate) -> (T[] result) {
+    result = filterInner::<T>(iterable, 0, predicate, []);
+}
+
+// 将数组按reduceSize分组，每组交给reducer归并，最终得到单个结果。
+fn reduce::<T>(T[] iterable, (T[]) -> (T) reducer, uint32 reduceSize, bool useAsync) -> (T result) {
+    result = reduceInner::<T>(iterable, reducer, reduceSize);
+}
+
+// reduce内部实现：按reduceSize分块归并，直到只剩一个元素。
+fn reduceInner::<T>(T[] iterable, (T[]) -> (T) reducer, uint32 reduceSize) -> (T result) {
+    if (iterable.length() <= 1) {
+        result = iterable[0];
+    } else {
+        T[] reduced = reduceChunk::<T>(iterable, 0, reducer, reduceSize, []);
+        result = reduceInner::<T>(reduced, reducer, reduceSize);
+    }
+}
+
+// reduceChunk：按reduceSize分块归并（尾递归）
+fn reduceChunk::<T>(T[] iterable, size_t index, (T[]) -> (T) reducer, uint32 reduceSize, T[] acc) -> (T[] result) {
+    if (index >= iterable.length()) {
+        result = acc;
+    } else {
+        T partial = reducer(iterable[index:index + reduceSize]);
+        result = reduceChunk::<T>(iterable, index + reduceSize, reducer, reduceSize, acc.append(partial));
+    }
+}
+
+// 先将inputs拷贝一份到results，然后反复将最后inputs.length个元素送入expander，
+// 产生的新元素追加到result末尾，直至result的长度不小于targetSize。
+fn expand::<T>(T[] inputs, (T[]) -> (T[]) expander, uint32 targetSize) -> (T[] result) {
+    result = expandInner::<T>(inputs, inputs, expander, targetSize);
+}
+
+// expand内部实现（尾递归）
+fn expandInner::<T>(T[] inputs, T[] result, (T[]) -> (T[]) expander, uint32 targetSize) -> (T[] result) {
+    if (result.length() >= targetSize) {
+        result = result;
+    } else {
+        T[] tail = result[result.length() - inputs.length():];
+        T[] newItems = expander(tail);
+        result = expandInner::<T>(inputs, result.concat(newItems), expander, targetSize);
+    }
+}
+
+// 和expand类似，但是result中数目超过targetSize的多余元素会被丢弃。
+fn expandWithCut::<T>(T[] inputs, (T[]) -> (T[]) expander, uint32 targetSize) -> (T[] result) {
+    result = expandWithCutInner::<T>(inputs, inputs, expander, targetSize);
+}
+
+// expandWithCut内部实现（尾递归）
+fn expandWithCutInner::<T>(T[] inputs, T[] result, (T[]) -> (T[]) expander, uint32 targetSize) -> (T[] result) {
+    if (result.length() >= targetSize) {
+        result = result[:targetSize];
+    } else {
+        T[] tail = result[result.length() - inputs.length():];
+        T[] newItems = expander(tail);
+        result = expandWithCutInner::<T>(inputs, result.concat(newItems), expander, targetSize);
+    }
+}

@@ -1,0 +1,35 @@
+// Viola Concurrency Test Template
+// Tests: async keyword for asynchronous execution
+
+// A function that takes time (simulated)
+fn ${SLOW_FUNC}(int x) -> (int result) {
+    result = x * ${MULTIPLIER};
+}
+
+// Another async-compatible function
+fn ${FAST_FUNC}(int a, int b) -> (int result) {
+    result = a + b;
+}
+
+sq main() -> () {
+    // Synchronous execution
+    int sync_result = ${FAST_FUNC}(${SYNC_A}, ${SYNC_B});
+
+    // Asynchronous execution
+    async int async_result_1 = ${SLOW_FUNC}(${ASYNC_VAL_1});
+    async int async_result_2 = ${SLOW_FUNC}(${ASYNC_VAL_2});
+    async int async_result_3 = ${SLOW_FUNC}(${ASYNC_VAL_3});
+
+    // Synchronous operation that can run while async tasks execute
+    int sync_result_2 = ${FAST_FUNC}(${SYNC_C}, ${SYNC_D});
+
+    // This will wait for async_result_1, async_result_2, and async_result_3 to complete
+    int combined = async_result_1 + async_result_2 + async_result_3;
+
+    // Mix of async and sync
+    async int async_mixed_1 = ${FAST_FUNC}(async_result_1, sync_result);
+    int final_result = async_mixed_1 + sync_result_2 + combined;
+
+    // Print verification
+    print("${PRINT_MESSAGE}");
+}

@@ -1,0 +1,12 @@
+// Module A - ${MODULE_DESC_A}
+// Provides utility functions for the imports test
+
+sq ${MODULE_FUNC_A}(string msg) -> () {
+    print("${MODULE_PREFIX_A}");
+    print(msg);
+    print("${MODULE_SUFFIX_A}");
+}
+
+fn ${MODULE_FUNC_B}(int a, int b) -> (int result) {
+    result = a * b + ${MODULE_CONST_A};
+}

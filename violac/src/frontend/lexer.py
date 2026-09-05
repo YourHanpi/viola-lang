@@ -1,18 +1,24 @@
 # -*- coding: utf-8 -*-
 from .utils import TokenStreamIO
 from utils import SourceInfo, CompilerException, COMPILER_PARAMS, VIOLA_INIT
-from utils.file_marks import TOKEN_POSTFIX, CACHE_DIR
+from utils.file_marks import TOKEN_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
 from utils.fsm import Token, StateNode, FSM
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
 import os
-from typing import Optional
 
 
 class Lexer(FSM):
-    
+    """
+    词法分析器，将源代码文本转换为记号流。
+    """
+
     def __init__(self, workspace: str) -> None:
+        """
+        初始化词法分析器。
+        :param workspace: 工作区路径。
+        """
         super().__init__()
         self._workspace: str = workspace
         self._src_info: SourceInfo = VIOLA_INIT
@@ -20,27 +26,32 @@ class Lexer(FSM):
         self._start_col: int = 1
         self._end_line: int = 1
         self._end_col: int = 1
-        self._exceptions: list[CompilerException] = []
         self._logger = Logger(f"Lexer[0]")
+        self._is_error: bool = False
 
-    @property
-    def exceptions(self) -> list[CompilerException]:
-        return self._exceptions
-
-    def lex(self, path: str) -> Optional[list[Token]]:
+    def lex(self, path: str) -> list[Token]:
+        """
+        对指定文件进行词法分析。
+        :param path: 源文件路径。
+        :return: 记号列表，失败返回None。
+        """
         self._src_info = SourceInfo(path)
+        self._is_error = False
+        self._start_line: int = 1
+        self._start_col: int = 1
+        self._end_line: int = 1
+        self._end_col: int = 1
         with open(path, "r", encoding=COMPILER_PARAMS["encoding"]) as f:
             text: str = f.read()
+        text_lines: list[str] = text.split("\n")
         self.reset()
-        self._exceptions.clear()
         tokens: list[Token] = []
         char_buf: list[str] = []
         current_loc: int = 0
         text_length: int = len(text)
-        error_occurred: bool = False
         while current_loc < text_length:
             char: str = text[current_loc]
-            token: Token = Lexer._get_char_token(char)
+            token: Token = self._get_char_token(char)
             if char == "\n":
                 self._end_line += 1
                 self._end_col = 1
@@ -48,48 +59,72 @@ class Lexer(FSM):
                 self._end_col += 1
             next_state = self.transfer(token)
             if next_state is None:
+                self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
                 if self._current.output is None:
-                    self._src_info.set_loc(self._start_line, self._start_col, self._end_line, self._end_col)
-                    self._src_info.set_text("".join(char_buf))
                     self._logger.error(str(CompilerException(f"Unexpected character {char}", self._src_info.copy())))
-                    error_occurred = True
                     while current_loc < text_length and char not in " \n\t":
                         current_loc += 1
-                        char = text[current_loc]
-                    tokens.append(Token("", ["_ERROR"], self._start_col))
+                        if current_loc < text_length:
+                            char = text[current_loc]
+                    tokens.append(Token("", ["_ERROR"], self._src_info.copy()))
+                    self._is_error = True
                 else:
-                    tokens.append(Token("".join(char_buf), [self._current.output], self._start_col))
+                    tokens.append(Token("".join(char_buf), [self._current.output], self._src_info.copy()))
                 self._start_line = self._end_line
                 self._start_col = self._end_col
                 char_buf.clear()
                 self.reset()
                 next_state = self.transfer(token)
             if self._current.output == "_BLANK" and next_state is not None and next_state.output != "_BLANK":
+                tokens.append(Token("".join(char_buf), ["_BLANK"], self._src_info.copy()))
+                self._start_line = self._end_line
+                self._start_col = self._end_col
                 char_buf.clear()
             char_buf.append(char)
             self._current = next_state if next_state is not None else self._start
+            if 0 <= self._start_line - 1 < len(text_lines):
+                self._src_info.set_text(text_lines[self._start_line - 1])
+            else:
+                self._src_info.set_text("")
             current_loc += 1
         return tokens
 
     def lex_with_writer(self, file_path: str, thread_index: int = 0) -> TaskResult:
+        """
+        对文件进行词法分析并将结果写入缓存。
+        :param file_path: 源文件路径。
+        :param thread_index: 线程索引。
+        :return: 任务结果。
+        """
         self._logger = Logger(f"Lexer[{thread_index}]")
         file_path = os.path.abspath(file_path)
         file_relpath = os.path.relpath(file_path, self._workspace)
-        cache_path = os.path.abspath(os.path.join(CACHE_DIR, file_relpath))
-        if os.path.exists(file_path) and os.path.exists(cache_path + TOKEN_POSTFIX) and os.path.getmtime(file_path) < os.path.getmtime(cache_path + TOKEN_POSTFIX):
-            self._logger.info(f"Passed: {file_path}")
-            return TaskResult(TaskResultState.SUCCESS)
-        self._logger.info(f"Lexing: {file_path}")
-        result = self.lex(file_path)
-        if result is None:
-            self._logger.error(f"Failed to lex: {file_path}")
-            return TaskResult(TaskResultState.FAILURE)
-        TokenStreamIO.write(cache_path + TOKEN_POSTFIX, result)
-        self._logger.info(f"Successfully lexed: {file_path}")
-        return TaskResult(TaskResultState.SUCCESS, [["violac", "parse", file_path]])
+        cache_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
+        if not set_file_lock(cache_path):
+            # 该文件正在被其他线程处理，重新入队等待
+            return TaskResult(TaskResultState.DELAYED, [["violac", "lex", file_path]])
+        try:
+            if os.path.exists(file_path) and os.path.exists(cache_path + TOKEN_POSTFIX) and \
+                    os.path.getmtime(file_path) < os.path.getmtime(cache_path + TOKEN_POSTFIX):
+                self._logger.info(f"Passed: {file_path}")
+                return TaskResult(TaskResultState.SUCCESS)
+            self._logger.info(f"Lexing: {file_path}")
+            result = self.lex(file_path)
+            if self._is_error:
+                self._logger.error(f"Failed to lex: {file_path}")
+                return TaskResult(TaskResultState.FAILURE)
+            TokenStreamIO.write(cache_path + TOKEN_POSTFIX, result)
+            self._logger.info(f"Successfully lexed: {file_path}")
+            return TaskResult(TaskResultState.SUCCESS, [["violac", "parse", file_path]])
+        finally:
+            remove_file_lock(cache_path)
 
-    @staticmethod
-    def _get_char_token(char: str) -> Token:
+    def _get_char_token(self, char: str) -> Token:
+        """
+        获取字符对应的记号类型。
+        :param char: 输入字符。
+        :return: 记号对象。
+        """
         type_list: list[str] = [char]
         if char in "01":
             type_list.append("BIN_DIGIT")
@@ -106,9 +141,13 @@ class Lexer(FSM):
             type_list.append("HEX_DIGIT")
         if char != "\n":
             type_list.append("CHAR")
-        return Token(char, type_list)
+        return Token(char, type_list, self._src_info.copy())
         
     def _set_states_list(self) -> StateNode:
+        """
+        设置词法分析器的状态列表（DFA状态图）。
+        :return: 起始状态结点。
+        """
         start: StateNode = StateNode()
         start = Lexer.__string_states_list(start, True)
         start = Lexer.__string_states_list(start, False)
@@ -120,11 +159,15 @@ class Lexer(FSM):
         start = Lexer.__logical_states_list(start)
         start = Lexer.__brackets_states_list(start)
         start = Lexer.__punctuation_states_list(start)
-        start = Lexer.__comment_states_list(start)
         return start
 
     @staticmethod
     def __bin_math_op_states_list(first: StateNode) -> StateNode:
+        """
+        构建二元数学运算符的状态列表（+ - * / % @ ->）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         add_op: StateNode = StateNode()
         sub_op: StateNode = StateNode()
         ret_ptr: StateNode = StateNode()
@@ -153,6 +196,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __blank_states_list(first: StateNode) -> StateNode:
+        """
+        构建空白字符的状态列表（空格、换行、制表符）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         first.add_transfer(" ", first)
         first.add_transfer("\n", first)
         first.add_transfer("\t", first)
@@ -161,6 +209,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __brackets_states_list(first: StateNode) -> StateNode:
+        """
+        构建括号类字符的状态列表（()[]{}以及转义花括号）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         l_bracket: StateNode = StateNode()
         r_bracket: StateNode = StateNode()
         l_square_bracket: StateNode = StateNode()
@@ -189,6 +242,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __comment_states_list(div_op: StateNode) -> StateNode:
+        """
+        构建注释的状态列表（// 和 /* */）。
+        :param div_op: 除法运算符状态结点。
+        :return: 更新后的除法运算符状态结点。
+        """
         line_comment2: StateNode = StateNode()
         multi_lines_comment2: StateNode = StateNode()
         multi_lines_comment3: StateNode = StateNode()
@@ -210,6 +268,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __compare_states_list(first: StateNode) -> StateNode:
+        """
+        构建比较运算符的状态列表（= == != < > <= >= << >> ~ !）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         assign: StateNode = StateNode()
         update: StateNode = StateNode()
         eq: StateNode = StateNode()
@@ -233,7 +296,9 @@ class Lexer(FSM):
         update.set_output("UPDATE")
         eq.set_output("EQ")
         not_state.add_transfer("=", ne)
+        ne.set_output("NE")
         not_state.set_output("NOT")
+        ne.set_output("NE")
         lt.add_transfer("=", le)
         lt.add_transfer("<", lshift)
         lt.set_output("LT")
@@ -244,11 +309,16 @@ class Lexer(FSM):
         rshift.set_output("RSHIFT")
         le.set_output("LE")
         ge.set_output("GE")
-        invert.set_output("INVERT")
+        invert.set_output("INVERSE")
         return first
 
     @staticmethod
     def __identifier_states_list(first: StateNode) -> StateNode:
+        """
+        构建标识符和关键字的状态列表。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         identifier_state: StateNode = StateNode()
         first.add_transfer("LETTER", identifier_state)
         first.add_transfer("_", identifier_state)
@@ -269,22 +339,28 @@ class Lexer(FSM):
             "export",
             "extends",
             "false",
+            "final",
             "finally",
             "fn",
             "from",
             "if",
+            "impl",
             "import",
+            "interface",
             "public",
             "private",
             "protected",
             "return",
             "sq",
+            "super",
             "static",
             "this",
             "throw",
             "true",
             "try",
-            "using"
+            "unsafe",
+            "using",
+            "wrapper"
         ]
         for keyword in keywords:
             current: StateNode = first
@@ -299,12 +375,32 @@ class Lexer(FSM):
                         next_state.set_output("IDENTIFIER")
                     next_state.add_transfer("LETTER", identifier_state)
                     next_state.add_transfer("DIGIT", identifier_state)
+                    next_state.add_transfer("_", identifier_state)
                 current = next_state
             current.set_output(keyword.upper())
+            current.add_transfer("LETTER", identifier_state)
+            current.add_transfer("DIGIT", identifier_state)
+            current.add_transfer("_", identifier_state)
+        # r 前缀原始字符串（不做转义处理）
+        r_state = first.transfer(Token("r", ["r"]))
+        if r_state is not None:
+            raw_body: StateNode = StateNode()
+            raw_end: StateNode = StateNode()
+            r_state.add_transfer("\"", raw_body)
+            r_state.add_transfer("\'", raw_body)
+            raw_body.add_transfer("CHAR", raw_body)
+            raw_body.add_transfer("\"", raw_end)
+            raw_body.add_transfer("\'", raw_end)
+            raw_end.set_output("RAW_STRING")
         return first
 
     @staticmethod
     def __logical_states_list(first: StateNode) -> StateNode:
+        """
+        构建逻辑和位运算符的状态列表（& && | || ^）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         bit_and: StateNode = StateNode()
         logical_and: StateNode = StateNode()
         bit_or: StateNode = StateNode()
@@ -324,6 +420,11 @@ class Lexer(FSM):
 
     @staticmethod
     def __number_states_list(first: StateNode) -> StateNode:
+        """
+        构建数字常量的状态列表（整数、浮点数、十六进制、八进制、二进制等）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         int_state: StateNode = StateNode()
         zero_state: StateNode = StateNode()
         double_float_state: StateNode = StateNode()
@@ -333,6 +434,7 @@ class Lexer(FSM):
         oct_state: StateNode = StateNode()
         bin_state: StateNode = StateNode()
         float_state: StateNode = StateNode()
+        long_float_state: StateNode = StateNode()
         unsigned_state: StateNode = StateNode()
         size_state1: StateNode = StateNode()
         size_state2: StateNode = StateNode()
@@ -342,24 +444,28 @@ class Lexer(FSM):
         first.add_transfer("DIGIT_NO_ZERO", int_state)
         first.add_transfer("0", zero_state)
         int_state.add_transfer("DIGIT", int_state)
-        int_state.add_transfer("DOT", double_float_state)
+        int_state.add_transfer(".", double_float_state)
         int_state.add_transfer("CHAR_E", exponential_state1)
         int_state.add_transfer("CHAR_U", unsigned_state)
         int_state.add_transfer("CHAR_I", signed_state)
         int_state.add_transfer("CHAR_S", size_state1)
         int_state.set_output("INT32")
-        zero_state.add_transfer("DOT", double_float_state)
+        zero_state.add_transfer(".", double_float_state)
         zero_state.add_transfer("CHAR_X", hex_state)
         zero_state.add_transfer("DIGIT", oct_state)
         zero_state.add_transfer("CHAR_B", bin_state)
+        zero_state.add_transfer("CHAR_O", oct_state)
         zero_state.add_transfer("CHAR_S", size_state1)
         zero_state.set_output("INT32")
         double_float_state.add_transfer("DIGIT", double_float_state)
         double_float_state.add_transfer("CHAR_E", exponential_state1)
         double_float_state.add_transfer("CHAR_F", float_state)
+        double_float_state.add_transfer("CHAR_L", long_float_state)
         double_float_state.set_output("DOUBLE")
+        long_float_state.set_output("DOUBLE")
         exponential_state1.add_transfer("DIGIT", exponential_state2)
-        exponential_state2.add_transfer("SIGN", exponential_state2)
+        exponential_state1.add_transfer("+", exponential_state2)
+        exponential_state1.add_transfer("-", exponential_state2)
         exponential_state2.add_transfer("DIGIT", exponential_state2)
         exponential_state2.add_transfer("CHAR_F", float_state)
         exponential_state2.set_output("DOUBLE")
@@ -382,25 +488,34 @@ class Lexer(FSM):
         size_state1.add_transfer("CHAR_Z", size_state2)
         size_state2.set_output("SIZE_T")
         unsigned_state.add_transfer("DIGIT", unsigned_n_state)
-        unsigned_n_state.set_output("UINT32")
-        signed_state.add_transfer("DIGIT", signed_n_state)
-        signed_n_state.set_output("INT32")
+        unsigned_state.set_output("UINT_N")
+        unsigned_n_state.add_transfer("DIGIT", unsigned_n_state)
         unsigned_n_state.set_output("UINT_N")
+        signed_state.add_transfer("DIGIT", signed_n_state)
+        signed_state.set_output("INT_N")
+        signed_n_state.add_transfer("DIGIT", signed_n_state)
         signed_n_state.set_output("INT_N")
         return first
 
     @staticmethod
     def __punctuation_states_list(first: StateNode) -> StateNode:
+        """
+        构建标点符号的状态列表（, ; : ::< ?）。
+        :param first: 起始状态结点。
+        :return: 更新后的起始状态结点。
+        """
         comma: StateNode = StateNode()
         semicolon: StateNode = StateNode()
         generic_start1: StateNode = StateNode()
         generic_start2: StateNode = StateNode()
         colon: StateNode = StateNode()
         question: StateNode = StateNode()
+        dot: StateNode = StateNode()
         first.add_transfer(",", comma)
         first.add_transfer(";", semicolon)
         first.add_transfer(":", colon)
         first.add_transfer("?", question)
+        first.add_transfer(".", dot)
         comma.set_output("COMMA")
         semicolon.set_output("SEMICOLON")
         colon.add_transfer(":", generic_start1)
@@ -408,10 +523,17 @@ class Lexer(FSM):
         colon.set_output("COLON")
         question.set_output("QUESTION")
         generic_start2.set_output("GENERIC_START")
+        dot.set_output("DOT")
         return first
         
     @staticmethod
     def __string_states_list(first_state: StateNode, double_quote: bool) -> StateNode:
+        """
+        构建字符串常量的状态列表（双引号或单引号字符串）。
+        :param first_state: 起始状态结点。
+        :param double_quote: 是否使用双引号。
+        :return: 更新后的起始状态结点。
+        """
         quote: str = "\"" if double_quote else "\'"
         first: StateNode = StateNode()
         second: StateNode = StateNode()

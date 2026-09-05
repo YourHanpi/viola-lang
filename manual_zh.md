@@ -1,5 +1,7 @@
 # Viola编译器
 
+**在GitHub上访问[项目](https://github.com/YourHanpi/viola-lang)**
+
 ## 简介
 
 Viola是一种静态类型的、编译式的、通用的、大小写敏感的、数据不可变的编程语言，它可以兼容C语言。
@@ -31,12 +33,14 @@ Viola支持面向对象的程序设计，包括封装、继承、多态和抽象
     - `uint16` - 16位无符号整型（相当于C `uint16_t`）
     - `uint32` - 32位无符号整型（相当于C `uint32_t`）
     - `uint64` - 64位无符号整型（相当于C `uint64_t`）
-    - `size_t` - 数据长度类型（相当于C `size_t`）
-- `float` - 浮点型（相当于C `float`)
+- `float` - 浮点型（相当于C `float`）
     - `float32` - 32位浮点型（相当于C `float32_t`）
     - `float64` - 64位浮点型（相当于C `float64_t`）
     - `double` - 双精度浮点型（相当于C `double`）
-    - `long double` - 四精度浮点型（相当于C `long double`）
+    - `float128` - 四精度浮点型（相当于C `long double`）
+- `void` - 空类型，等效于`()`类型（可用于函数返回值和参数位置）
+- `Pointer::<T>` - 指针类型（`unsafe`），C语言层表示为`void *`，由用户手动管理内存，
+  用于与C语言交互
 
 ## 集合数据类型
 
@@ -340,15 +344,50 @@ arr2 = arr1 => {
 
 ## 循环
 
-**注意：由于数据不可变性，Viola不提供循环。如有需要，请使用递归。**
+**注意：由于数据不可变性，Viola不提供循环语句。如有需要，请使用递归，或使用运行库
+`viola.util.control_flow` 提供的循环函数。**
 
-**TODO: 提供用于循环的库函数（声明见下）。**
+使用方式（先导入：`import viola.util.control_flow as control_flow;`）：
 
 ```viola
-sq forEach::<T, U>(T[] iterable, (T) -> (U) mapper) -> (U[] result);
+// 按顺序遍历数组并应用mapper（保证顺序）
+fn forEach::<T, U>(T[] iterable, (T) -> (U) mapper) -> (U[] result);
 sq forEach::<T>(T[] iterable, (T) -> () mapper) -> ();
-sq while::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result);
-sq doWhile::<T>(T inputs, (T) -> (T) updater) -> (T result);
+
+// 循环执行updater，直到predicate为假（while语义）
+fn while::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result);
+// 先执行一次updater再判断predicate（do-while语义）
+fn doWhile::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result);
+```
+
+例：
+
+```viola
+import viola.util.control_flow as control_flow;
+
+fn increment(int x) -> (int r) {
+    r = x + 1;
+}
+
+fn lessThanFive(int x) -> (bool c) {
+    c = x < 5;
+}
+
+sq main() -> () {
+    // 结果为5
+    int result = control_flow.while::<int>(1, increment, lessThanFive);
+    print("done");
+}
+```
+
+`viola.util.functools` 提供函数式编程原语（`import viola.util.functools as functools;`）：
+
+```viola
+fn map::<T, U>(T[] iterable, (T) -> (U) mapper, bool useAsync) -> (U[] result);
+fn filter::<T>(T[] iterable, (T) -> (bool) predicate, bool useAsync) -> (T[] result);
+fn reduce::<T>(T[] iterable, (T[]) -> (T) reducer, uint32 reduceSize, bool useAsync) -> (T result);
+fn expand::<T>(T[] inputs, (T[]) -> (T[]) expander, uint32 targetSize) -> (T[] result);
+fn expandWithCut::<T>(T[] inputs, (T[]) -> (T[]) expander, uint32 targetSize) -> (T[] result);
 ```
 
 ## 分支
@@ -449,9 +488,23 @@ Viola中的函数定义的一般形式如下：
 ```viola
 fn max(int a, int b) -> (int result) {
     result = a > b ? a : b;
-    // Viola没有return关键字和语句，以及类似功能的关键字和语句
 }
 ```
+
+### return语句
+
+`sq`函数可以使用`return`语句强制返回。**`return`后应当直接跟随分号**，因为返回变量在函数声明处（`-> (返回值列表)`）就已经确定。例：
+
+```viola
+sq countTo(uint32 n) -> () {
+    if (n == 0) {
+        return;
+    }
+    countTo(n - 1);
+}
+```
+
+如果编译器发现`return`处有返回值尚未被赋值，会报出编译时错误。返回值为`void`（即`()`）时也可以使用`return`。**注意：`fn`函数按需执行，求出所有返回值后自动退出，不允许使用`return`。**
 
 Viola支持匿名函数，格式如下：
 
@@ -611,7 +664,16 @@ bool var14 = var0.endsWith("Hello"); // var14 = false
 
 ## 输入与输出
 
-Viola提供了一些用于输入与输出的函数。
+Viola提供了一些用于输入与输出的函数。这些函数位于`viola.io`命名空间，
+使用前需要导入：
+
+```viola
+import viola.io as io;
+// 或
+import viola.io.print;
+import viola.io.perror;
+import viola.io.input;
+```
 
 ### 标准输入输出
 
@@ -640,8 +702,6 @@ sq input() -> (string);
 如果希望访问标准输入流，请使用`sys.stdin`。
 
 ### 对文件的输入与输出
-
-**注意：尚不确定是否会采用文件句柄这一形式，因为目前已知的方法都可能导致死锁。**
 
 首先我们需要打开文件，并获取文件句柄，函数声明如下：
 
@@ -696,7 +756,7 @@ class Image {
     static public sq load(string path) -> (Image img) {...} // 静态方法，指不使用类实例的方法
     
     static public fn black(uint channels, uint height, uint width) -> (Image img) {
-        pixels = zeros<uint8>(height * width * channels);
+        pixels = zeros::<uint8>(height * width * channels);
         img = Image(channels, height, width, pixels);
     }
     
@@ -726,7 +786,7 @@ class Image {
 Image img0; // 声明一个对象变量
 Image img1 = Image.black(3, 100, 100); // 注意：这里调用的是静态方法
 img2 = img1.drawLine(0, 0, 100, 100, [255, 255, 255]); // 这里既可以调用静态方法，也可以调用实例方法
-Image img3(3, 100, 100, zeros<uint8>(30000)); // 相当于Image img3 = Image(3, 100, 100, zeros<uint8>(30000));
+Image img3(3, 100, 100, zeros::<uint8>(30000)); // 相当于Image img3 = Image(3, 100, 100, zeros<uint8>(30000));
 ```
 
 类似基本数据类型，我们也可以直接将类类型的数据传入函数。例如：
@@ -737,9 +797,7 @@ sq toBytes(Image img) -> (uint8[] result) {...}
 
 ### 访问修饰符
 
-**TODO: 实现访问修饰符，而不是忽略它们。**
-
-对于前述的访问修饰符public、protected和private，和其他大多数语言一样，有这样的访问类型（其中“+”表示可以访问，“-”表示不可以访问）：
+对于访问修饰符`public`、`protected`和`private`，和其他大多数语言一样，有这样的访问类型（其中“+”表示可以访问，“-”表示不可以访问）：
 
 | 访问者 | public | protected | private |
 |-----|--------|-----------|---------|
@@ -747,7 +805,7 @@ sq toBytes(Image img) -> (uint8[] result) {...}
 | 子类  | +      | +         | -       |
 | 其他类 | +      | -         | -       |
 
-这种修饰符不是强制性的。如确有必要，仍然可以访问，但是通常不推荐。
+如果试图访问不应被访问的成员，编译器会报出编译时错误。类成员（属性与方法）的默认访问级别是`protected`。
 
 ## 类继承
 
@@ -764,6 +822,115 @@ class Bear extends Mammal {...}
 ```
 
 Viola不支持多重继承。
+
+## 接口（interface）
+
+`interface`关键字声明接口。接口不能被实例化，只允许包含方法和静态属性，其中的方法都是抽象方法。接口允许多继承（用逗号分隔多个接口）。例：
+
+```viola
+interface Shape2D {
+    public static uint32 KIND = 7;
+    fn area() -> (double result);
+}
+```
+
+类使用`impl`关键字实现接口，且必须实现接口的所有抽象方法。例：
+
+```viola
+class Circle impl Shape2D {
+    public double radius;
+
+    public sq __new__(double r) -> (this) {
+        this.radius = r;
+    }
+
+    public fn area() -> (double result) {
+        result = 3.14159 * this.radius * this.radius;
+    }
+}
+```
+
+## final
+
+`final`关键字声明一个类或方法为最终的，不能被继承或重写。例：
+
+```viola
+final class FinalBox {
+    public int value;
+
+    public sq __new__(int v) -> (this) {
+        this.value = v;
+    }
+}
+
+class MyClass {
+    final fn myMethod(...) -> (...) {...}
+}
+```
+
+## static
+
+`static`关键字声明类的静态方法或静态属性。静态属性是全局唯一的，且要求有初始值。例：
+
+```viola
+class Counter {
+    static uint32 total = 0;
+
+    public static fn getTotal() -> (uint32 result) {
+        result = Counter.total;
+    }
+}
+```
+
+## unsafe与wrapper
+
+`unsafe`作为成员声明的前缀，表示非安全成员。这种变量允许自身和属性被重新赋值，但是只允许作为`wrapper`类的成员，并且需要由用户手动管理内存。涉及到对`unsafe`变量进行写操作的语句会被强制串行化。`unsafe`变量允许存在于`wrapper`方法中，但不得被返回。例：
+
+```viola
+wrapper class MyClass {
+    unsafe uint32 myProperty = 0x114514;
+}
+```
+
+`unsafe`作为类声明的前缀，表示这一类型的所有对象都是非安全的。
+
+`wrapper`作为类声明的前缀，表示非安全类的包装类。需要用户自行实现
+`sq __del__() -> ();`方法来清理内部的`unsafe`对象，并且最后需要有`del(super);`语句
+来确保普通成员也被释放。编译器会保证此方法被正常调用。基本数据类型的`unsafe`变量
+不需要手动清理。例：
+
+```viola
+wrapper class MyClass {
+    unsafe Pointer::<uint8> rawData;
+
+    public sq __new__() -> (this) {
+        // 分配rawData（通常通过C语言互操作）
+    }
+
+    public sq __del__() -> () {
+        // 释放rawData
+        del(super);
+    }
+}
+```
+
+## 丢弃变量（_）
+
+`_`用于接收被丢弃的值。此变量可以在同一作用域内被多次声明和赋值，但是不可被读取。例：
+
+```viola
+int32 x, string _ = *(0x114514, "1919810");
+```
+
+## export
+
+`export`关键字声明一个符号（类、函数等）需要导出为库，可被外部C代码链接。例：
+
+```viola
+export class MyClass {...}
+export fn myFunction(...) -> (...) {...}
+export sq mySequence(...) -> (...) {...}
+```
 
 ## 多态
 

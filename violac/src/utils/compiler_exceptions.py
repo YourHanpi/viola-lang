@@ -45,7 +45,7 @@ class CompilerException(Exception):
         self._src_info: SourceInfo = src_info
 
     def __str__(self) -> str:
-        return self._src_info.traceback + "\n" + self.__class__.__name__ + ": " + self._message
+        return "\n" + self._src_info.traceback + "\n" + self.__class__.__name__ + ": " + self._message
 
 
 class InternalCompilerException(CompilerException):

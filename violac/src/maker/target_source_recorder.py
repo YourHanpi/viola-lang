@@ -2,26 +2,40 @@
 from utils import COMPILER_PARAMS
 from utils.file_marks import MAKE_CONFIG_POSTFIX
 
+import os
+
 
 class TargetSourceRecorder:
+    """目标源码记录器，记录编译目标和编译标志，生成配置文件。"""
     _ENCODING: str = COMPILER_PARAMS["encoding"]
 
     def __init__(self, target_dir: str, output_path: str) -> None:
+        """
+        初始化TargetSourceRecorder。
+        :param target_dir: 目标目录。
+        :param output_path: 输出路径。
+        """
         self._target_dir: str = target_dir
         self._make_targets: list[tuple[str, str]] = []
         self._compile_flags: list[str] = []
-        self._output_path: str = output_path + MAKE_CONFIG_POSTFIX
+        self._output_path: str = output_path
+        self._config_path: str = os.path.join(output_path, os.path.basename(output_path) + MAKE_CONFIG_POSTFIX)
 
     def add_make(self, target_path: str) -> None:
-        self._make_targets.append((target_path, target_path + ".o"))
+        """添加一个编译目标及其对应的目标文件路径（重复目标将被忽略）。"""
+        make_target: tuple[str, str] = (target_path + ".c", target_path + ".c.o")
+        if make_target not in self._make_targets:
+            self._make_targets.append(make_target)
 
     def set_compile_flags(self, flags: list[str]) -> None:
+        """设置编译标志。"""
         self._compile_flags = flags
 
     def write(self) -> None:
+        """将编译配置写入目标目录中的配置文件。"""
         make_targets: list[str] = [f"[[object_path]]\n\"{target_path}\" = \"{object_path}\"\n" for target_path, object_path in self._make_targets]
         flags: str = "flags = [\"" + "\", \"".join(self._compile_flags) + "\"]"
         output_path: str = f"output = \"{self._output_path}\""
         lines: list[str] = [flags, "", output_path, ""] + make_targets
-        with open(self._target_dir + MAKE_CONFIG_POSTFIX, "w", encoding=self._ENCODING) as f:
-            f.writelines(lines)
+        with open(self._config_path, "w", encoding=self._ENCODING) as f:
+            f.write("\n".join(lines).replace("\\", "\\\\"))

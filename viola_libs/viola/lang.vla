@@ -1,0 +1,63 @@
+// Viola字符串类型声明。
+//
+// 命名空间：viola.lang（字符串类型的C名称为viola$lang$string）
+// 实现位于viola_libs/viola/lang/string.c（内部使用UTF-16编码）。
+// 字符串类型为编译器内置类型，此处以wrapper类提供其原生方法的Viola声明
+// （分号代替函数体）。
+
+import cpart "lang/string.h";
+
+wrapper class string {
+    // 字符串连接，等效于concat方法
+    public fn __add__(string s) -> (string result);
+    // 判断字符串是否相等
+    public fn __eq__(string s) -> (bool result);
+    // 返回字符串中第index个字符
+    public fn __getitem__(int64 index) -> (string ch);
+    // 返回字符串切片
+    public fn __getitem__(slice s) -> (string result);
+    // 字符串重复，等效于repeat方法
+    public fn __mul__(uint64 times) -> (string result);
+    // 判断字符串是否不相等
+    public fn __ne__(string s) -> (bool result);
+    // 字符串重复，等效于repeat方法
+    public fn __rmul__(uint64 times) -> (string result);
+    // 字符串连接
+    public fn concat(string s) -> (string result);
+    // 判断字符串是否以参数s结尾
+    public fn endswith(string s) -> (bool result);
+    // 判断字符串是否以参数s结尾
+    public fn endsWith(string s) -> (bool result);
+    // 判断字符串是否为ASCII字符串
+    public fn isascii() -> (bool result);
+    // 使用分隔符连接字符串
+    public fn join(string[] s) -> (string result);
+    // 获取字符串长度
+    public fn length() -> (size_t result);
+    // 返回字符串小写
+    public fn lower() -> (string result);
+    // 替换字符串中的子串
+    public fn replace(string old, string new) -> (string result);
+    // 字符串重复
+    public fn repeat(uint64 times) -> (string result);
+    // 从右按分隔符分割字符串
+    public fn rsplit(string s) -> (string[] results);
+    // 从右按分隔符分割字符串（最多maxsplit次）
+    public fn rsplit(string s, uint64 maxsplit) -> (string[] results);
+    // 返回字符串切片（start与end为负数时从末尾计数）
+    public fn slice(int64 start, int64 end) -> (string result);
+    // 按分隔符分割字符串
+    public fn split(string s) -> (string[] results);
+    // 按分隔符分割字符串（最多maxsplit次）
+    public fn split(string s, uint64 maxsplit) -> (string[] results);
+    // 判断字符串是否以参数s开头
+    public fn startswith(string s) -> (bool result);
+    // 判断字符串是否以参数s开头
+    public fn startsWith(string s) -> (bool result);
+    // 返回字符串的Unicode编码数组
+    public fn unicode() -> (uint16[] result);
+    // 返回字符串大写
+    public fn upper() -> (string result);
+    // 释放字符串数据
+    public sq __del__() -> ();
+}
