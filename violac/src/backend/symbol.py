@@ -2121,6 +2121,13 @@ class MethodName(PropertyVariableName):
         return self._is_abstract
 
     @property
+    def is_native(self) -> bool:
+        """
+        获取该方法是否为运行库提供的原生方法。
+        """
+        return self._function_name.is_native
+
+    @property
     def is_final(self) -> bool:
         """
         获取该方法是否为最终方法（不可重写）。
@@ -2168,7 +2175,8 @@ class MethodName(PropertyVariableName):
                           ),
                           self._is_abstract, self._is_static,
                           self._function_name.arg_names if self._is_static else self._function_name.arg_names[1:],
-                          self._function_name.ret_names, self._modifier, self._function_name.export, False,
+                          self._function_name.ret_names, self._modifier, self._function_name.export,
+                          self._function_name.is_native,
                           self._is_final)
 
     def set_default_params(self, default_param_names: list[str]) -> None:
@@ -2244,13 +2252,14 @@ StringTypeName.add_method(
         ["data"],
         ["this"],
         Modifier.PUBLIC,
+        True,
         True
     )
 )
 StringTypeName.add_method(
     "__del__", MethodName(
         VIOLA_INIT, StringTypeName, "__del__", FunctionTypeName(VIOLA_INIT, [], []), False,
-        False, [], [], Modifier.PRIVATE, True
+        False, [], [], Modifier.PRIVATE, True, True
     )
 )
 
@@ -2303,7 +2312,7 @@ _add_native_method(StringTypeName, "upper", [], [StringTypeName], [], ["result"]
 SliceTypeName.add_method(
     "__del__", MethodName(
         VIOLA_INIT, SliceTypeName, "__del__", FunctionTypeName(VIOLA_INIT, [], []), False,
-        False, [], [], Modifier.PRIVATE, True
+        False, [], [], Modifier.PRIVATE, True, True
     )
 )
 
@@ -2327,6 +2336,7 @@ ExceptionTypeName.add_method(
         ["message"],
         ["this"],
         Modifier.PUBLIC,
+        True,
         True
     )
 )
@@ -2342,6 +2352,7 @@ _exception_what = MethodName(
     [],
     ["result"],
     Modifier.PUBLIC,
+    True,
     True
 )
 ExceptionTypeName.add_method(
@@ -2351,7 +2362,7 @@ ExceptionTypeName.add_method(
 ExceptionTypeName.add_method(
     "__del__", MethodName(
         VIOLA_INIT, ExceptionTypeName, "__del__", FunctionTypeName(VIOLA_INIT, [], []), False,
-        False, [], [], Modifier.PRIVATE, True
+        False, [], [], Modifier.PRIVATE, True, True
     )
 )
 # 内置泛型指针类型（unsafe Pointer::<T>），C层表示为void *
@@ -2364,15 +2375,17 @@ _perror = FunctionName(
     FunctionTypeName(VIOLA_INIT, [StringTypeName], []),
     ["text"],
     [],
+    True,
+    False,
     True
 )
 _print = FunctionName(
     VIOLA_INIT, VIOLA_IO, "print", FunctionTypeName(VIOLA_INIT, [StringTypeName], []),
-    ["text"], [], True
+    ["text"], [], True, False, True
 )
 _input = FunctionName(
     VIOLA_INIT, VIOLA_IO, "input", FunctionTypeName(VIOLA_INIT, [], [StringTypeName]),
-    [], ["result"], True
+    [], ["result"], True, False, True
 )
 
 # 文件类型与文件操作（0.1运行库，实现于viola_libs/viola/io/file.c）
@@ -2380,13 +2393,13 @@ FileTypeName = ClassName(VIOLA_INIT, VIOLA_IO, "file", None, False, False)
 FileTypeName.add_method(
     "__del__", MethodName(
         VIOLA_INIT, FileTypeName, "__del__", FunctionTypeName(VIOLA_INIT, [], []), False,
-        False, [], [], Modifier.PRIVATE, True
+        False, [], [], Modifier.PRIVATE, True, True
     )
 )
 _open = FunctionName(
     VIOLA_INIT, VIOLA_IO, "open",
     FunctionTypeName(VIOLA_INIT, [StringTypeName, StringTypeName, StringTypeName], [FileTypeName]),
-    ["path", "mode", "encoding"], ["f"], True
+    ["path", "mode", "encoding"], ["f"], True, False, True
 )
 # open的默认参数：mode = "r"，encoding = "utf-8"。
 # 原生函数的默认参数全局变量由运行库viola_libs/viola/io/file.c定义
@@ -2394,22 +2407,22 @@ _open.set_default_params(["mode", "encoding"])
 _read = FunctionName(
     VIOLA_INIT, VIOLA_IO, "read",
     FunctionTypeName(VIOLA_INIT, [FileTypeName], [StringTypeName]),
-    ["f"], ["result"], True
+    ["f"], ["result"], True, False, True
 )
 _read_bytes = FunctionName(
     VIOLA_INIT, VIOLA_IO, "readBytes",
     FunctionTypeName(VIOLA_INIT, [FileTypeName], [ArrayTypeName(VIOLA_INIT, UINT8)]),
-    ["f"], ["result"], True
+    ["f"], ["result"], True, False, True
 )
 _write = FunctionName(
     VIOLA_INIT, VIOLA_IO, "write",
     FunctionTypeName(VIOLA_INIT, [FileTypeName, StringTypeName], []),
-    ["f", "content"], [], True
+    ["f", "content"], [], True, False, True
 )
 _write_bytes = FunctionName(
     VIOLA_INIT, VIOLA_IO, "writeBytes",
     FunctionTypeName(VIOLA_INIT, [FileTypeName, ArrayTypeName(VIOLA_INIT, UINT8)], []),
-    ["f", "content"], [], True
+    ["f", "content"], [], True, False, True
 )
 
 
@@ -2836,6 +2849,34 @@ class SymbolTable:
     def current_cls(self, cls: Optional[ClassName]) -> None:
         self._current_cls = cls
 
+    def is_native_class(self, cls_name: str) -> bool:
+        """
+        判断类是否为原生绑定类（wrapper声明绑定到编译器内置类，实现由运行库提供）。
+        :param cls_name: 类名。
+        :return: 是否为原生绑定类。
+        """
+        return cls_name in self._native_class_names
+
+    @staticmethod
+    def _prefer_exact_arity(methods: list["MethodName"], types: tuple[TypeName, ...]) -> list["MethodName"]:
+        """
+        在重载方法中优先保留参数个数与实参完全一致的方法（前缀匹配仅在
+        无法精确匹配时使用，用于支持带默认值参数的调用）。
+        """
+        exact = list(filter(
+            lambda m: (len(m.type.args) - (0 if m.is_static else 1)) == len(types), methods))
+        return exact if len(exact) > 0 else methods
+
+    @staticmethod
+    def _type_lookup_name(t: TypeName) -> str:
+        """
+        获取类型在符号表中可解析的名称（数组类型使用元素类型+[]，
+        因为数组的C名称形如viola$lang$string$$array无法按名称解析）。
+        """
+        if isinstance(t, ArrayTypeName):
+            return SymbolTable._type_lookup_name(t.element_type) + "[]"
+        return t.raw_name
+
     @classmethod
     def tuple_type_defs(cls) -> list[str]:
         """获取所有已注册元组类型的typedef文本（惰性生成）。"""
@@ -3079,10 +3120,15 @@ class SymbolTable:
             names = item.rsplit(".", 1)
             attr_name = names[1]
             cls_name = names[0]
-            result = self.find_methods(cls_name, attr_name, [cls_name] + [t.name for t in types], {})
+            result = self.find_methods(cls_name, attr_name, [cls_name] + [
+                SymbolTable._type_lookup_name(t) for t in types], {})
             if len(result) == 1:
                 return result[0]
             elif len(result) > 1:
+                # 重载方法优先按参数个数精确匹配（如rsplit(string)与rsplit(string, uint64)）
+                result = SymbolTable._prefer_exact_arity(result, types)
+                if len(result) == 1:
+                    return result[0]
                 # 子类重写的方法优先于继承的抽象方法；自身定义的方法优先于继承的方法
                 concrete = list(filter(lambda m: not m.is_abstract, result))
                 if len(concrete) == 1:
@@ -3092,10 +3138,15 @@ class SymbolTable:
                     if len(own) == 1:
                         return own[0]
                 raise CompilerException(f"Ambiguous method call: {cls_name}.{attr_name}({', '.join(t.raw_name for t in types)})", self._src_info)
-            result = self.find_methods(cls_name, attr_name, [t.name for t in types], {})
+            result = self.find_methods(cls_name, attr_name, [
+                SymbolTable._type_lookup_name(t) for t in types], {})
             if len(result) == 1:
                 return result[0]
             elif len(result) > 1:
+                # 重载方法优先按参数个数精确匹配
+                result = SymbolTable._prefer_exact_arity(result, types)
+                if len(result) == 1:
+                    return result[0]
                 concrete = list(filter(lambda m: not m.is_abstract, result))
                 if len(concrete) == 1:
                     return concrete[0]
@@ -3138,6 +3189,8 @@ class SymbolTable:
         """
         self._symbols: list[dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]] = [{}]
         self._func_overload_times: dict[str, int] = {}
+        # 原生绑定类：wrapper类声明绑定到编译器内置类（实现由运行库提供，不生成C代码）
+        self._native_class_names: set[str] = set()
         self._current_cls: Optional[ClassName] = None
         if not src_path == "" and not workspace == "":
             # 元数据中的路径为缓存路径（含__viola_cache__与..段），
@@ -3231,20 +3284,20 @@ class SymbolTable:
             func = FunctionName(VIOLA_INIT, [NamespaceName("viola"), NamespaceName("math")], name,
                                 FunctionTypeName(VIOLA_INIT, args, rets),
                                 [f"arg{i}" for i in range(len(args))],
-                                [f"ret{i}" for i in range(len(rets))], True)
+                                [f"ret{i}" for i in range(len(rets))], True, False, True)
             self.add(func, func.self_name, args)
         for name, args, rets in SymbolTable._OS_BINDINGS:
             func = FunctionName(VIOLA_INIT, [NamespaceName("viola"), NamespaceName("os")], name,
                                 FunctionTypeName(VIOLA_INIT, args, rets),
                                 [f"arg{i}" for i in range(len(args))],
-                                [f"ret{i}" for i in range(len(rets))], True)
+                                [f"ret{i}" for i in range(len(rets))], True, False, True)
             self.add(func, func.self_name, args)
         # viola.threads 的Viola接口
         for name, args, rets in SymbolTable._THREADS_BINDINGS:
             func = FunctionName(VIOLA_INIT, [NamespaceName("viola"), NamespaceName("threads")], name,
                                 FunctionTypeName(VIOLA_INIT, args, rets),
                                 [f"arg{i}" for i in range(len(args))],
-                                [f"ret{i}" for i in range(len(rets))], True)
+                                [f"ret{i}" for i in range(len(rets))], True, False, True)
             self.add(func, func.self_name, args)
 
     def add(self, symbol: NamedSymbol, name: str, types: Optional[list[TypeName]]) -> None:
@@ -3605,7 +3658,9 @@ class SymbolTable:
         ```
         """
         item_name: str = item[0].split(" ")[0]
-        export: bool = "export" in item[0].split(" ")[1:]
+        name_parts: list[str] = item[0].split(" ")[1:]
+        export: bool = "export" in name_parts
+        is_native: bool = "native" in name_parts
         if "%" in item[1]:
             generic_args: list[str] = []
             item_args: list[str] = item[1].split("%")
@@ -3620,12 +3675,21 @@ class SymbolTable:
         generic_arg_objs: list[GenericArgument] = [GenericArgument(self._src_info, g) for g in generic_args if g != ""]
         for arg in generic_arg_objs:
             self.add(arg, arg.name, None)
+        existing_native: Optional[FunctionName] = None
         try:
             # noinspection PyTypeChecker
             args = list(map(lambda arg: self[arg, None], item_args[::2])) if len(item_args) > 1 else []
             if any(map(lambda arg: not isinstance(arg, TypeName), args)):
                 raise CompilerException("Function arguments must be types.", self._src_info)
-            if (item_name, tuple(args)) in self:
+            existing = self.symbols.get((item_name, tuple(args)))
+            if existing is not None:
+                if is_native and isinstance(existing, FunctionName) and existing.is_native:
+                    # 原生声明与编译器内置绑定一致时复用内置声明（保持运行库C名称）
+                    existing_native = existing
+                else:
+                    raise CompilerException(f"Function {item_name} already exists.", self._src_info)
+            elif not is_native and (item_name, tuple(args)) in self:
+                # 非原生定义不允许与其他符号（含命名空间清理后的模糊匹配）冲突
                 raise CompilerException(f"Function {item_name} already exists.", self._src_info)
             args: list[TypeName]
             # noinspection PyTypeChecker
@@ -3635,6 +3699,11 @@ class SymbolTable:
         finally:
             for arg in generic_arg_objs:
                 self.remove(arg.name)
+        if existing_native is not None:
+            if list(existing_native.type.returns) != returns:
+                raise CompilerException(
+                    f"Native function {item_name} does not match the builtin binding.", self._src_info)
+            return
         func_type = FunctionTypeName(self._src_info, args, returns, generic_args)
         if item_name not in self._func_overload_times:
             self._func_overload_times[item_name] = 0
@@ -3642,10 +3711,16 @@ class SymbolTable:
         if len(func_namespace) == 0:
             # 未限定的函数名使用本模块的命名空间
             func_namespace = self._namespace
-        func = FunctionName(self._src_info, func_namespace,
-                            f"{func_self_name}$_{self._func_overload_times[item_name]}", func_type,
-                            item_args[1::2] if len(item_args) > 1 else [],
-                            item_returns[1::2] if len(item_returns) > 1 else [], export)
+        if is_native:
+            # 原生函数不使用重载序号（C名称与运行库一致，如viola$math$sqrt）
+            func = FunctionName(self._src_info, func_namespace, func_self_name, func_type,
+                                item_args[1::2] if len(item_args) > 1 else [],
+                                item_returns[1::2] if len(item_returns) > 1 else [], export, False, True)
+        else:
+            func = FunctionName(self._src_info, func_namespace,
+                                f"{func_self_name}$_{self._func_overload_times[item_name]}", func_type,
+                                item_args[1::2] if len(item_args) > 1 else [],
+                                item_returns[1::2] if len(item_returns) > 1 else [], export)
         self._func_overload_times[item_name] += 1
         if self._func_overload_times[item_name] == 1:
             self.add(func, item_name, None)
@@ -3698,6 +3773,8 @@ class SymbolTable:
         for arg in generic_arg_obj_cls:
             self.add(arg, arg.name, None)
         is_abstract: bool = "abstract" in item_name[2:] or cls.is_interface
+        # 接口/抽象类的无体方法按抽象方法处理（abstract优先于native）
+        is_native: bool = "native" in item_name[2:] and not is_abstract
         is_static: bool = "static" in item_name[2:] or method_name.endswith(".__new__") or method_name == "__new__"
         export: bool = "export" in item_name[2:]
         is_final: bool = "final" in item_name[2:]
@@ -3722,12 +3799,23 @@ class SymbolTable:
         returns: list[TypeName]
         func_type = FunctionTypeName(self._src_info, args, returns, generic_args)
         modifier = self.__get_modifier(item_name[2:])
+        if is_native:
+            # 原生方法与类上已有的同名原生方法一致时复用（保持其C名称中的重载序号，
+            # 如viola$lang$string$length$_0）
+            lookup_args: tuple[TypeName, ...] = tuple([cls] + args) if not is_static else tuple(args)
+            if (method_name, lookup_args) in cls.methods:
+                existing = cls.methods[method_name, lookup_args]
+                if existing.is_native:
+                    self.add(existing, f"{self.clean_namespace(cls.raw_name)}.{method_name}", args)
+                    for arg in generic_arg_obj_cls:
+                        self.remove(arg.name)
+                    return
         if f"{cls.name}.{method_name}" not in self._func_overload_times:
             self._func_overload_times[f"{cls.name}.{method_name}"] = 0
         method = MethodName(
             self._src_info, cls, f"{method_name}$_{self._func_overload_times[f'{cls.name}.{method_name}']}",
             func_type, is_abstract, is_static, item_args[1::2] if len(item_args) > 1 else [],
-            item_returns[1::2] if len(item_returns) > 1 else [], modifier, export, False, is_final
+            item_returns[1::2] if len(item_returns) > 1 else [], modifier, export, is_native, is_final
         )
         self._func_overload_times[f"{cls.name}.{method_name}"] += 1
         method.set_default_params(item_default_args)
@@ -3751,6 +3839,12 @@ class SymbolTable:
         """
         cls_name: str = item[0].split(" ")[0].split("%")[0]
         if (cls_name, None) in self:
+            existing_cls = self[cls_name, None]
+            if "wrapper" in item[0].split(" ")[1:] and isinstance(existing_cls, ClassName):
+                # wrapper类声明与编译器内置类同名：绑定到内置类，实现由运行库提供。
+                # 类体中的属性与父类信息以内置类为准，故跳过类体解析。
+                self._native_class_names.add(cls_name)
+                return
             raise CompilerException(f"Class {cls_name} already exists.", self._src_info)
         cls_namespace, cls_self_name = SymbolTable._split_qualified_name(cls_name)
         if len(cls_namespace) == 0:
@@ -3833,6 +3927,14 @@ class SymbolTable:
                 if name not in cls.properties:
                     cls.add_property_object(name, prop)
         cls_key_name = cls.self_name if cls.raw_name.startswith(self._namespace_without_import) else cls.raw_name
+        if (cls_key_name, None) in self:
+            existing_cls = self[cls_key_name, None]
+            if isinstance(existing_cls, ClassName) and existing_cls.name == cls.name:
+                # 导入条目与已有类C名称一致（如viola.lang.string与编译器内置string）：
+                # 仅按限定名注册，保留已有类的裸名注册
+                cls_key_name = cls.raw_name
+            else:
+                raise CompilerException(f"Class {cls_key_name} already exists.", self._src_info)
         if not cls.is_c_part and not cls.is_wrapper:
             # 普通类自动注册析构方法；wrapper类由用户实现__del__（并用del(super)释放普通成员）
             del_method = MethodName(

@@ -1,0 +1,16 @@
+// Viola线程调度系统声明。
+//
+// 命名空间：viola.threads
+// 实现位于viola_libs/viola/threads.c。
+// 本文件仅为C实现的函数提供Viola声明（分号代替函数体）。
+
+import cpart "threads.h";
+
+// 添加指定数量的线程
+sq addThread(uint32 num) -> ();
+// 删除指定数量的线程
+sq delThread(uint32 num) -> ();
+// 获取当前线程数量
+fn getThreadsNum() -> (uint32 result);
+// 设置线程数量
+sq setThreadsNum(uint32 num) -> ();

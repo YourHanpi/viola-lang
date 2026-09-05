@@ -222,6 +222,7 @@ class SqDef(Definition):
             raise CompilerException(f"Name {name} is not a function.", src_info)
         self._self_name: str = decl.self_name
         self._decl = decl if isinstance(decl, FunctionName) else decl.as_function()
+        self._is_native: bool = self._decl.is_native
         self._var_states: VariableStateTable = var_states
         self._outer_variables: dict[VariableName, VariableState] = var_states.state
         self._args: list[LocalVariableName] = list(
@@ -265,12 +266,14 @@ class SqDef(Definition):
         """完成函数定义，生成异步函数体。"""
         if self._is_finished:
             raise CompilerException("Function is already finished.", self._src_info)
-        if list(self._default_params.keys()) != list(self._decl.default_params.keys()):
+        if not self._is_native and \
+                list(self._default_params.keys()) != list(self._decl.default_params.keys()):
             raise InternalCompilerException("Some default parameters has not been set.", self._src_info)
         self._check_return_stmts()
         self._var_states.add_scope()
-        if self._method_decl is not None and self._method_decl.cls is not None and \
-                self._method_decl.cls.is_generic:
+        if self._is_native or (self._method_decl is not None and self._method_decl.cls is not None and
+                               self._method_decl.cls.is_generic):
+            # 原生函数的实现由运行库提供，不生成同步函数体与异步包装体；
             # 泛型类的方法：泛型参数未实例化，异步包装体推迟到实例化时构建
             self._async_body = None
         else:
@@ -313,12 +316,12 @@ class SqDef(Definition):
     def global_init_text(self) -> Optional[str]:
         """获取函数的全局初始化代码文本。"""
         if self._async_body is None:
-            # 泛型类方法的异步包装体推迟到实例化时构建
+            # 原生函数或泛型类方法：不生成异步包装体的初始化文本
             results = list(filter(lambda x: x is not None, [self._body.global_init_text]))
         else:
             results = list(filter(lambda x: x is not None, [self._body.global_init_text, self._async_body.global_init_text]))
-        # 默认参数的初始化赋值
-        default_init: str = self._get_default_params_init()
+        # 默认参数的初始化赋值（原生函数的默认值由运行库定义）
+        default_init: str = "" if self._is_native else self._get_default_params_init()
         if default_init.strip() != "":
             results.append(default_init)
         return "\n".join(results)
@@ -349,10 +352,14 @@ class SqDef(Definition):
     def header_no_wrap(self) -> str:
         """获取函数在头文件中未经包装的声明文本（不含条件编译）。"""
         self._decl: FunctionName
-        text: list[str] = [
-            self._decl.as_declare() + ";",
-            self._decl.as_async().as_declare() + ";"
-        ]
+        if self._is_native:
+            # 原生函数只输出同步声明（运行库未提供异步变体）
+            text: list[str] = [self._decl.as_declare() + ";"]
+        else:
+            text: list[str] = [
+                self._decl.as_declare() + ";",
+                self._decl.as_async().as_declare() + ";"
+            ]
         # 默认参数全局变量的外部声明（其他模块调用默认参数时引用）
         text += [f"extern {v.type_name_pair_calling};" for v in self._decl.default_params.values()]
         return "\n".join(text)
@@ -433,7 +440,9 @@ class SqDef(Definition):
     def outer_text(self) -> Optional[str]:
         """获取函数的外层代码文本。"""
         async_outer: Optional[str] = self._async_body.outer_text if self._async_body is not None else None
-        results = list(filter(lambda x: x is not None, [self._body.outer_text, async_outer, self._get_default_params_decl()]))
+        # 原生函数的默认参数全局变量由运行库定义，不生成声明
+        default_decl: str = "" if self._is_native else self._get_default_params_decl()
+        results = list(filter(lambda x: x is not None, [self._body.outer_text, async_outer, default_decl]))
         return "\n".join(results)
 
     @property
@@ -495,6 +504,9 @@ class SqDef(Definition):
     def _source(self, is_native_func: bool) -> str:
         """生成函数的 C 源代码文本。"""
         self._decl: FunctionName
+        if self._is_native:
+            # 原生函数：实现由运行库提供，不生成函数体
+            return f"// native function {self._decl.raw_name}"
         if is_native_func:
             define_name: str = self._decl.as_define_name()
         else:
@@ -896,6 +908,7 @@ class ClassDef(Definition):
         self._decl: ClassName = self._symbol_table[name, None]
         if not isinstance(self._decl, ClassName):
             raise CompilerException(f"{name} is not a class.", src_info)
+        self._is_native: bool = self._symbol_table.is_native_class(name)
         self._global_vars: dict[VariableName, VariableState] = var_states.state
         self._this_var: VariableName = LocalVariableName(self._src_info, "_this", self._decl)
         self._methods: dict[str, SqDef] = {}
@@ -905,8 +918,9 @@ class ClassDef(Definition):
         self._import_all: str = module_name + "$__all__"
         self._import_module: str = module_name + "$__module__"
         # wrapper类必须由用户实现__del__（export=False的__del__为用户定义；
-        # 编译器自动注册的析构标记为export=True）
-        if self._decl.is_wrapper:
+        # 编译器自动注册的析构标记为export=True）。原生绑定类由运行库实现析构，
+        # 无需检查。
+        if self._decl.is_wrapper and not self._is_native:
             has_user_del: bool = any(
                 m_name == "__del__" and not m.export
                 for (m_name, _), m in self._decl.methods.items()
@@ -929,9 +943,12 @@ class ClassDef(Definition):
                             f"{interface.raw_name}.{m_name}().", self._src_info)
         # 为每个类自动生成默认析构函数（释放动态属性并回收内存）。
         # c语言部分（cpart类）除外，其析构由用户通过cpart实现；
-        # wrapper类由用户实现__del__，编译器生成__del__super供del(super)调用。
+        # wrapper类由用户实现__del__，编译器生成__del__super供del(super)调用；
+        # 原生绑定类的类型结构体与析构均由运行库提供，不生成任何C代码。
         self._del_super_body: Optional[str] = None
-        if self._decl.is_wrapper:
+        if self._is_native:
+            pass
+        elif self._decl.is_wrapper:
             del_super_def = DestructorDef(self._src_info, self._symbol_table, var_states, self._namespace, name)
             del_super_def.finish()
             self._del_super_body = del_super_def._body.text
@@ -940,7 +957,9 @@ class ClassDef(Definition):
             destructor.finish()
             self.add_method(destructor)
         self._vtable_name: str = self._decl.vtable_name
-        self._parent_vtable_name: str = f"{self._decl.parent.name}$$vtable" if self._decl.parent != Object else "NULL"
+        # 内置类（如string）的parent为None，与object同样没有父虚函数表
+        self._parent_vtable_name: str = f"{self._decl.parent.name}$$vtable" \
+            if self._decl.parent is not None and self._decl.parent != Object else "NULL"
         self._is_finished: bool = False
         self._is_from_generic: bool = False
         # noinspection PyTypeChecker
@@ -977,6 +996,9 @@ class ClassDef(Definition):
     @property
     def global_init_text(self) -> str:
         """获取类的全局初始化代码文本（虚函数表和静态属性）。"""
+        if self._is_native:
+            # 原生绑定类：虚函数表与静态属性由运行库定义
+            return ""
         # 0.1：虚函数表仅提供类型链信息（convertibleTo），不进行虚方法分发
         vfunc_text: str = "NULL"
         vfunc_assign: list[str] = []
@@ -1013,6 +1035,9 @@ class ClassDef(Definition):
     def header(self) -> str:
         """获取类在头文件中的声明文本。"""
         self._decl: ClassName
+        if self._is_native:
+            # 原生绑定类：结构体定义由运行库头文件提供，仅输出方法声明
+            return "\n".join(list(map(lambda x: x.header_no_wrap, self._methods.values())))
         if self._is_from_generic:
             # 泛型实例化类：直接输出结构体定义与方法声明（其C类型名由实例化产生，
             # 无需导入守卫）
@@ -1040,6 +1065,9 @@ class ClassDef(Definition):
     def header_no_wrap(self) -> str:
         """获取类未经包装的头文件声明（结构体定义与方法声明）。"""
         self._decl: ClassName
+        if self._is_native:
+            # 原生绑定类：结构体定义由运行库头文件提供，仅输出方法声明
+            return "\n".join(list(map(lambda x: x.header_no_wrap, self._methods.values())))
         class_info_text: str = f"extern {TYPE_INFO_T} {self._vtable_name};"
         # noinspection PyUnresolvedReferences
         properties_text: str = "\n".join(
@@ -1117,6 +1145,9 @@ class ClassDef(Definition):
     @property
     def outer_text(self) -> Optional[str]:
         """获取类的外层代码文本（虚函数表定义、方法和静态属性的外层声明）。"""
+        if self._is_native:
+            # 原生绑定类：虚函数表等全局定义由运行库提供
+            return None
         # 类的TypeInfo全局变量定义（在__global__中初始化$parent与vfunc）
         vtable_def: str = f"{TYPE_INFO_T} {self._vtable_name} = {{NULL, NULL}};"
         static_props_def: str = "\n".join(map(
@@ -1131,6 +1162,9 @@ class ClassDef(Definition):
     @property
     def source(self) -> str:
         """获取类的源代码文本。"""
+        if self._is_native:
+            # 原生绑定类：实现由运行库提供，不生成任何C代码
+            return f"// native class {self._decl.raw_name}"
         methods_def: list[str] = list(map(lambda x: x.source, self._methods.values()))
         rename_define: str = f"#define {self._decl.self_name} {self._decl.name}"
         if self._del_super_body is not None:

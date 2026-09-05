@@ -1303,8 +1303,10 @@ class GlobalParser:
         else:
             return None
         if self._match_type("SEMICOLON"):
-            # 仅声明不定义（抽象方法）
+            # 仅声明不定义（原生函数/方法原型，实现由运行库提供；
+            # 接口内的无体方法仍按抽象方法处理，见_read_method_decl）
             self._next()
+            symbol[1] += " native"
             command.append("CALL FINISH")
             symbol.append("---")
             return command, symbol
