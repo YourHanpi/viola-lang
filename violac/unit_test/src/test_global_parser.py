@@ -565,13 +565,16 @@ class TestGlobalParserParseFromFile(unittest.TestCase):
         self.assertIsNone(result)
         self.assertGreater(len(self.parser._tasks), 0)
 
+    @patch("os.path.getmtime")
     @patch("os.path.exists")
     @patch("frontend.global_parser.GlobalParser._set_file_lock")
     @patch("frontend.global_parser.GlobalParser._remove_file_lock")
     @patch("frontend.utils.TokenStreamIO.read")
-    def test_parse_from_file_with_tokens(self, mock_read, mock_remove, mock_set, mock_exists):
+    def test_parse_from_file_with_tokens(self, mock_read, mock_remove, mock_set, mock_exists, mock_getmtime):
         """When token file exists, should parse it."""
         mock_exists.return_value = True
+        # 源文件比符号表更新，重新解析
+        mock_getmtime.side_effect = [200, 100]
         mock_read.return_value = []  # empty tokens
 
         result = self.parser.parse_from_file("./test/cache/file")
@@ -585,14 +588,19 @@ class TestGlobalParserParseToFile(unittest.TestCase):
     def setUp(self):
         self.parser = GlobalParser("./test/workspace")
 
+    @patch("os.path.getmtime")
+    @patch("frontend.utils.ParsingResult.write")
     @patch("os.path.exists")
     @patch("os.makedirs")
     @patch("frontend.global_parser.GlobalParser._set_file_lock")
     @patch("frontend.global_parser.GlobalParser._remove_file_lock")
     @patch("frontend.utils.TokenStreamIO.read")
-    def test_parse_to_file_success(self, mock_read, mock_remove, mock_set, mock_makedirs, mock_exists):
+    def test_parse_to_file_success(self, mock_read, mock_remove, mock_set, mock_makedirs, mock_exists, mock_write,
+                                   mock_getmtime):
         """Should return SUCCESS when parsing succeeds."""
         mock_exists.return_value = True
+        # 源文件比符号表更新，重新解析
+        mock_getmtime.side_effect = [200, 100]
         mock_read.return_value = []
 
         result = self.parser.parse_to_file("./test/src/file.vla", thread_index=1)

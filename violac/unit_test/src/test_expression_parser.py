@@ -542,13 +542,19 @@ class TestParseExprToFile(unittest.TestCase):
     def setUp(self):
         self.parser = ExprParser("/test/workspace")
 
+    @patch("frontend.expression_parser.ExprParser._remove_file_lock")
+    @patch("frontend.expression_parser.ExprParser._set_file_lock")
+    @patch("os.path.getmtime")
     @patch("os.path.exists")
     @patch("os.makedirs")
     @patch("builtins.open", new_callable=mock_open)
     @patch("frontend.utils.ParsingResult.read")
-    def test_parse_expr_to_file_success(self, mock_read, mock_file, mock_makedirs, mock_exists):
+    def test_parse_expr_to_file_success(self, mock_read, mock_file, mock_makedirs, mock_exists, mock_getmtime,
+                                        mock_set_lock, mock_remove_lock):
         """Should return SUCCESS when parsing succeeds."""
         mock_exists.return_value = True
+        # 缓存文件比全局命令文件更新，直接复用已有结果
+        mock_getmtime.side_effect = [200, 100]
         mock_read.return_value = ParsingResult(
             command=["MAKE STMT OP", "CALL FINISH"],
             symbol=[],

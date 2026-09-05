@@ -75,7 +75,8 @@ class CompilerVM:
             "UNPACK": lambda cmd: self.__make(expression.UnpackExpr(self._src_info, self._symbol_table)),
             "VARIABLE_REF": lambda cmd: self.__make_variable_ref(cmd),
             "STRING_LITERAL": lambda cmd: self.__make(
-                expression.StringLiteral(self._src_info, self._symbol_table, " ".join(cmd))),
+                expression.StringLiteral(self._src_info, self._symbol_table,
+                                         " ".join(cmd).replace("\s", " "))),
             "BOOL_LITERAL": lambda cmd: self.__make(expression.BoolLiteral(self._src_info, self._symbol_table, cmd[0])),
             "INTEGER_LITERAL": lambda cmd: self.__make(
                 expression.IntegerLiteral(self._src_info, self._symbol_table, cmd[0], cmd[1])),
@@ -106,6 +107,7 @@ class CompilerVM:
             "BIT_XOR_OP": lambda cmd: self.__make(expression.BitXorOp(self._src_info, self._symbol_table)),
             "BIT_NOT_OP": lambda cmd: self.__make(expression.BitNotOp(self._src_info, self._symbol_table)),
             "EQ_OP": lambda cmd: self.__make(expression.EqualOp(self._src_info, self._symbol_table)),
+            "NE_OP": lambda cmd: self.__make(expression.NotEqualOp(self._src_info, self._symbol_table)),
             "NEQ_OP": lambda cmd: self.__make(expression.NotEqualOp(self._src_info, self._symbol_table)),
             "LT_OP": lambda cmd: self.__make(expression.LessThanOp(self._src_info, self._symbol_table)),
             "LE_OP": lambda cmd: self.__make(expression.LessThanOrEqualOp(self._src_info, self._symbol_table)),
@@ -135,6 +137,9 @@ class CompilerVM:
             "OP": lambda cmd: self.__make(statement.OpStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "RETURN": lambda cmd: self.__make(
                 statement.ReturnStmt(self._src_info, self._symbol_table, self._var_state_table)),
+            "DEL_SUPER": lambda cmd: self.__make(
+                statement.DelSuperStmt(self._src_info, self._symbol_table, self._var_state_table,
+                                       self._current_class)),
             "THROW": lambda cmd: self.__make(
                 statement.ThrowStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "C": lambda cmd: self.__make(statement.CStmt(self._src_info, self._symbol_table, self._var_state_table)),
@@ -209,6 +214,21 @@ class CompilerVM:
         src_path = os.path.abspath(src_path)
         src_relpath = os.path.relpath(src_path, self._workspace)
         cache_path = os.path.join(self._workspace, CACHE_DIR, src_relpath)
+        if src_relpath.startswith(".."):
+            # 工作区之外的模块（如运行库viola_libs）：输出到输出目录下
+            # 相对VIOLA_HOME的路径（如viola/util/control_flow.vla.h）
+            if "VIOLA_HOME" in os.environ:
+                for lib_root in os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":"):
+                    lib_root = lib_root.strip()
+                    if lib_root == "":
+                        continue
+                    try:
+                        rel_in_lib: str = os.path.relpath(src_path, lib_root)
+                    except ValueError:
+                        continue
+                    if not rel_in_lib.startswith(".."):
+                        src_relpath = rel_in_lib
+                        break
         output_path = os.path.join(self._output_path, src_relpath)
         if not os.path.exists(src_path):
             self._logger.error(f"Source file not found: {src_path}")
@@ -465,7 +485,11 @@ class CompilerVM:
         # noinspection PyUnresolvedReferences
         instance = self._stack[-1].instance
         self.__pop()
-        self.__make(instance)
+        # 实例化后的表达式压栈替换泛型调用（含执行模式与作用域计数）
+        self._stack.append(instance)
+        self._stack[-1].bind_parent(self._stack[-2])
+        self._exec_mode_stack.append(self._exec_mode_stack[-1])
+        self._scope_count_stack.append(_ScopeCount.HOLD)
 
     def __call_set_attr(self, cmd: list[str]) -> None:
         """设置属性表达式的属性名。"""
@@ -695,6 +719,7 @@ class CompilerVM:
         self._scope_count_stack.append(_ScopeCount.INC)
         result = definition.ClassDef(self._src_info, self._symbol_table, self._symbol_table.namespace, cmd[0], self._var_state_table)
         self._current_class = result.decl
+        self._symbol_table.current_cls = result.decl
         return result
 
     def __make_def_constructor(self, cmd: list[str]) -> definition.ConstructorDef:
@@ -767,6 +792,15 @@ class CompilerVM:
             try:
                 var_type = self._symbol_table[var_name, None]
             except CompilerException:
+                if var_name == "__new__" and self._current_class is not None and "__new__" in map(
+                        lambda x: x[0], self._current_class.methods.keys()):
+                    # 构造函数调用：解析到当前类自身定义的__new__方法
+                    for (m_name, _), method in self._current_class.methods.items():
+                        if m_name == "__new__" and method.cls.name == self._current_class.name:
+                            expr = expression.VariableRef(self._src_info, self._symbol_table, method.as_function())
+                            self.__make(expr)
+                            return expr
+                    raise
                 # 重载函数没有默认查找键：结合栈顶调用表达式的参数类型解析具体重载
                 if len(self._stack) > 0 and isinstance(self._stack[-1], expression.CallOp) and \
                         self._stack[-1]._func_expr is None:
@@ -781,12 +815,33 @@ class CompilerVM:
                         var_type = overloaded_func
                     else:
                         raise
+                elif len(self._stack) > 0 and isinstance(self._stack[-1], definition.GenericCall):
+                    # 泛型调用：按名称取第一个同名泛型函数（重载按类型参数数量
+                    # 在GenericCall.finish中进一步解析）
+                    for (k_name, _), v in self._symbol_table.symbols.items():
+                        if k_name == var_name and isinstance(v, symbol.FunctionName) and \
+                                v.type.generic_args_str is not None:
+                            overloaded_func = v
+                            var_type = overloaded_func
+                            break
+                    if overloaded_func is None:
+                        raise
                 else:
                     raise
         if overloaded_func is not None:
             expr: expression.VariableRef = expression.VariableRef(self._src_info, self._symbol_table, overloaded_func)
             self.__make(expr)
             return expr
+        if var_name == "_":
+            raise CompilerException("The discard variable '_' can not be read.", self._src_info)
+        if var_name == "__new__" and self._current_class is not None and "__new__" in map(
+                lambda x: x[0], self._current_class.methods.keys()):
+            # 构造函数调用：解析到当前类的__new__方法
+            for (m_name, _), method in self._current_class.methods.items():
+                if m_name == "__new__":
+                    expr = expression.VariableRef(self._src_info, self._symbol_table, method.as_function())
+                    self.__make(expr)
+                    return expr
         if (var_name, None) in self._symbol_table:
             var = self._symbol_table[var_name, None]
             # noinspection PyTypeChecker
@@ -819,6 +874,7 @@ class CompilerVM:
             self._var_state_table.pop_scope()
         if len(self._scope_count_stack) == 1:
             self._current_class = None
+            self._symbol_table.current_cls = None
 
     @property
     def __scope_level(self) -> int:

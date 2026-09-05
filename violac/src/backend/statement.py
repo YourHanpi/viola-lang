@@ -11,6 +11,7 @@ from .symbol import (
     LocalVariableName,
     GlobalVariableName,
     TupleTypeName,
+    FunctionTypeName,
     EXCEPTION_T,
     ClassName,
     GenericArgument,
@@ -24,15 +25,15 @@ from copy import copy
 from enum import Enum
 from typing import Optional
 
-LISTENER_WAIT_FUNC = "viola$lang$thread$waitListener"
-MARK_T: str = "viola$lang$thread$Mark"
-STACK_A_T: str = "viola$lang$thread$StackA"
-STACK_B_T: str = "viola$lang$thread$StackB"
-STACK_A_PUSH_FUNC: str = "viola$lang$thread$pushStackA"
-STACK_A_POP_FUNC: str = "viola$lang$thread$popStackA"
-STACK_B_PUSH_FUNC: str = "viola$lang$thread$pushStackB"
-STACK_B_POP_FUNC: str = "viola$lang$thread$popStackB"
-THREAD_INFO_T: str = "viola$lang$thread$ThreadInfo"
+LISTENER_WAIT_FUNC = "viola$threads$waitListener"
+MARK_T: str = "viola$threads$Mark"
+STACK_A_T: str = "viola$threads$StackA"
+STACK_B_T: str = "viola$threads$StackB"
+STACK_A_PUSH_FUNC: str = "viola$threads$pushStackA"
+STACK_A_POP_FUNC: str = "viola$threads$popStackA"
+STACK_B_PUSH_FUNC: str = "viola$threads$pushStackB"
+STACK_B_POP_FUNC: str = "viola$threads$popStackB"
+THREAD_INFO_T: str = "viola$threads$ThreadInfo"
 
 
 class _Mark:
@@ -110,12 +111,10 @@ class Statement(CompilingItem, ABC):
         self._indent: int = 0
         self._is_async: bool = False
         self._inline_mapping: dict[str, str] = {}
-        if single_stmt and with_mark:
-            self._mark: Optional[_Mark] = _Mark(src_info, symbol_table)
-            self._jump_mark: Optional[str] = "$$cleanup"
-        else:
-            self._mark = None
-            self._jump_mark = None
+        # 0.1：暂不生成traceback调试标记（大量冗余代码与重复初始化问题，
+        # 且违反0.1“减少冗余”的要求）。保留_jump_mark用于异常跳转。
+        self._mark = None
+        self._jump_mark: Optional[str] = "$$cleanup" if single_stmt else None
         self._tail_recursive_mark: Optional[str] = None
         self._is_const_def: bool = False
         self._symbol_table: SymbolTable = symbol_table
@@ -245,9 +244,12 @@ class Statement(CompilingItem, ABC):
 
     @property
     def text(self) -> str:
-        """获取语句的完整 C 代码文本（含标记和缩进）。"""
+        """获取语句的完整 C 代码文本（含异常跳转检查和缩进）。"""
         if self._mark is None:
-            return self._indent_text(self._inner_text)
+            inner: str = self._inner_text
+            if self._jump_mark is not None and inner.strip() != "":
+                return self._indent_text(inner + "\n" + f"if ($$exc) goto {self._jump_mark};")
+            return self._indent_text(inner)
         result: list[str] = [
             self._mark.mark_insert,
             self._inner_text,
@@ -288,16 +290,19 @@ class _StmtList(Statement):
         """获取指定索引处的语句。"""
         return self._stmts[item]
 
-    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, stmts: list[Statement]) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable, stmts: list[Statement],
+                 const_vars: Optional[dict[VariableName, Expression]] = None) -> None:
         """
         初始化语句列表容器。
         :param src_info: 源代码信息。
         :param symbol_table: 符号表。
         :param var_states: 变量状态表。
         :param stmts: 语句列表。
+        :param const_vars: 被替换语句产生的常量变量映射（如常量声明语句被移除时）。
         """
         super().__init__(src_info, symbol_table, var_states)
         self._stmts: list[Statement] = stmts
+        self._extra_const_vars: dict[VariableName, Expression] = const_vars if const_vars is not None else {}
 
     def as_async(self) -> "Statement":
         raise InternalCompilerException("Not implemented", self._src_info)
@@ -359,7 +364,8 @@ class _StmtList(Statement):
         raise InternalCompilerException("Not implemented", self._src_info)
 
     def update_const_vars(self, const_vars: dict[VariableName, Expression]) -> dict[VariableName, Expression]:
-        """更新所有子语句的常量变量映射。"""
+        """更新所有子语句的常量变量映射（含被替换语句产生的映射）。"""
+        const_vars.update(self._extra_const_vars)
         for stmt in self._stmts:
             const_vars = stmt.update_const_vars(const_vars)
         return const_vars
@@ -394,8 +400,13 @@ class DeclStmt(Statement):
         else:
             var = GlobalVariableName(self._src_info, self._namespace, var_name, var_type_ref.return_type)
         self._var.append(var)
-        self._var_states.set_declared([var])
-        self._symbol_table.add(var, var_name, None)
+        if var_name != "_":
+            # 丢弃变量不登记到符号表中，允许在同一作用域内多次声明
+            self._var_states.set_declared([var])
+            self._symbol_table.add(var, var_name, None)
+        else:
+            # 丢弃变量的C名称需要唯一，避免同一作用域内多次声明冲突
+            var.rename("$_discard$" + str(self._symbol_table.get_counter()))
 
     def as_async(self) -> "Statement":
         new_stmt = super().as_async()
@@ -452,7 +463,10 @@ class DeclStmt(Statement):
                         raise CompilerException("Too many variables for unpacking.", self._src_info)
                     self._var[i].type.set_real_type(expr_type)
             else:
-                if (var.type.name, None) not in self._symbol_table:
+                if not isinstance(var.type, (FunctionTypeName, TupleTypeName, GenericArgument)) and \
+                        (var.type.name, None) not in self._symbol_table:
+                    # 函数类型与元组类型为匿名组合类型，无需注册为符号；
+                    # 泛型参数在实例化时替换为具体类型
                     raise CompilerException(f"{var.type.raw_name} is not defined.", self._src_info)
         if isinstance(expr_type, TupleTypeName):
             if len(self._var) > len(expr_type.types):
@@ -483,7 +497,16 @@ class DeclStmt(Statement):
 
     @property
     def head_text(self) -> Optional[str]:
-        results = "\n".join(map(lambda var: f"{var.type_name_pair_calling};", self._var))
+        if self._var_value is not None and len(self._var) > 0 and \
+                isinstance(self._var_value, (CallOp, UnpackExpr)):
+            # 与_inner_text一致：先设置返回值目标，
+            # 使head_text包含调用/解包产生的临时变量声明
+            self._var_value.set_returns(self._var)
+        results = "\n".join(map(
+            lambda var: f"{var.type_name_pair_calling};" if not isinstance(var.type, GenericArgument) else "",
+            self._var
+        ))
+        results = "\n".join(filter(lambda x: x.strip() != "", results.split("\n")))
         results += "\n" + self._var_value.head_text if self._var_value is not None and self._var_value.head_text is not None else ""
         return self._indent_text(results)
 
@@ -519,7 +542,7 @@ class DeclStmt(Statement):
             self._var_value = self._var_value.optimize()
             if self._var_value.is_const and len(self._var) == 1 and not self._is_const_def:
                 self._const_vars[self._var[0]] = self._var_value
-                return _StmtList(self._src_info, self._symbol_table, self._var_states, [])
+                return _StmtList(self._src_info, self._symbol_table, self._var_states, [], self._const_vars)
         if isinstance(self._var_value, UnpackExpr):
             to_unpack = self._var_value.to_unpack
             if len(self._var) == 1:
@@ -529,7 +552,8 @@ class DeclStmt(Statement):
                 return result
             if isinstance(to_unpack, TupleRef) and not self._is_const_def:
                 to_unpack_const: list[Expression] = list(map(lambda expr: expr.optimize().is_const, to_unpack.expressions))
-                results: list[DeclStmt] = [DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)] * (len(self._var) - len(to_unpack_const))
+                results: list[DeclStmt] = [DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)
+                                           for _ in range(len(self._var) - len(to_unpack_const))]
                 result_count: int = 0
                 expr_count: int = 0
                 for i, var in enumerate(self._var[:-1]):
@@ -562,7 +586,7 @@ class DeclStmt(Statement):
                 else:
                     results[-1].set_var_value(to_unpack[len(self._var):])
                     results[-1]._add_var_object(self._var[-1])
-                return _StmtList(self._src_info, self._symbol_table, self._var_states, results)
+                return _StmtList(self._src_info, self._symbol_table, self._var_states, results, self._const_vars)
         return self
 
     @property
@@ -631,11 +655,23 @@ class DeclStmt(Statement):
         if len(self._var) == 0:
             return ""
         if self._var_value is not None:
-            self._var_value.set_returns(self._var)
-            if self._var_value.front_text is not None:
-                front_text: str = self._var_value.front_text + "\n"
+            if len(self._var) == 1:
+                # 单变量声明：构造值表达式后直接赋值（函数调用已通过返回指针形参直接写入）
+                if isinstance(self._var_value, (CallOp, UnpackExpr)):
+                    self._var_value.set_returns(self._var)
+                if self._var_value.front_text is not None:
+                    front_text: str = self._var_value.front_text + "\n"
+                else:
+                    front_text = ""
+                if not isinstance(self._var_value, (CallOp, UnpackExpr)):
+                    front_text += f"{self._var[0].name} = {self._var_value.text};\n"
             else:
-                front_text = ""
+                self._var_value.set_returns(self._var)
+                # 头声明统一由语句块（或异步包装）的head_text输出，避免重复声明
+                if self._var_value.front_text is not None:
+                    front_text: str = self._var_value.front_text + "\n"
+                else:
+                    front_text = ""
         else:
             front_text = ""
         return front_text
@@ -660,15 +696,20 @@ class AssignStmt(Statement):
         self._var_types: Optional[TypeName] = None
         self._const_vars: dict[VariableName, Expression] = {}
         self._this_cls: Optional[ClassName] = this_cls
+        self._is_super: bool = False
 
     def add_var_name(self, var_name: str) -> None:
         """添加赋值目标变量名。"""
+        if self._this_cls is not None and var_name == "this.super":
+            # 调用父类的构造函数初始化this
+            self._is_super = True
+            return
         if self._this_cls is not None and var_name.startswith("this."):
             var_name = var_name[len("this."):]
             if var_name not in self._this_cls.properties:
                 raise CompilerException(f"{var_name} is not a property of {self._this_cls.name}.", self._src_info)
             var_name_type = self._this_cls.properties[var_name].type
-            symbol = LocalVariableName(self._src_info, "_this->" + var_name, var_name_type)
+            symbol = LocalVariableName(self._src_info, "_thisObj->" + var_name, var_name_type)
         else:
             symbol = self._symbol_table[var_name, None]
         if not isinstance(symbol, VariableName):
@@ -733,6 +774,10 @@ class AssignStmt(Statement):
 
     @property
     def head_text(self) -> Optional[str]:
+        if isinstance(self._var_value, (CallOp, UnpackExpr)) and len(self._var) > 0:
+            # 与_inner_text一致：先设置返回值目标，
+            # 使head_text包含调用/解包产生的临时变量声明
+            self._var_value.set_returns(self._var)
         return self._indent_text(self._var_value.head_text)
 
     @property
@@ -768,7 +813,8 @@ class AssignStmt(Statement):
         if self._var_value is not None:
             self._var_value = self._var_value.optimize()
             if self._var_value.is_const and len(self._var) == 1:
-                return _StmtList(self._src_info, self._symbol_table, self._var_states, [])
+                self._const_vars[self._var[0]] = self._var_value
+                return _StmtList(self._src_info, self._symbol_table, self._var_states, [], self._const_vars)
         if isinstance(self._var_value, UnpackExpr):
             to_unpack = self._var_value.to_unpack
             if len(self._var) == 1:
@@ -799,7 +845,7 @@ class AssignStmt(Statement):
                 else:
                     results[-1].set_var_value(to_unpack[len(self._var):])
                     results[-1]._add_var_object(self._var[-1])
-                return _StmtList(self._src_info, self._symbol_table, self._var_states, results)
+                return _StmtList(self._src_info, self._symbol_table, self._var_states, results, self._const_vars)
         return self
 
     @property
@@ -838,6 +884,24 @@ class AssignStmt(Statement):
 
     @property
     def _inner_text(self) -> str:
+        if self._is_super:
+            if self._var_value is None or self._this_cls is None or self._this_cls.parent is None:
+                raise CompilerException("this.super requires a parent class constructor call.", self._src_info)
+            parent = self._this_cls.parent
+            if not isinstance(self._var_value, CallOp):
+                raise CompilerException("this.super requires a constructor call.", self._src_info)
+            # 使用父类实际注册的__new__方法的C名称
+            parent_new_name = None
+            for (m_name, _), m in parent.methods.items():
+                if m_name == "__new__" and m.cls.name == parent.name:
+                    parent_new_name = m.name
+                    break
+            if parent_new_name is None:
+                raise CompilerException("Parent class has no constructor.", self._src_info)
+            args: str = ", ".join(map(lambda a: a.text, self._var_value._arg_list))
+            if args != "":
+                args += ", "
+            return f"{parent_new_name}({args}&_this, listener);"
         self._var_value.set_returns(self._var)
         return self._var_value.front_text if self._var_value.front_text is not None else ""
 
@@ -937,6 +1001,71 @@ class OpStmt(Statement):
     def _inner_text(self) -> str:
         results = list(filter(lambda x: x is not None, [self._expr.front_text, self._expr.release_text]))
         return "\n".join(results)
+
+
+class DelSuperStmt(Statement):
+    """del(super);语句：调用编译器为包装类生成的默认成员清理函数。"""
+
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 this_cls: Optional[ClassName] = None) -> None:
+        super().__init__(src_info, symbol_table, var_states)
+        self._this_cls: Optional[ClassName] = this_cls
+
+    def as_async(self) -> "Statement":
+        return self
+
+    def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
+        return self
+
+    def check_tail_recursive(self, func_name: str) -> "Statement":
+        return self
+
+    @property
+    def global_init_text(self) -> str:
+        return ""
+
+    @property
+    def head_text(self) -> Optional[str]:
+        return None
+
+    @property
+    def input_variables(self) -> set[VariableName]:
+        return set()
+
+    def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
+        return self
+
+    def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
+        pass
+
+    @property
+    def is_finished(self) -> bool:
+        return True
+
+    @property
+    def new_listeners(self) -> dict[VariableName, str]:
+        return {}
+
+    @property
+    def new_variables(self) -> set[VariableName]:
+        return set()
+
+    def optimize(self) -> "Statement":
+        return self
+
+    @property
+    def outer_text(self) -> Optional[str]:
+        return None
+
+    @property
+    def variables_states(self) -> dict[VariableName, VariableState]:
+        return {}
+
+    @property
+    def _inner_text(self) -> str:
+        if self._this_cls is None:
+            raise CompilerException("del(super) can only be used in wrapper class destructors.", self._src_info)
+        return f"{self._this_cls.name}$__del__super$_0(_this, listener);"
 
 
 class ReturnStmt(Statement):
@@ -1244,14 +1373,16 @@ class CondStmt(Statement):
 
     def as_async(self) -> "Statement":
         new_stmt = super().as_async()
-        new_stmt._cond_expr = self._cond_expr.as_async()
+        if self._cond_expr is not None:
+            new_stmt._cond_expr = self._cond_expr.as_async()
         new_stmt._stmt = self._stmt.as_async()
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
         new_stmt = copy(self)
-        new_stmt._cond_expr = self._cond_expr.as_inline(inline_mapping)
-        new_stmt._inline_mapping.update(new_stmt._cond_expr.inline_mapping)
+        if self._cond_expr is not None:
+            new_stmt._cond_expr = self._cond_expr.as_inline(inline_mapping)
+            new_stmt._inline_mapping.update(new_stmt._cond_expr.inline_mapping)
         new_stmt._stmt = self._stmt.as_inline(new_stmt.inline_mapping)
         new_stmt._inline_mapping.update(new_stmt._stmt.inline_mapping)
         return new_stmt
@@ -1284,8 +1415,10 @@ class CondStmt(Statement):
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
         new_stmt = copy(self)
-        new_stmt._cond_expr = self._cond_expr.instantiation(type_args)
-        new_stmt._stmt = self._stmt.instantiation(type_args)
+        if self._cond_expr is not None:
+            new_stmt._cond_expr = self._cond_expr.instantiation(type_args)
+        if self._stmt is not None:
+            new_stmt._stmt = self._stmt.instantiation(type_args)
         return new_stmt
 
     @property
@@ -1325,7 +1458,8 @@ class CondStmt(Statement):
         self._stmt = stmt
 
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
-        self._cond_expr = self._cond_expr.substitute(const_vars)
+        if self._cond_expr is not None:
+            self._cond_expr = self._cond_expr.substitute(const_vars)
         self._stmt = self._stmt.substitute(const_vars)
         return self
 
@@ -1405,6 +1539,12 @@ class IfStmt(CondStmt):
         mark: list[str] = list(filter(lambda x: x is not None, marks))
         new_stmt._tail_recursive_mark = mark[0] if len(mark) > 0 else None
         return new_stmt
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        super().substitute(const_vars)
+        for i, branch in enumerate(self._branches):
+            self._branches[i] = branch.substitute(const_vars)
+        return self
 
     @property
     def input_variables(self) -> set[VariableName]:
@@ -1518,12 +1658,13 @@ class CatchStmt(Statement):
 
     @property
     def _inner_text(self) -> str:
+        except_vtable_name: str = self._except_decl.type.name + "$$vtable"
         result: list[Optional[str]] = [
-            f"if ({CONVERTIBLE_TO_FUNC}($$exc->$$vtable, {EXCEPTION_T})) {{",
+            f"if ({CONVERTIBLE_TO_FUNC}($$exc->$$vtable, &{except_vtable_name})) {{",
             self._stmt.head_text,
             f"\t{self._except_decl.type_name_pair_calling} = $$exc;",
             self._stmt.text,
-            f"\tviola$lang$exception$Exception$__del__({self._except_decl.name});",
+            f"\t{self._except_decl.type.name}$__del__$_0({self._except_decl.name}, listener);",
             f"\t{self._except_decl.name} = NULL;",
             f"\tgoto {self._success_jump_to};",
             "}"
@@ -1688,7 +1829,8 @@ class TryStmt(Statement):
 
     @property
     def global_init_text(self) -> Optional[str]:
-        return self._try_stmt.global_init_text
+        result: str = self._try_stmt.global_init_text
+        return result if result is not None and result.strip() != "" else None
 
     @property
     def head_text(self) -> Optional[str]:
@@ -1880,7 +2022,7 @@ class _ProcessingMode(Enum):
 class CleanupBlock(CStmt):
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
-                 to_released_vars: list[VariableName], jump_label: str = "cleanup:") -> None:
+                 to_released_vars: list[VariableName], jump_label: str = "$$cleanup:") -> None:
         super().__init__(src_info, symbol_table, var_states)
         self._to_released_vars: list[VariableName] = to_released_vars
         self.add_text(jump_label)
@@ -1916,8 +2058,14 @@ class BlockStmt(Statement):
         self._is_closure: bool = False
         self._closure_struct_setting_code: str = ""
         self._processing_mode: _ProcessingMode = _ProcessingMode.NORMAL
+        self._drops_out: bool = False
         self._cleanup_mark_name: str = self._symbol_table.get_counter()
         self._after_cleanup_mark_name: str = self._cleanup_mark_name + "_after"
+
+    @property
+    def drop_out(self) -> bool:
+        """获取语句块是否在所有路径上都会导致函数退出。"""
+        return self._drops_out
 
     def add_stmt(self, stmt: Statement) -> None:
         """向语句块中添加一条子语句。"""
@@ -1934,8 +2082,16 @@ class BlockStmt(Statement):
         elif isinstance(stmt, CatchStmt) or isinstance(stmt, FinallyStmt):
             self._validate_try_catch_mode(stmt)
             return
-        var_states: dict[VariableName, VariableState] = stmt.variables_states
+        if isinstance(stmt, CondStmt) and stmt._stmt is not None and stmt._stmt.drop_out:
+            # 提前退出（return/throw）的分支：其赋值只发生在提前退出路径上，
+            # 不参与外层的线性赋值状态（return模式）
+            var_states: dict[VariableName, VariableState] = {}
+        else:
+            var_states: dict[VariableName, VariableState] = stmt.variables_states
         for k, v in var_states.items():
+            if k.name == "_":
+                # 丢弃变量可以在同一作用域内被多次声明和赋值
+                continue
             if k in self._inner_variables:
                 current_state = self._inner_variables[k]
                 if current_state == VariableState.DECLARED and v == VariableState.DECLARED:
@@ -1999,17 +2155,22 @@ class BlockStmt(Statement):
 
     def finish(self) -> None:
         """完成语句块的设置，进行变量清理和代码生成。"""
+        # 块中任何会导致退出的语句（如return）都意味着其后代码不可达
+        self._drops_out = any(map(lambda s: s.drop_out, self._stmt))
         self._stmt.reverse()
         used_variables: set[VariableName] = set()
         new_stmt_list: list[Statement] = []
         for stmt in self._stmt:
             stmt_used_variables: set[VariableName] = stmt.input_variables
             for var in stmt_used_variables:
-                if var not in used_variables and var not in self._outer_variables:
+                if var not in used_variables and var not in self._outer_variables and not var.is_global:
                     used_variables.add(var)
+                    # 变量已在本块内完成最后一次使用并释放，不再向外层传播
+                    self._input_variables.discard(var)
                     if var.is_object:
                         release_stmt = OpStmt(stmt.src_info, self._symbol_table, self._var_states)
                         call_op = CallOp(stmt.src_info, self._symbol_table)
+                        call_op._is_internal = True
                         attr_op = AttrOp(stmt.src_info, self._symbol_table)
                         attr_op.set_attr("__del__")
                         attr_op.set_caller(VariableRef(stmt.src_info, self._symbol_table, var))
@@ -2020,8 +2181,8 @@ class BlockStmt(Statement):
                         null_stmt.remove_jump_mark()
                         null_stmt.remove_mark()
                         null_stmt.add_text(f"\t{var} = NULL;")
-                        new_stmt_list.append(release_stmt)
                         new_stmt_list.append(null_stmt)
+                        new_stmt_list.append(release_stmt)
                         check_null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
                         check_null_stmt.add_text(f"if ({var}) {{")
                         check_null_stmt.remove_jump_mark()
@@ -2057,8 +2218,12 @@ class BlockStmt(Statement):
 
     @property
     def global_init_text(self) -> str:
-        result: str = super().global_init_text + "\n" + "\n".join(filter(lambda x: x is not None, map(lambda x: x.global_init_text, self._stmt)))
-        return result
+        result: str = super().global_init_text
+        stmts_text: str = "\n".join(filter(
+            lambda x: x is not None and x.strip() != "",
+            map(lambda x: x.global_init_text, self._stmt)
+        ))
+        return result + "\n" + stmts_text if stmts_text != "" else result
 
     @property
     def head_text(self) -> Optional[str]:
@@ -2076,6 +2241,11 @@ class BlockStmt(Statement):
         new_stmt = copy(self)
         new_stmt._stmt = list(map(lambda stmt: stmt.instantiation(type_args), self._stmt))
         return new_stmt
+
+    def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
+        for i, stmt in enumerate(self._stmt):
+            self._stmt[i] = stmt.substitute(const_vars)
+        return self
 
     @property
     def is_finished(self) -> bool:
@@ -2148,8 +2318,20 @@ class BlockStmt(Statement):
 
     @property
     def _inner_text(self) -> str:
+        head_texts: list[str] = list(
+            filter(lambda x: x is not None and x != "", map(lambda x: x.head_text, self._stmt)))
+        # 去重：嵌套表达式可能重复输出相同的临时变量声明
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for head in head_texts:
+            for line in head.split("\n"):
+                stripped = line.strip()
+                if stripped == "" or stripped in seen:
+                    continue
+                seen.add(stripped)
+                deduped.append(line)
         return "\n".join(
-            list(filter(lambda x: x is not None and x != "", map(lambda x: x.head_text, self._stmt))) +
+            deduped +
             list(filter(lambda x: x != "", map(lambda stmt: stmt.text, self._stmt)))
         )
 
@@ -2202,13 +2384,16 @@ class FnBlockStmt(BlockStmt):
 
     def add_stmt(self, stmt: Statement) -> None:
         """向函数体中添加一条语句，处理条件分支缓冲和变量依赖。"""
+        if isinstance(stmt, ReturnStmt):
+            # fn函数按需执行，求出所有返回值后自动退出，不允许return
+            raise CompilerException("fn functions can not use the return statement.", stmt.src_info)
         if isinstance(stmt, CondStmt):
             if stmt.cond_kw in (_CondKw.ELIF, _CondKw.ELSE):
-                if len(self._stmt) == 0:
+                if len(self._cond_stmt_buffer) == 0:
                     raise CompilerException(
                         "Elif statement and else statement should be after an if statement or elif statement.",
                         stmt.src_info)
-                last_stmt = self._stmt[-1]
+                last_stmt = self._cond_stmt_buffer[-1]
                 if not isinstance(last_stmt, CondStmt):
                     raise CompilerException(
                         "Elif statement and else statement should be after an if statement or elif statement.",
@@ -2425,7 +2610,7 @@ class CastOp(Expression):
         result: list[str] = [
             f"{self._temp_var_name} = {self._expr.text};",
             "#ifdef $__VIOLA_debug_type_dynamicCheck",
-            f"if (!{CONVERTIBLE_TO_FUNC}({self._temp_var_name}->$$vtable, {self._type_name.vtable_name})) {{",
+            f"if (!{CONVERTIBLE_TO_FUNC}({self._temp_var_name}->$$vtable, &{self._type_name.vtable_name})) {{",
             "\t" + self._throw_stmt.text,
             "}",
             "#endif"

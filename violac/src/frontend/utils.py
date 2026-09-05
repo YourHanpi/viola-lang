@@ -410,10 +410,12 @@ class ParsingResult:
         """
         return self._symbol
 
-    def write(self, path: str) -> None:
+    def write(self, path: str, src_path: str = "", workspace: str = "") -> None:
         """
         将解析结果写入文件。
         :param path: 文件路径（不含后缀）。
+        :param src_path: 源文件路径（写入符号表元数据，便于还原模块命名空间）。
+        :param workspace: 工作区路径。
         """
         with open(path + (GLOBAL_COMMAND_POSTFIX if self._from_global_parser else COMMAND_POSTFIX), "w") as f:
             for cmd in self._command:
@@ -421,8 +423,8 @@ class ParsingResult:
                 if not (isinstance(cmd, str) and cmd.endswith('\n')):
                     f.write('\n')
         with open(path + SYMBOL_TABLE_POSTFIX, "w") as f:
-            f.write(path + "\n")
-            f.write(os.path.dirname(path) + "\n")
+            f.write((src_path if src_path != "" else path) + "\n")
+            f.write((workspace if workspace != "" else os.path.dirname(path)) + "\n")
             f.write("---\n")
             for sym in self._symbol:
                 s = str(sym) if not isinstance(sym, str) else sym

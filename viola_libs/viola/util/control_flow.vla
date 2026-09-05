@@ -1,0 +1,48 @@
+// Viola控制流库。
+//
+// 命名空间：viola.util.control_flow
+// 由于数据不可变性，Viola不提供循环语句；本库提供用于循环的函数。
+
+// 按顺序遍历数组并应用mapper。与map函数的区别是：forEach保证顺序，而map不保证。
+fn forEach::<T, U>(T[] iterable, (T) -> (U) mapper) -> (U[] result) {
+    result = forEachInner::<T, U>(iterable, 0, mapper, []);
+}
+
+// forEach内部递归实现（尾递归）
+fn forEachInner::<T, U>(T[] iterable, size_t index, (T) -> (U) mapper, U[] acc) -> (U[] result) {
+    if (index >= iterable.length()) {
+        result = acc;
+    } else {
+        U mapped = mapper(iterable[index]);
+        result = forEachInner::<T, U>(iterable, index + 1, mapper, acc.append(mapped));
+    }
+}
+
+// 按顺序遍历数组并应用mapper（无返回值版本）。
+sq forEach::<T>(T[] iterable, (T) -> () mapper) -> () {
+    forEachEach::<T>(iterable, 0, mapper);
+}
+
+// forEach（无返回值版本）内部递归实现（尾递归）
+sq forEachEach::<T>(T[] iterable, size_t index, (T) -> () mapper) -> () {
+    if (index >= iterable.length()) {
+        return;
+    }
+    mapper(iterable[index]);
+    forEachEach::<T>(iterable, index + 1, mapper);
+}
+
+// 循环执行updater，直到predicate为假。
+fn while::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result) {
+    if (predicate(inputs)) {
+        result = while::<T>(updater(inputs), updater, predicate);
+    } else {
+        result = inputs;
+    }
+}
+
+// 先执行一次updater，然后循环执行，直到predicate为假（do-while语义）。
+fn doWhile::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result) {
+    T updated = updater(inputs);
+    result = while::<T>(updated, updater, predicate);
+}

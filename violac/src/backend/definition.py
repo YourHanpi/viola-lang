@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
 from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp, ClassRef, TypeRef
-from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, \
+from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, ReturnStmt, \
     STACK_B_POP_FUNC, CleanupBlock
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
     ClassName, MethodName, CLOSURE_T, TypeName, EXCEPTION_T_NAME, EnumName, GlobalVariableName, GenericArgument, \
-    StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable, FunctionTypeName, Object
+    StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable, FunctionTypeName, Object, LISTENER_T
 from utils import CompilerException, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
@@ -155,7 +155,7 @@ class ConstDef(Definition):
         rename_defines: str = "\n".join([
             f"#define {x.self_name} {x.name}" for x in self._define_stmt.new_variables
         ])
-        return "\n".join(rename_defines)
+        return rename_defines
 
 
 class SqDef(Definition):
@@ -174,13 +174,48 @@ class SqDef(Definition):
         """
         super().__init__(src_info, symbol_table)
         arg_types_decl: list[TypeName] = []
-        for arg_type in arg_types:
-            if (arg_type, None) not in self._symbol_table:
-                raise CompilerException(f"Name {arg_type} is not defined.", src_info)
-            arg_type = self._symbol_table[arg_type, None]
-            if not isinstance(arg_type, TypeName):
-                raise CompilerException(f"Argument {arg_type} is not a type.", src_info)
-            arg_types_decl.append(arg_type)
+        # 泛型函数/泛型类方法的泛型参数：在解析参数类型前注册（如T[]需要T可用）
+        generic_names: list[str] = []
+        name_decl = None
+        try:
+            name_decl = symbol_table[name, None]
+        except CompilerException:
+            name_decl = None
+        if name_decl is None:
+            # 重载函数没有按名称的查找键：从类型键中取第一个同名声明
+            for (k_name, _), v in symbol_table.symbols.items():
+                if k_name == name and isinstance(v, (FunctionName, MethodName)) and \
+                        v.type.generic_args_str is not None:
+                    name_decl = v
+                    break
+        if name_decl is not None and isinstance(name_decl, (FunctionName, MethodName)) and \
+                name_decl.type.generic_args_str is not None:
+            generic_names = list(filter(lambda x: x != "", name_decl.type.generic_args_str))
+        elif "." in name:
+            try:
+                cls_decl = symbol_table[name.split(".")[0], None]
+                if isinstance(cls_decl, ClassName) and cls_decl.is_generic:
+                    generic_names = list(map(lambda g: g.name, cls_decl.generic_args))
+            except CompilerException:
+                pass
+        registered_args: list[GenericArgument] = []
+        for generic_name in generic_names:
+            arg_obj = GenericArgument(src_info, generic_name)
+            symbol_table.add(arg_obj, arg_obj.name, None)
+            registered_args.append(arg_obj)
+        try:
+            for arg_type in arg_types:
+                try:
+                    # 符号表查找支持复合类型名（如T[]、函数类型）的类型名解析器回退
+                    arg_type = self._symbol_table[arg_type, None]
+                except CompilerException:
+                    raise CompilerException(f"Name {arg_type} is not defined.", src_info)
+                if not isinstance(arg_type, TypeName):
+                    raise CompilerException(f"Argument {arg_type} is not a type.", src_info)
+                arg_types_decl.append(arg_type)
+        finally:
+            for arg_obj in registered_args:
+                symbol_table.remove(arg_obj.name)
         decl = self._symbol_table[name, tuple(arg_types_decl)]
         self._method_decl: Optional[MethodName] = decl if isinstance(decl, MethodName) else None
         if not isinstance(decl, FunctionName | MethodName):
@@ -209,6 +244,7 @@ class SqDef(Definition):
         self._is_finished: bool = False
         self._is_from_generic: bool = False
         self._is_main: bool = name == "main"
+        self._is_closure: bool = False
         self._async_body = None
         self._default_params: dict[str, Expression] = {}
         # noinspection PyTypeChecker
@@ -231,15 +267,60 @@ class SqDef(Definition):
             raise CompilerException("Function is already finished.", self._src_info)
         if list(self._default_params.keys()) != list(self._decl.default_params.keys()):
             raise InternalCompilerException("Some default parameters has not been set.", self._src_info)
-        self._async_body = self.__get_async_body()
+        self._check_return_stmts()
+        self._var_states.add_scope()
+        if self._method_decl is not None and self._method_decl.cls is not None and \
+                self._method_decl.cls.is_generic:
+            # 泛型类的方法：泛型参数未实例化，异步包装体推迟到实例化时构建
+            self._async_body = None
+        else:
+            self._async_body = self.__get_async_body()
+        self._var_states.pop_scope()
         self._body.indent()
         self._body.finish()
         self._is_finished = True
 
+    def _check_return_stmts(self) -> None:
+        """检查每个return语句处所有返回值变量是否均已赋值（0.1要求）。"""
+        if len(self._rets) == 0:
+            return
+        states: dict[VariableName, VariableState] = {}
+
+        def walk(stmt: Statement) -> None:
+            if isinstance(stmt, ReturnStmt):
+                for ret in self._rets:
+                    state: VariableState = states.get(ret, VariableState.UNDECLARED)
+                    if state in (VariableState.UNDECLARED, VariableState.DECLARED):
+                        raise CompilerException(
+                            f"Return value {ret.name} is not assigned when returning.", stmt.src_info)
+                return
+            states.update(stmt.variables_states)
+            for attr_name in ("_stmt", "_try_stmt", "_except_stmt", "_finally_stmt"):
+                children = getattr(stmt, attr_name, None)
+                if children is None:
+                    continue
+                if isinstance(children, list):
+                    for child in children:
+                        if isinstance(child, Statement):
+                            walk(child)
+                elif isinstance(children, Statement):
+                    walk(children)
+
+        for stmt in self._body._stmt:
+            walk(stmt)
+
     @property
     def global_init_text(self) -> Optional[str]:
         """获取函数的全局初始化代码文本。"""
-        results = list(filter(lambda x: x is not None, [self._body.global_init_text, self._async_body.global_init_text]))
+        if self._async_body is None:
+            # 泛型类方法的异步包装体推迟到实例化时构建
+            results = list(filter(lambda x: x is not None, [self._body.global_init_text]))
+        else:
+            results = list(filter(lambda x: x is not None, [self._body.global_init_text, self._async_body.global_init_text]))
+        # 默认参数的初始化赋值
+        default_init: str = self._get_default_params_init()
+        if default_init.strip() != "":
+            results.append(default_init)
         return "\n".join(results)
 
     @property
@@ -247,6 +328,9 @@ class SqDef(Definition):
         """获取函数在头文件中的声明文本。"""
         if self._is_from_generic:
             return "// GENERIC FUNCTION"
+        if self._decl.export:
+            # export声明的符号可被链接：直接在头文件中暴露
+            return self.header_no_wrap
         result: list[str] = [
             f"#if _VIOLA_IMPORT_{self._import_name} || _VIOLA_IMPORT_{self._import_all} || _VIOLA_IMPORT_{self._import_module}",
             f"#ifndef _VIOLA_H_{self._import_name}",
@@ -269,6 +353,8 @@ class SqDef(Definition):
             self._decl.as_declare() + ";",
             self._decl.as_async().as_declare() + ";"
         ]
+        # 默认参数全局变量的外部声明（其他模块调用默认参数时引用）
+        text += [f"extern {v.type_name_pair_calling};" for v in self._decl.default_params.values()]
         return "\n".join(text)
 
     def instantiation(self, cls_decl: ClassName, type_args: dict[GenericArgument, TypeName]) -> "SqDef":
@@ -284,6 +370,8 @@ class SqDef(Definition):
             new_sq._method_decl.as_function().name, type_args_with_cls
         )
         new_sq._body = new_sq._body.instantiation(type_args_with_cls)
+        # 异步包装体在finish时以原泛型参数类型构建，实例化后需用具体类型重建
+        new_sq._async_body = new_sq._SqDef__get_async_body()
         return new_sq
 
     def instantiation_full(self, type_args: tuple[TypeName, ...]) -> "SqDef":
@@ -304,9 +392,11 @@ class SqDef(Definition):
             raise CompilerException("Function is not generic.", self._src_info)
         new_sq = deepcopy(self)
         new_sq._decl = new_sq._decl.instantiation(
-            self._symbol_table.get_generic_func_instance(new_sq._decl, tuple(type_args)).name, type_args
+            self._symbol_table.get_generic_func_instance(new_sq._decl, tuple(type_args)).self_name, type_args
         )
         new_sq._body = new_sq._body.instantiation(type_args)
+        # 异步包装体在finish时以原泛型参数类型构建，实例化后需用具体类型重建
+        new_sq._async_body = new_sq._SqDef__get_async_body()
         return new_sq
 
     @property
@@ -342,7 +432,8 @@ class SqDef(Definition):
     @property
     def outer_text(self) -> Optional[str]:
         """获取函数的外层代码文本。"""
-        results = list(filter(lambda x: x is not None, [self._body.outer_text, self._async_body.outer_text, self._get_default_params_decl()]))
+        async_outer: Optional[str] = self._async_body.outer_text if self._async_body is not None else None
+        results = list(filter(lambda x: x is not None, [self._body.outer_text, async_outer, self._get_default_params_decl()]))
         return "\n".join(results)
 
     @property
@@ -352,6 +443,7 @@ class SqDef(Definition):
 
     def set_as_closure(self, name: str) -> None:
         """将函数设置为闭包，绑定捕获结构体。"""
+        self._is_closure = True
         self._body.set_as_closure(name, self._args)
 
     def set_default_param(self, param_name: str, default_value: Expression) -> None:
@@ -407,6 +499,11 @@ class SqDef(Definition):
             define_name: str = self._decl.as_define_name()
         else:
             define_name: str = self._decl.as_define_name_raw()
+        async_define_name: str = self._decl.as_async().as_define_name()
+        if self._is_closure:
+            # 闭包函数额外接收捕获结构体指针形参
+            define_name = define_name[:-1] + ", void *$$capture)"
+            async_define_name = async_define_name[:-1] + ", void *$$capture)"
         sync_text: list[str] = [
             define_name + " {",
             self._body.head_text + ("\n\r" + self._body.tail_recursive_mark) if self._body.tail_recursive_mark is not None else "",
@@ -416,8 +513,10 @@ class SqDef(Definition):
             "}"
         ]
         async_text: list[str] = [
-            self._decl.as_async().as_declare() + " {",
+            async_define_name + " {",
+            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
             self._async_body.text,
+            "$$cleanup: ;",
             "}"
         ]
         text = [*sync_text, "", *async_text]
@@ -447,25 +546,35 @@ class SqDef(Definition):
                                                  [False] * len(self._decl.ret_names))
         ret_unpack_stmt.finish()
         ret_unpack_stmt.indent()
-        sync_call_args_text: str = ", ".join(map(lambda x: f"${x}", self._decl.arg_names))
-        sync_call_rets_text: str = ", ".join(map(lambda x: f"&${x}", self._decl.ret_names))
+        sync_call_args_text: str = ", ".join(self._decl.arg_names)
+        sync_call_rets_text: str = ", ".join(map(lambda x: f"&{x}", self._decl.ret_names))
         if sync_call_args_text != "" and sync_call_rets_text != "":
             sync_call_params_text: str = f"{sync_call_args_text}, {sync_call_rets_text}"
         else:
             sync_call_params_text: str = sync_call_args_text + sync_call_rets_text
         if sync_call_params_text != "":
-            sync_call_params_text: str = f"{sync_call_params_text}, listener->exc"
+            sync_call_params_text: str = f"{sync_call_params_text}, listener"
         else:
-            sync_call_params_text: str = "listener->exc"
+            sync_call_params_text: str = "listener"
+        if self._is_closure:
+            # 闭包函数需要传递捕获结构体指针
+            sync_call_params_text += ", $$capture"
         sync_call_text: str = f"\t{self._decl.name}({sync_call_params_text});"
         try_stmt: TryStmt = TryStmt(self._src_info, self._symbol_table, self._var_states)
         try_inner: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
-        try_inner.set_text("\n".join([
-            arg_unpack_stmt.text,
-            ret_unpack_stmt.text,
+        # 解包语句的临时变量（params/returns元组指针）声明在head_text中，需一并输出。
+        # 注意：text的求值会触发set_returns，因此必须先求值text再求值head_text，
+        # 但输出时声明必须位于使用之前
+        arg_unpack_text: str = arg_unpack_stmt.text
+        ret_unpack_text: str = ret_unpack_stmt.text
+        try_inner.set_text("\n".join(list(filter(lambda x: x is not None and x.strip() != "", [
+            arg_unpack_stmt.head_text,
+            ret_unpack_stmt.head_text,
+            arg_unpack_text,
+            ret_unpack_text,
             sync_call_text,
             f"{STACK_B_POP_FUNC}(listener->currentThreadId);"
-        ]))
+        ]))))
         try_stmt.set_stmt(try_inner)
         catch_stmt: CatchStmt = CatchStmt(self._src_info, self._symbol_table, self._var_states)
         # noinspection PyTypeChecker
@@ -520,13 +629,27 @@ class ConstructorDef(SqDef):
             raise CompilerException("Constructor must return exactly one value.", self._src_info)
         if self._decl.ret_types[0] != cls:
             raise CompilerException("Constructor must return a value of the same type as the class.", self._src_info)
-        this_name: str = "_this"
+        this_name: str = "_thisObj"
         this_type: ClassName = cls
         self._this_var: LocalVariableName = LocalVariableName(self._src_info, this_name, this_type)
         this_alloc_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
         this_alloc_stmt.set_text(
-            f"{self._this_var.type_name_pair_calling} = ({cls.c_calling_name})malloc(sizeof({cls.c_alloc_name}));")
+            f"{cls.c_calling_name} {self._this_var.name} = ({cls.c_calling_name})malloc(sizeof({cls.c_alloc_name}));")
         self.add_stmt(this_alloc_stmt)
+        # 初始化实例的TypeInfo指针，供异常捕获与动态类型转换使用
+        this_vtable_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
+        this_vtable_stmt.set_text(
+            f"{self._this_var.name}->$refCount = 1;\n"
+            f"{self._this_var.name}->$parent = NULL;\n"
+            f"{self._this_var.name}->$$vtable = (void *)&{cls.name}$$vtable;")
+        self.add_stmt(this_vtable_stmt)
+
+    def finish(self) -> None:
+        """完成构造函数，将局部this写回输出参数。"""
+        write_back_stmt: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
+        write_back_stmt.set_text(f"*_this = {self._this_var.name};")
+        self.add_stmt(write_back_stmt)
+        super().finish()
 
     def add_stmt(self, stmt: Statement) -> None:
         """向构造函数体中添加语句，检查不能直接操作 this 对象。"""
@@ -540,6 +663,23 @@ class ConstructorDef(SqDef):
     def this_var(self) -> LocalVariableName:
         """获取构造函数中表示当前实例的 this 变量。"""
         return self._this_var
+
+    def instantiation(self, cls_decl: ClassName, type_args: dict[GenericArgument, TypeName]) -> "ConstructorDef":
+        """实例化构造函数：重建分配语句与vtable初始化语句（使用实例类的C名称）。"""
+        new_def = super().instantiation(cls_decl, type_args)
+        inst_cls: TypeName = new_def._decl.type.returns[0]
+        this_alloc_stmt = CStmt(new_def._src_info, new_def._symbol_table, new_def._var_states)
+        this_alloc_stmt.set_text(
+            f"{inst_cls.c_calling_name} {new_def._this_var.name} = "
+            f"({inst_cls.c_calling_name})malloc(sizeof({inst_cls.c_alloc_name}));")
+        this_vtable_stmt = CStmt(new_def._src_info, new_def._symbol_table, new_def._var_states)
+        this_vtable_stmt.set_text(
+            f"{new_def._this_var.name}->$refCount = 1;\n"
+            f"{new_def._this_var.name}->$parent = NULL;\n"
+            f"{new_def._this_var.name}->$$vtable = (void *)&{inst_cls.name}$$vtable;")
+        new_def._body._stmt[0] = this_alloc_stmt
+        new_def._body._stmt[1] = this_vtable_stmt
+        return new_def
 
 
 class DestructorDef(SqDef):
@@ -567,18 +707,23 @@ class DestructorDef(SqDef):
         properties_to_free: list[VariableName] = list(filter(lambda y: y.is_object, cls.properties.values()))
         free_texts: list[str] = []
         for x in properties_to_free:
+            # 类结构体的成员名为属性的self_name，访问时需要通过_this指针
+            prop_var: LocalVariableName = LocalVariableName(
+                src_info, f"{self._this_var.name}->{x.self_name}", x.type
+            )
             attr_op: AttrOp = AttrOp(src_info, self._symbol_table)
             attr_op.set_attr("__del__")
-            attr_op.set_caller(VariableRef(src_info, self._symbol_table, x))
+            attr_op.set_caller(VariableRef(src_info, self._symbol_table, prop_var))
             call_op: CallOp = CallOp(src_info, self._symbol_table)
+            call_op._is_internal = True
             call_op.set_func(attr_op)
             call_op.set_returns([])
             free_call_text = call_op.front_text.split("\n")
             free_call_text = list(map(lambda y: "\t\t\t\t" + y, free_call_text))
             free_text_item: str = "\n".join([
-                f"\t\tif ({self._this_var.name}->{x.name}) {{",
-                f"\t\t\t{self._this_var.name}->{x.name}->$refCount--;",
-                f"\t\t\tif ({self._this_var.name}->{x.name}->$refCount == 0) {{",
+                f"\t\tif ({self._this_var.name}->{x.self_name}) {{",
+                f"\t\t\t{self._this_var.name}->{x.self_name}->$refCount--;",
+                f"\t\t\tif ({self._this_var.name}->{x.self_name}->$refCount == 0) {{",
                 "\n".join(free_call_text),
                 "\t\t\t}"
                 "\t\t}"
@@ -587,7 +732,7 @@ class DestructorDef(SqDef):
         free_text: list[str] = [
             f"if ({self._this_var.name}->$refCount == 0) {{",
             f"\tif ({self._this_var.name}->$parent) {{",
-            f"\t\t{self._this_var.name}->$parent->$refCount--;",
+            f"\t\t((viola$lang$uint32 *){self._this_var.name}->$parent)[0]--;",
             "\t} else {",
             *free_texts,
             f"\t\tfree({self._this_var.name});",
@@ -684,8 +829,9 @@ class GlobalDef(CPartSqDef):
         super().__init__(src_info, symbol_table, var_states, namespace, "__global__", [])
 
     def add_stmt(self, stmt: CStmt) -> None:
-        """向全局初始化函数中添加语句，移除其调试标记。"""
+        """向全局初始化函数中添加语句，移除其调试标记与异常跳转。"""
         stmt.remove_mark()
+        stmt.remove_jump_mark()
         super().add_stmt(stmt)
 
     def finish(self) -> None:
@@ -718,10 +864,12 @@ class GlobalDef(CPartSqDef):
         """获取全局函数的源代码文本。"""
         outer_text: str = self._body.outer_text if self._body.outer_text is not None else ""
         namespace_name: str = "$".join(map(lambda x: x.name, self._namespace))
-        define_name: str = f"void {namespace_name}$__global__()"
+        define_name: str = f"void {namespace_name}$__global__(viola$threads$Listener *listener)"
         sync_text: list[str] = [
             define_name + " {",
+            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
             self._body.text,
+            "$$cleanup: ;",
             "}"
         ]
         rename_define: str = f"#define {self._decl.self_name} {self._decl.name}"
@@ -756,11 +904,41 @@ class ClassDef(Definition):
         self._import_name: str = module_name + "$" + name
         self._import_all: str = module_name + "$__all__"
         self._import_module: str = module_name + "$__module__"
-        # var_states.add_scope()
-        # destructor = DestructorDef(self._src_info, self._symbol_table, var_states, self._namespace, name)
-        # destructor.finish()
-        # self.add_method(destructor)
-        # var_states.pop_scope()
+        # wrapper类必须由用户实现__del__（export=False的__del__为用户定义；
+        # 编译器自动注册的析构标记为export=True）
+        if self._decl.is_wrapper:
+            has_user_del: bool = any(
+                m_name == "__del__" and not m.export
+                for (m_name, _), m in self._decl.methods.items()
+            )
+            if not has_user_del:
+                raise CompilerException(f"Wrapper class {name} must define sq __del__() -> ();.", self._src_info)
+        # 实现接口的类必须实现接口的所有抽象方法（接口本身除外）
+        if not self._decl.is_interface:
+            for interface in self._decl.interfaces:
+                for (m_name, _), m in interface.methods.items():
+                    if not m.is_abstract or m_name == "__del__":
+                        continue
+                    implemented: bool = any(
+                        own_name == m_name and not own_m.is_abstract
+                        for (own_name, _), own_m in self._decl.methods.items()
+                    )
+                    if not implemented:
+                        raise CompilerException(
+                            f"Class {name} does not implement the abstract method "
+                            f"{interface.raw_name}.{m_name}().", self._src_info)
+        # 为每个类自动生成默认析构函数（释放动态属性并回收内存）。
+        # c语言部分（cpart类）除外，其析构由用户通过cpart实现；
+        # wrapper类由用户实现__del__，编译器生成__del__super供del(super)调用。
+        self._del_super_body: Optional[str] = None
+        if self._decl.is_wrapper:
+            del_super_def = DestructorDef(self._src_info, self._symbol_table, var_states, self._namespace, name)
+            del_super_def.finish()
+            self._del_super_body = del_super_def._body.text
+        elif not self._decl.is_c_part:
+            destructor = DestructorDef(self._src_info, self._symbol_table, var_states, self._namespace, name)
+            destructor.finish()
+            self.add_method(destructor)
         self._vtable_name: str = self._decl.vtable_name
         self._parent_vtable_name: str = f"{self._decl.parent.name}$$vtable" if self._decl.parent != Object else "NULL"
         self._is_finished: bool = False
@@ -778,10 +956,10 @@ class ClassDef(Definition):
         self._methods[method.self_name] = method
 
     def add_static_prop(self, name: str, value: Expression) -> None:
-        """向类中添加静态属性。"""
+        """向类中添加静态属性的初始值。"""
         if name not in self._decl.properties:
             raise CompilerException(f"{name} is not a property of {self._self_name}.", value.src_info)
-        if name in self._decl.properties:
+        if self._decl.properties[name] in self._static_properties:
             raise CompilerException(f"{name} is already defined.", value.src_info)
         self._static_properties[self._decl.properties[name]] = value
 
@@ -799,34 +977,31 @@ class ClassDef(Definition):
     @property
     def global_init_text(self) -> str:
         """获取类的全局初始化代码文本（虚函数表和静态属性）。"""
-        # noinspection PyUnresolvedReferences
-        if not self._decl.is_abstract:
-            # noinspection PyUnresolvedReferences
-            vfunc_text: str = f"malloc(sizeof({self._decl.c_alloc_name}$$vfunc))"
-            # noinspection PyUnresolvedReferences
-            vfunc: list[MethodName] = list(filter(lambda x: x.is_abstract, self._decl.methods.values()))
-            sync_vfunc_text: list[str] = list(map(
-                lambda x: f"(({self._decl.name}$$vfunc *){self._vtable_name}.vfunc)->{x.method_name} = {x.name};",
-                vfunc
-            ))
-            async_vfunc_text: list[str] = list(map(
-                lambda
-                    x: f"(({self._decl.name}$$vfunc *){self._vtable_name}.vfunc)->{x.as_async().method_name} = {x.as_async().name};",
-                vfunc
-            ))
-            vfunc_assign: list[str] = sync_vfunc_text + async_vfunc_text
-        else:
-            vfunc_text: str = "NULL"
-            vfunc_assign: list[str] = []
+        # 0.1：虚函数表仅提供类型链信息（convertibleTo），不进行虚方法分发
+        vfunc_text: str = "NULL"
+        vfunc_assign: list[str] = []
         # noinspection PyUnresolvedReferences
         methods_global_text: list[str] = list(
             filter(lambda x: x is not None, map(lambda x: x.global_init_text, self._methods.values()))
         )
-        static_props_global_text: list[str] = list(
-            filter(lambda x: x is not None, map(lambda x: x.global_init_text, self._static_properties.values()))
-        )
+        static_props_global_text: list[str] = list(filter(
+            lambda x: x is not None,
+            [text for prop, value in self._static_properties.items()
+             for text in [
+                 value.global_init_text,
+                 value.head_text,
+                 value.front_text,
+                 f"{prop.name} = {value.text};"
+             ]]
+        ))
+        if self._parent_vtable_name == "NULL" or \
+                (self._decl.parent is not None and self._decl.parent.is_generic):
+            # 泛型基类的TypeInfo全局变量不会生成，其运行时父指针置空
+            parent_vtable_ref: str = "NULL"
+        else:
+            parent_vtable_ref = f"&{self._parent_vtable_name}"
         result: list[str] = [
-            f"{self._vtable_name}.$parent = {self._parent_vtable_name};",
+            f"{self._vtable_name}.$parent = {parent_vtable_ref};",
             f"{self._vtable_name}.vfunc = {vfunc_text};",
             *vfunc_assign,
             *static_props_global_text,
@@ -839,7 +1014,12 @@ class ClassDef(Definition):
         """获取类在头文件中的声明文本。"""
         self._decl: ClassName
         if self._is_from_generic:
-            return "// GENERIC CLASS"
+            # 泛型实例化类：直接输出结构体定义与方法声明（其C类型名由实例化产生，
+            # 无需导入守卫）
+            return self.header_no_wrap
+        if self._decl.export:
+            # export声明的类可被链接：直接在头文件中暴露
+            return self.header_no_wrap
         method_headers_list: list[str] = list(map(lambda x: x.header_no_wrap, self._methods.values()))
         result: list[str] = [
             f"#if _VIOLA_IMPORT_{self._import_name} || _VIOLA_IMPORT_{self._import_all} || _VIOLA_IMPORT_{self._import_module}",
@@ -864,13 +1044,13 @@ class ClassDef(Definition):
         # noinspection PyUnresolvedReferences
         properties_text: str = "\n".join(
             map(
-                lambda x: f"\t{x.type_name_pair_calling};",
+                lambda x: f"\t{x.type.c_calling_name} {x.self_name};",
                 filter(lambda x: not x.is_static, self._decl.properties.values())
             )
         )
         struct_def: list[str] = [
             class_info_text,
-            "\ntypedef struct {",
+            f"\ntypedef struct {self._decl.name} {{",
             properties_text,
             "} " + self._decl.name + ";"
         ]
@@ -882,10 +1062,12 @@ class ClassDef(Definition):
         )
         # noinspection PyUnresolvedReferences
         if self._decl.is_abstract:
-            result_def = self._vfunc_def.copy()
-            if len(result_def) > 0:
+            # 结构体typedef在前，虚函数表结构体（引用类类型）在后
+            result_def = struct_def
+            vfunc_def = self._vfunc_def.copy()
+            if len(vfunc_def) > 0:
                 result_def.append("")
-            result_def.extend(struct_def)
+                result_def.extend(vfunc_def)
         else:
             result_def = struct_def
         result_def.append(static_props_text)
@@ -898,6 +1080,10 @@ class ClassDef(Definition):
             raise CompilerException("ClassDef.instantiation called on non-generic class", self._src_info)
         new_cls = deepcopy(self)
         new_cls._decl = self._symbol_table.get_generic_cls_instance(new_cls._decl, tuple(type_args))
+        # 虚函数表名随实例化的类名变化，需重新计算
+        new_cls._vtable_name = new_cls._decl.vtable_name
+        new_cls._parent_vtable_name = f"{new_cls._decl.parent.name}$$vtable" \
+            if new_cls._decl.parent != Object else "NULL"
         type_args_dict: dict[GenericArgument, TypeName] = dict(zip(self._decl.generic_args, type_args))
         new_cls._methods = dict(
             map(lambda x: (x.self_name, x.instantiation(self._decl, type_args_dict)), self._methods.values())
@@ -930,10 +1116,16 @@ class ClassDef(Definition):
 
     @property
     def outer_text(self) -> Optional[str]:
-        """获取类的外层代码文本（方法和静态属性的外层声明）。"""
+        """获取类的外层代码文本（虚函数表定义、方法和静态属性的外层声明）。"""
+        # 类的TypeInfo全局变量定义（在__global__中初始化$parent与vfunc）
+        vtable_def: str = f"{TYPE_INFO_T} {self._vtable_name} = {{NULL, NULL}};"
+        static_props_def: str = "\n".join(map(
+            lambda x: f"{x.type.c_calling_name} {x.name};",
+            filter(lambda x: x.is_static, self._decl.properties.values())
+        ))
         methods_result = "\n".join(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._methods.values())))
         props_result = "\n".join(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._static_properties.values())))
-        result: str = "\n".join([methods_result, props_result])
+        result: str = "\n".join([vtable_def, static_props_def, methods_result, props_result])
         return result if result != "" else None
 
     @property
@@ -941,6 +1133,17 @@ class ClassDef(Definition):
         """获取类的源代码文本。"""
         methods_def: list[str] = list(map(lambda x: x.source, self._methods.values()))
         rename_define: str = f"#define {self._decl.self_name} {self._decl.name}"
+        if self._del_super_body is not None:
+            # wrapper类的默认成员清理函数（由del(super)调用）
+            helper: str = "\n".join([
+                f"void {self._decl.name}$__del__super$_0({self._decl.c_calling_name} _this, "
+                f"{LISTENER_T} *listener) {{",
+                f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
+                self._del_super_body,
+                "$$cleanup: ;",
+                "}"
+            ])
+            return "\n\n".join(methods_def + [helper, rename_define])
         return "\n\n".join(methods_def + [rename_define])
 
     @property
@@ -1035,9 +1238,10 @@ class FromImportDef(Definition):
 
     @property
     def header(self) -> str:
+        include_path: str = self._module_path.replace(os.sep, "/")
         result: list[str] = [
-            *[f"#define _VIOLA_IMPORT_{self._namespace}${def_name}" for def_name in self._def_name],
-            f"#include \"{self._module_path}.viola.h\""
+            *[f"#define _VIOLA_IMPORT_{self._namespace}${def_name} 1" for def_name in self._def_name],
+            f"#include \"{include_path}.vla.h\""
         ]
         return "\n".join(result)
 
@@ -1058,28 +1262,47 @@ class FromImportDef(Definition):
 
     def _get_include_path(self) -> None:
         """解析模块路径为相对于源文件的 #include 路径。"""
-        rel_path_about_root: str = os.path.relpath(os.path.dirname(self._src_info.path), self._root_path)
-        dir_level: int = len(rel_path_about_root.split(os.pathsep))
-        if self._module_path.startswith("."):
+        # 处理相对导入（以点开头，如.from_import的相对模块）
+        rel_dots: int = 0
+        while self._module_path.startswith("."):
             self._module_path = self._module_path[1:]
-            rel_path: str = ""
-            dir_level_count: int = 0
-            while self._module_path.startswith("."):
-                rel_path += ".." + os.pathsep
-                self._module_path = self._module_path[1:]
-                dir_level_count += 1
-                if dir_level_count >= dir_level:
-                    raise CompilerException(f"{self._module_path} is not a valid module path.", self._src_info)
-            self._module_path = rel_path.replace(".", os.pathsep)
+            rel_dots += 1
+        module_rel: str = self._module_path.replace(".", os.sep)
+        # 在项目根与VIOLA_HOME根中寻找模块
+        roots: list[str] = [self._root_path]
+        if "VIOLA_HOME" in os.environ:
+            roots += [r for r in os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":") if r.strip() != ""]
+        module_abs: Optional[str] = None
+        module_root: Optional[str] = None
+        if rel_dots > 0:
+            base: str = os.path.dirname(self._src_info.path)
+            for _ in range(rel_dots - 1):
+                base = os.path.dirname(base)
+            candidate: str = os.path.join(base, module_rel)
+            if os.path.exists(candidate + ".vla"):
+                module_abs = candidate
+                module_root = self._root_path
+        if module_abs is None:
+            for root in roots:
+                candidate = os.path.join(root, module_rel)
+                if os.path.exists(candidate + ".vla"):
+                    module_abs = candidate
+                    module_root = root
+                    break
+        if module_abs is None:
+            raise CompilerException(f"{self._module_path} is not a valid module path.", self._src_info)
+        if module_root is not None and os.path.abspath(module_root) != os.path.abspath(self._root_path):
+            # 运行库模块：输出到输出目录下相对VIOLA_HOME的路径，include使用该相对路径
+            self._module_path = os.path.relpath(module_abs, module_root)
         else:
-            to_include_abs_path: str = os.path.join(self._module_path.replace(".", os.pathsep), self._root_path)
-            self._module_path = os.path.relpath(to_include_abs_path, os.path.dirname(self._src_info.path))
+            # 项目内模块：输出目录镜像项目布局，include相对于当前源文件目录
+            self._module_path = os.path.relpath(module_abs, os.path.dirname(self._src_info.path))
 
     def _get_namespace(self) -> str:
         """获取模块路径对应的命名空间字符串。"""
         abs_path: str = os.path.abspath(os.path.join(self._root_path, self._module_path))
         rel_path_about_root: str = os.path.relpath(abs_path, self._root_path)
-        return rel_path_about_root.replace(os.pathsep, "$")
+        return rel_path_about_root.replace(os.sep, "$")
 
 
 class Closure(Expression):
@@ -1118,8 +1341,11 @@ class Closure(Expression):
         result: list[str] = [
             self._sq_def.closure_struct_setting_code,
             f"{self._var_name} = ({CLOSURE_T} *)malloc(sizeof({CLOSURE_T}));",
-            f"{self._var_name}->func = {self._sq_def.name};",
-            f"{self._var_name}->capture = {self._var_name}$$capture;"
+            f"{self._var_name}->$refCount = 1;",
+            f"{self._var_name}->$parent = NULL;",
+            f"{self._var_name}->$sync = {self._sq_def.name};",
+            f"{self._var_name}->$async = {self._sq_def.name}$async;",
+            f"{self._var_name}->$capture = {self._var_name}$$capture;"
         ]
         return "\n".join(result)
 
@@ -1160,7 +1386,7 @@ class Closure(Expression):
         result: list[str] = [
             f"if ({self._var_name}->$refCount == 0) {{",
             f"\tif ({self._var_name}->$parent) {{",
-            f"\t\t{self._var_name}->$parent->$refCount--;",
+            f"\t\t((viola$lang$uint32 *){self._var_name}->$parent)[0]--;",
             "\t} else {",
             f"\t\tfree({self._var_name});",
             f"\t\t{self._var_name} = NULL;",
@@ -1234,8 +1460,21 @@ class GenericCall(CompilingItem):
             func = self._generic_symbol.var
             if not isinstance(func, FunctionName):
                 raise CompilerException(f"{func} is not a function.", self._src_info)
+            # 重载的泛型函数：按类型参数数量选择匹配的声明
+            raw_name: str = self._generic_symbol.var.raw_name
+            candidates = [v for (k_name, _), v in self._symbol_table.symbols.items()
+                          if k_name == raw_name and isinstance(v, FunctionName) and
+                          v.type.generic_args_str is not None and
+                          len(v.type.generic_args_str) == len(self._type_args)]
+            if len(candidates) == 1:
+                func = candidates[0]
             func = self._symbol_table.get_generic_func_instance(func, tuple(self._type_args))
-            self._instance = VariableRef(self._src_info, self._symbol_table, func)
+            inst_ref = VariableRef(self._src_info, self._symbol_table, func)
+            if any(isinstance(t, GenericArgument) for t in self._type_args):
+                # 泛型函数体内的递归调用（如forEachEach::<T>）：类型参数仍是泛型参数，
+                # 记录原函数与类型参数，实例化时按具体类型重新解析
+                inst_ref.generic_call_info = (func, tuple(self._type_args))
+            self._instance = inst_ref
         elif isinstance(self._generic_symbol, AttrOp):
             method = self._generic_symbol.as_method()
             if not isinstance(method, MethodName):

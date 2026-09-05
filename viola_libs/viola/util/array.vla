@@ -1,0 +1,48 @@
+// Viola数组泛型类。
+//
+// 命名空间：viola.util.array
+// 数组本身是编译器内置类型（T[]），本类提供面向对象的泛型包装接口。
+// 使用方法：import viola.util.array; 然后使用 array.Array::<T>。
+
+class Array::<T> {
+    T[] data;
+
+    public sq __new__(T[] data) -> (this) {
+        this.data = data;
+    }
+
+    // 获取元素
+    public fn __getitem__(size_t index) -> (T result) {
+        result = this.data[index];
+    }
+
+    // 获取子数组
+    public fn __getitem__(slice s) -> (Array::<T> result) {
+        result = Array::<T>(this.data[s]);
+    }
+
+    // 获取数组长度
+    public fn length() -> (size_t result) {
+        result = this.data.length();
+    }
+
+    // 连接两个数组
+    public fn concat(Array::<T> other) -> (Array::<T> result) {
+        result = Array::<T>(this.data.concat(other.data));
+    }
+
+    // 追加元素
+    public fn append(T newElement) -> (Array::<T> result) {
+        result = Array::<T>(this.data.append(newElement));
+    }
+
+    // 插入元素
+    public fn insert(int64 location, T newElement) -> (Array::<T> result) {
+        result = Array::<T>(this.data.insert(location, newElement));
+    }
+
+    // 索引赋值（函数式更新）
+    public fn __setitem__(size_t index, T newElement) -> (Array::<T> result) {
+        result = Array::<T>(this.data.__setitem__(index, newElement));
+    }
+}

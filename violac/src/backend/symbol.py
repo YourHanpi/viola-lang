@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 from utils import CompilerException, InternalCompilerException, SourceInfo, VIOLA_INIT
 from utils.fsm import FSM, StateNode, Token
 
@@ -6,11 +7,12 @@ from abc import ABC, abstractmethod
 from copy import copy
 from enum import Enum
 import os
+import re
 from typing import Optional, Callable
 
 CLOSURE_T: str = "viola$lang$function$Closure"
-LISTENER_T: str = "viola$lang$thread$Listener"
-LISTENER_INIT_FUNC: str = "viola$lang$thread$initListener"
+LISTENER_T: str = "viola$threads$Listener"
+LISTENER_INIT_FUNC: str = "viola$threads$initListener"
 EXCEPTION_T: str = "viola$lang$exception$Exception"
 EXCEPTION_T_NAME: str = "viola$lang$exception$Exception"
 TUPLE_T: str = "viola$collections$Tuple"
@@ -487,7 +489,13 @@ class VariableName(NamedSymbol):
         """
         if not self.is_object:
             return ""
-        return f"{self._type.name}$__del__({self.name}); {self.name} = NULL;"
+        if isinstance(self._type, TupleTypeName):
+            # 所有元组类型共享同一C名称的析构函数
+            return f"{TUPLE_T}$__del__({self.name}, listener); {self.name} = NULL;"
+        if isinstance(self._type, ArrayTypeName):
+            # 数组的C名称使用$$array形式
+            return f"{self._type.c_alloc_name}$__del__$_0({self.name}, listener); {self.name} = NULL;"
+        return f"{self._type.name}$__del__$_0({self.name}, listener); {self.name} = NULL;"
 
     def instantiation(self, new_name: str, t: dict["GenericArgument", TypeName]) -> "VariableName":
         """
@@ -511,7 +519,7 @@ class VariableName(NamedSymbol):
         """
         获取这一变量是否为对象。
         """
-        return isinstance(self._type, ClassName)
+        return isinstance(self._type, ClassName) and self._type.is_object
 
     @property
     def raw_name(self) -> str:
@@ -605,6 +613,7 @@ class PropertyVariableName(VariableName):
         super().__init__(src_info, namespace, name, t)
         self._modifier: Modifier = modifier
         self._is_static: bool = is_static
+        self._is_unsafe: bool = False
 
     @property
     def is_static(self) -> bool:
@@ -619,6 +628,13 @@ class PropertyVariableName(VariableName):
         获取该属性的访问权限级别。
         """
         return self._modifier
+
+    @property
+    def is_unsafe(self) -> bool:
+        """
+        获取该属性是否为非安全成员（允许重新赋值）。
+        """
+        return self._is_unsafe
 
     @property
     def self_name_with_class(self) -> str:
@@ -646,7 +662,9 @@ class ClassName(TypeName):
     """
 
     def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], name: str, parent: Optional["ClassName"],
-                 is_abstract: bool, is_c_part: bool, generic_args: Optional[list[str]] = None) -> None:
+                 is_abstract: bool, is_c_part: bool, generic_args: Optional[list[str]] = None,
+                 is_final: bool = False, is_wrapper: bool = False, is_unsafe: bool = False,
+                 is_interface: bool = False) -> None:
         """
         创建类。
         src_info: 源代码信息。
@@ -656,6 +674,10 @@ class ClassName(TypeName):
         is_abstract: 是否为抽象类。
         is_c_part: 是否为C结构体。
         generic_args: 泛型参数。
+        is_final: 是否为最终类（不可继承）。
+        is_wrapper: 是否为包装类（需要用户实现__del__）。
+        is_unsafe: 是否所有对象均为非安全对象。
+        is_interface: 是否为接口。
         """
         super().__init__(src_info, namespace, name, SymbolType.CLASS)
         self._parent: Optional["ClassName"] = parent
@@ -668,6 +690,12 @@ class ClassName(TypeName):
         self._is_c_part: bool = is_c_part
         self._generic_args: Optional[list[str]] = generic_args
         self._generic_real_types: list[TypeName] = []
+        self._is_final: bool = is_final
+        self._is_wrapper: bool = is_wrapper
+        self._is_unsafe: bool = is_unsafe
+        self._is_interface: bool = is_interface
+        self._interfaces: list["ClassName"] = []
+        self._export: bool = False
 
     def add_method(self, name: str, method: "MethodName") -> None:
         """
@@ -686,7 +714,7 @@ class ClassName(TypeName):
         self._method_overload_times[name] += 1
 
     def add_property(self, src_info: SourceInfo, name: str, type_name: TypeName, modifier: Modifier,
-                     is_static: bool) -> None:
+                     is_static: bool, is_unsafe: bool = False) -> None:
         """
         添加属性。
         src_info: 源代码信息。
@@ -697,8 +725,10 @@ class ClassName(TypeName):
         """
         if name in self._properties:
             raise CompilerException(f"Property {name} already exists.", self._src_info)
-        self._properties[name] = PropertyVariableName(src_info, self.as_namespace(), name, type_name, modifier,
-                                                      is_static)
+        prop: PropertyVariableName = PropertyVariableName(src_info, self.as_namespace(), name, type_name, modifier,
+                                                          is_static)
+        prop._is_unsafe = is_unsafe
+        self._properties[name] = prop
 
     def add_property_object(self, name: str, prop: PropertyVariableName):
         """
@@ -799,6 +829,9 @@ class ClassName(TypeName):
         new_name: 新的类名。
         args: 泛型参数的实参。
         """
+        if self.name == "viola$lang$Pointer":
+            # 内置指针类型：实例化为原始指针
+            return PointerTypeName(self._src_info, args[0])
         if self._generic_args is None:
             raise CompilerException("Class is not generic.", self._src_info)
         if len(args) != len(self._generic_args):
@@ -812,12 +845,53 @@ class ClassName(TypeName):
         # 将原类自身加入替换字典，使方法中 this 的类型指向新的实例化类
         generic_dict[GenericArgument(self._src_info, self.name)] = result
         for name, prop in self._properties.items():
-            if name in ["$refCount", "$parent"]:
-                continue
+            # $refCount与$parent同样需要出现在实例的结构体布局中
             result.add_property_object(name, prop.instantiation("", generic_dict))
         for (name, _), method in self._methods.items():
             result.add_method(name, method.instantiation(f"{new_name}${method.name}", generic_dict))
         return result
+
+    @property
+    def is_final(self) -> bool:
+        """
+        获取该类是否为最终类（不可继承）。
+        """
+        return self._is_final
+
+    @property
+    def is_wrapper(self) -> bool:
+        """
+        获取该类是否为包装类（需要用户实现__del__）。
+        """
+        return self._is_wrapper
+
+    @property
+    def is_unsafe(self) -> bool:
+        """
+        获取该类的对象是否全部为非安全对象。
+        """
+        return self._is_unsafe
+
+    @property
+    def is_interface(self) -> bool:
+        """
+        获取该类是否为接口（不可实例化，方法均为抽象方法）。
+        """
+        return self._is_interface
+
+    @property
+    def export(self) -> bool:
+        """
+        获取该类是否导出为库。
+        """
+        return self._export
+
+    @property
+    def interfaces(self) -> list["ClassName"]:
+        """
+        获取该类实现的接口列表。
+        """
+        return self._interfaces
 
     @property
     def is_abstract(self) -> bool:
@@ -898,6 +972,75 @@ class ClassName(TypeName):
         return f"{self.name}$$vtable"
 
 
+# 元组类型定义注册表：C类型名 -> 元组类型对象（typedef文本在输出头文件时惰性生成，
+# 避免泛型参数未实例化时过早求值c_typedef_text）
+_TUPLE_TYPE_DEFS: dict[str, "TupleTypeName"] = {}
+# 函数类型定义注册表：C类型名 -> 函数类型对象（函数指针typedef，惰性生成）
+_FUNCTION_TYPE_DEFS: dict[str, "FunctionTypeName"] = {}
+# 数组类型定义注册表：C类型名 -> 元素类型（生成typedef与各方法的C实现）
+_ARRAY_TYPE_DEFS: dict[str, TypeName] = {}
+
+# 泛型函数实例化请求的全局注册表（按函数的C名 -> 类型参数元组集合）。
+# 实例化请求发生在调用方模块，而泛型函数的定义位于其所在模块，
+# 定义方实例化时需合并其他模块发起的请求。
+_GENERIC_FUNC_INSTANCE_REQUESTS: dict[str, set[tuple[TypeName, ...]]] = {}
+
+
+
+
+
+
+def _type_is_fully_concrete(t: TypeName) -> bool:
+    """判断类型是否完全实例化（不含泛型参数、空数组或数组方法类占位类型）。"""
+    if isinstance(t, GenericArgument):
+        return False
+    if isinstance(t, ArrayTypeName):
+        return not isinstance(t, EmptyArrayTypeName) and _type_is_fully_concrete(t.element_type)
+    if isinstance(t, FunctionTypeName):
+        return all(_type_is_fully_concrete(x) for x in t.args + t.returns)
+    if isinstance(t, TupleTypeName):
+        return all(_type_is_fully_concrete(x) for x in t.types)
+    if isinstance(t, ClassName):
+        return not t.is_generic and not getattr(t, "_is_array_method_cls", False)
+    if isinstance(t, BaseTypeName) and t.name == "viola$lang$empty":
+        # 空数组字面量的占位元素类型
+        return False
+    return True
+
+def register_tuple_type(t: "TupleTypeName") -> None:
+    """注册元组类型，使编译器在模块头文件中生成其结构体定义。
+
+    含未实例化类型（泛型参数或泛型类）的占位元组不注册：
+    实例化后会以具体类型重新创建并注册。
+    """
+    if not all(_type_is_fully_concrete(e) for e in t.types):
+        # 含未实例化类型的占位元组不注册
+        return
+    _TUPLE_TYPE_DEFS[t.name] = t
+
+
+def register_function_type(t: "FunctionTypeName") -> None:
+    """注册函数类型，使编译器在模块头文件中生成其函数指针typedef。
+
+    含未实例化类型（泛型参数、泛型类或元素为泛型参数的数组）的占位函数类型不注册。
+    """
+    if not all(_type_is_fully_concrete(e) for e in t.args + t.returns):
+        # 含未实例化类型的占位函数类型不注册
+        return
+    _FUNCTION_TYPE_DEFS[t.name] = t
+
+
+def register_array_type(t: "ArrayTypeName") -> None:
+    """注册数组类型，使编译器生成其结构体定义与方法实现。"""
+    if isinstance(t, EmptyArrayTypeName):
+        # 空数组字面量的元素类型由调用上下文推断，不注册
+        return
+    if isinstance(t.element_type, GenericArgument):
+        # 泛型参数元素的数组（如T[]）在实例化后以具体元素类型重新注册
+        return
+    _ARRAY_TYPE_DEFS[t.c_alloc_name] = t.element_type
+
+
 class ArrayTypeName(ClassName):
     """
     数组类型名称。
@@ -909,54 +1052,59 @@ class ArrayTypeName(ClassName):
         src_info: 源代码信息。
         element_type: 元素类型。
         """
-        super().__init__(src_info, element_type.namespace, element_type.self_name + "[]", None, False, False)
+        super().__init__(src_info, [], element_type.name + "$$array", None, False, False)
         self._element_type: TypeName = element_type
+        # 方法的C名称基于c_alloc_name（如viola$lang$string$$array），
+        # 因为带[]的名称不是合法C标识符。方法实现由编译器按元素类型生成。
+        c_cls: ClassName = ClassName(src_info, [], self.c_alloc_name, None, False, False)
+        c_cls._is_array_method_cls = True
         self.add_method("__getitem__", MethodName(
-            src_info, self, "__getitem__", FunctionTypeName(
+            src_info, c_cls, "__getitem__", FunctionTypeName(
                 src_info, [SIZE_T], [element_type]
-            ), False, False, ["item"], ["element"], Modifier.PUBLIC, True
+            ), False, False, ["item"], ["element"], Modifier.PUBLIC, True, True
         ))
         self.add_method("__getitem__", MethodName(
-            src_info, self, "__getitem__", FunctionTypeName(
+            src_info, c_cls, "__getitem__", FunctionTypeName(
                 src_info, [SliceTypeName], [self]
-            ), False, False, ["s"], ["subarray"], Modifier.PUBLIC, True
+            ), False, False, ["s"], ["subarray"], Modifier.PUBLIC, True, True
         ))
         self.add_method("concat", MethodName(
-            src_info, self, "concat", FunctionTypeName(
+            src_info, c_cls, "concat", FunctionTypeName(
                 src_info, [self], [self]
-            ), False, False, ["other"], ["result"], Modifier.PUBLIC, True
+            ), False, False, ["other"], ["result"], Modifier.PUBLIC, True, True
         ))
         self.add_method("append", MethodName(
-            src_info, self, "append", FunctionTypeName(
+            src_info, c_cls, "append", FunctionTypeName(
                 src_info, [element_type], [self]
-            ), False, False, ["newElement"], ["newArray"], Modifier.PUBLIC, True
+            ), False, False, ["newElement"], ["newArray"], Modifier.PUBLIC, True, True
         ))
         self.add_method("insert", MethodName(
-            src_info, self, "insert", FunctionTypeName(
+            src_info, c_cls, "insert", FunctionTypeName(
                 src_info, [INT64, element_type], [self]
-            ), False, False, ["location", "newElement"], ["newArray"], Modifier.PUBLIC, True
+            ), False, False, ["location", "newElement"], ["newArray"], Modifier.PUBLIC, True, True
         ))
         self.add_method("length", MethodName(
-            src_info, self, "length", FunctionTypeName(
+            src_info, c_cls, "length", FunctionTypeName(
                 src_info, [], [SIZE_T]
-            ), False, False, [], ["result"], Modifier.PUBLIC, True
+            ), False, False, [], ["result"], Modifier.PUBLIC, True, True
         ))
         self.add_method("__setitem__", MethodName(
-            src_info, self, "__setitem__", FunctionTypeName(
+            src_info, c_cls, "__setitem__", FunctionTypeName(
                 src_info, [SIZE_T, element_type], [self]
-            ), False, False, ["index", "newElement"], ["newArray"], Modifier.PUBLIC, True
+            ), False, False, ["index", "newElement"], ["newArray"], Modifier.PUBLIC, True, True
         ))
         self.add_method("__setitem__", MethodName(
-            src_info, self, "__setitem__", FunctionTypeName(
+            src_info, c_cls, "__setitem__", FunctionTypeName(
                 src_info, [SliceTypeName, self], [self]
-            ), False, False, ["s", "newSubarray"], ["newArray"], Modifier.PUBLIC, True
+            ), False, False, ["s", "newSubarray"], ["newArray"], Modifier.PUBLIC, True, True
         ))
         self.add_method(
             "__del__", MethodName(
-                src_info, self, "__del__", FunctionTypeName(src_info, [], []), False,
-                False, [], [], Modifier.PRIVATE, True
+                src_info, c_cls, "__del__", FunctionTypeName(src_info, [], []), False,
+                False, [], [], Modifier.PRIVATE, True, True
             )
         )
+        register_array_type(self)
 
     @property
     def c_alloc_name(self) -> str:
@@ -1017,27 +1165,129 @@ class EmptyArrayTypeName(ArrayTypeName):
         return set()
 
 
-class TupleTypeName(ClassName):
+class PointerTypeName(ClassName):
     """
-    元组类型名称。
+    指针类型名称（unsafe Pointer::<T>）。
+
+    C语言层表示为原始指针 void *，由用户手动管理内存。
     """
 
-    def __init__(self, src_info: SourceInfo, types: list[TypeName]) -> None:
-        super().__init__(src_info, [], f"({', '.join(list(map(lambda t: t.name, types)))})", None,
-                         False, False)
-        self._type_args: list[TypeName] = types
+    def __init__(self, src_info: SourceInfo, element_type: TypeName) -> None:
+        super().__init__(src_info, VIOLA_LANG, "Pointer", None, False, False)
+        self._element_type: TypeName = element_type
+        self._is_unsafe = True
+        # 名称按元素类型参数化，保持符号唯一性
+        self.rename(f"viola$lang$Pointer${element_type.name}")
 
     @property
     def c_alloc_name(self) -> str:
-        return TUPLE_T
+        return "void *"
 
     @property
     def c_assigning_name(self) -> str:
-        return f"{TUPLE_T} **"
+        return "void **"
 
     @property
     def c_calling_name(self) -> str:
-        return f"{TUPLE_T} *"
+        return "void *"
+
+    @property
+    def element_type(self) -> TypeName:
+        """
+        获取指针指向的元素类型。
+        """
+        return self._element_type
+
+    @property
+    def is_object(self) -> bool:
+        # 指针由用户手动管理内存，不参与自动释放
+        return False
+
+    def convertable_to(self, target: "TypeName",
+                       symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
+        if isinstance(target, PointerTypeName):
+            return True
+        return False
+
+    def instantiation(self, real_types: dict["GenericArgument", "TypeName"]) -> "TypeName":
+        return PointerTypeName(self._src_info, self._element_type.instantiation(real_types))
+
+    @property
+    def used_types(self) -> set["TypeName"]:
+        # 指针类型的组成类型是其指向的元素类型
+        return {self._element_type}
+
+
+class TupleTypeName(ClassName):
+    """
+    元组类型名称。
+
+    C语言层的表示为按元素类型生成唯一名称的结构体（$为合法C标识符字符）：
+        typedef struct {
+            viola$lang$uint32 $refCount;
+            viola$lang$ptr $parent;
+            viola$lang$uint64 size;
+            <元素0的c_calling_type> _0;
+            ...
+        } viola$collections$Tuple$<元素0名>$<元素1名>$...;
+    结构体定义由编译器在模块头文件中生成（带include guard）。
+    """
+
+    def __init__(self, src_info: SourceInfo, types: list[TypeName]) -> None:
+        c_name: str = TUPLE_T + "$" + "$".join(list(map(lambda t: t.name, types)))
+        super().__init__(src_info, [], c_name, None, False, False)
+        self._type_args: list[TypeName] = types
+        # 注册到符号表，以便在头文件中生成结构体定义
+        register_tuple_type(self)
+
+    def has_method(self, name: str) -> bool:
+        """所有元组类型共享同一C名称的析构方法，由运行库提供。"""
+        if name == "__del__":
+            return True
+        return super().has_method(name)
+
+    @property
+    def methods(self) -> dict[tuple[str, tuple[TypeName, ...]], "MethodName"]:
+        """获取方法表。元组的__del__方法为惰性共享的原生方法。"""
+        result: dict[tuple[str, tuple[TypeName, ...]], MethodName] = dict(self._methods)
+        if "__del__" not in map(lambda x: x[0], result.keys()):
+            result[("__del__", ())] = _get_tuple_del_method(self._src_info)
+        return result
+
+    @property
+    def c_alloc_name(self) -> str:
+        return self.name
+
+    @property
+    def c_assigning_name(self) -> str:
+        return f"{self.name} **"
+
+    @property
+    def c_calling_name(self) -> str:
+        return f"{self.name} *"
+
+    @property
+    def c_typedef_text(self) -> str:
+        """获取元组结构体的typedef文本（用于生成到模块头文件中）。
+
+        第n个元素的字段名为$n：类类型为T *$n，基本类型为T $n。
+        """
+        members: str = "\n".join(list(map(
+            lambda i, t: f"\t{t.c_calling_name} ${i};", range(len(self._type_args)), self._type_args
+        )))
+        if members != "":
+            members += "\n"
+        return "\n".join([
+            f"#ifndef _VIOLA_TUPLE_T_{self.name}",
+            f"#define _VIOLA_TUPLE_T_{self.name}",
+            "typedef struct {",
+            "\tviola$lang$uint32 $refCount;",
+            "\tviola$lang$ptr $parent;",
+            "\tviola$lang$uint64 size;",
+            members,
+            f"}} {self.name};",
+            "#endif"
+        ])
 
     def convertable_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
@@ -1142,7 +1392,16 @@ class AutoTypeName(TypeName):
 class FunctionTypeName(TypeName):
     """
     函数类型名称。
+
+    C语言层的表示为按签名生成的唯一函数指针typedef（符合C语法）：
+        typedef void (*viola$lang$function$S$<参数类型们>$$R$<返回类型们>)(
+            <参数0的c_calling_type>, ..., <返回0的c_assigning_type>, ..., listener);
+    返回值在C层通过“传入期望赋值的变量的指针，然后解引用赋值”实现，
+    因此返回类型使用c_assigning_type（指向返回变量的指针类型）。
+    typedef由编译器在模块头文件中生成（带include guard）。
     """
+
+    _IS_ASYNC: bool = False
 
     def __init__(self, src_info: SourceInfo, args: list[TypeName], returns: list[TypeName],
                  generic_args: Optional[list[str]] = None) -> None:
@@ -1153,9 +1412,7 @@ class FunctionTypeName(TypeName):
         returns: 返回类型。
         generic_args: 泛型参数。
         """
-        super().__init__(src_info, [],
-                         f"({', '.join(map(lambda t: t.name, args))}) -> ({', '.join(map(lambda t: t.name, returns))})",
-                         SymbolType.FUNCTION)
+        super().__init__(src_info, [], self._make_c_name(args, returns), SymbolType.FUNCTION)
         self._args: list[TypeName] = args
         self._returns: list[TypeName] = returns
         self._args_tuple: TupleTypeName = TupleTypeName(SourceInfo(""), args)
@@ -1163,6 +1420,26 @@ class FunctionTypeName(TypeName):
         self._generic_args: Optional[list[str]] = generic_args
         if isinstance(self._generic_args, list):
             self._generic_args = list(filter(lambda x: x != "", self._generic_args))
+        register_function_type(self)
+
+    @staticmethod
+    def _c_safe_type_name(t: TypeName) -> str:
+        """将类型名转换为合法的C标识符片段。"""
+        return re.sub(r"[^A-Za-z0-9_$]", "$", t.name)
+
+    @classmethod
+    def _make_c_name(cls, args: list[TypeName], returns: list[TypeName]) -> str:
+        """生成唯一的C类型名（按参数与返回类型签名）。"""
+        if cls._IS_ASYNC:
+            # 异步函数指针的参数为参数元组与返回元组
+            prefix: str = "viola$lang$function$A$"
+            args_part: str = TupleTypeName(VIOLA_INIT, args).c_alloc_name
+            rets_part: str = TupleTypeName(VIOLA_INIT, returns).c_alloc_name
+        else:
+            prefix = "viola$lang$function$S$"
+            args_part = "$".join(map(FunctionTypeName._c_safe_type_name, args))
+            rets_part = "$".join(map(FunctionTypeName._c_safe_type_name, returns))
+        return prefix + args_part + "$$R$" + rets_part
 
     @property
     def args(self) -> list[TypeName]:
@@ -1177,6 +1454,25 @@ class FunctionTypeName(TypeName):
         获取参数类型的名称。
         """
         return list(map(lambda t: t.raw_name, self._args))
+
+    @property
+    def c_typedef_text(self) -> str:
+        """获取函数指针typedef文本（用于生成到模块头文件中）。"""
+        if len(self._args) == 0:
+            args_text = ""
+        else:
+            args_text = ", ".join(map(lambda t: t.c_calling_name, self._args))
+        if len(self._returns) == 0:
+            returns_text = ""
+        else:
+            returns_text = ", ".join(map(lambda t: t.c_assigning_name, self._returns))
+        params: str = ", ".join(filter(lambda x: x != "", [args_text, returns_text, LISTENER_T + " *"]))
+        return "\n".join([
+            f"#ifndef _VIOLA_FUNC_T_{self.name}",
+            f"#define _VIOLA_FUNC_T_{self.name}",
+            f"typedef void (*{self.name})({params});",
+            "#endif"
+        ])
 
     def as_header(self, func_name: str) -> str:
         """
@@ -1198,41 +1494,17 @@ class FunctionTypeName(TypeName):
 
     @property
     def c_assigning_name(self) -> str:
-        if len(self._args) == 0:
-            args_text = ""
-        else:
-            args_text = ", ".join(map(lambda t: t.c_calling_name, self._args))
-        if len(self._returns) == 0:
-            returns_text = ""
-        else:
-            returns_text = ", ".join(map(lambda t: t.c_assigning_name, self._returns))
-        return f"void(**)({', '.join([args_text, returns_text, LISTENER_T + ' *'])})"
+        return f"{self.name} *"
 
     @property
     def c_calling_name(self) -> str:
-        if len(self._args) == 0:
-            args_text = ""
-        else:
-            args_text = ", ".join(map(lambda t: t.c_calling_name, self._args))
-        if len(self._returns) == 0:
-            returns_text = ""
-        else:
-            returns_text = ", ".join(map(lambda t: t.c_assigning_name, self._returns))
-        return f"void(*)({', '.join([args_text, returns_text, LISTENER_T + ' *'])})"
+        return f"{self.name} "
 
     def c_calling_name_with_var(self, var_name: str) -> str:
         """
         函数类型变量声明。
         """
-        if len(self._args) == 0:
-            args_text = ""
-        else:
-            args_text = ", ".join(map(lambda t: t.c_calling_name, self._args))
-        if len(self._returns) == 0:
-            returns_text = ""
-        else:
-            returns_text = ", ".join(map(lambda t: t.c_assigning_name, self._returns))
-        return f"void(*{var_name})({', '.join([args_text, returns_text, LISTENER_T + ' *'])})"
+        return f"{self.name} {var_name}"
 
     def convertable_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
@@ -1312,7 +1584,12 @@ class FunctionTypeName(TypeName):
 class AsyncFuncTypeName(FunctionTypeName):
     """
     异步函数类型。
+
+    C语言层的表示为按签名生成的唯一函数指针typedef，
+    参数为参数元组与返回元组（与编译器生成的异步包装函数一致）。
     """
+
+    _IS_ASYNC: bool = True
 
     def __init__(self, src_info: SourceInfo, args: list[TypeName], returns: list[TypeName],
                  generic_args: Optional[list[str]]) -> None:
@@ -1325,19 +1602,40 @@ class AsyncFuncTypeName(FunctionTypeName):
         """
         super().__init__(src_info, args, returns, generic_args)
 
+    @property
+    def _tuple_c_names(self) -> tuple[str, str]:
+        """获取参数元组与返回元组的C类型名称。"""
+        return (
+            TupleTypeName(self._src_info, self._args).c_calling_name,
+            TupleTypeName(self._src_info, self._returns).c_calling_name
+        )
+
+    @property
+    def c_typedef_text(self) -> str:
+        """获取异步函数指针typedef文本（参数为参数元组与返回元组）。"""
+        args_tuple_name, returns_tuple_name = self._tuple_c_names
+        params: str = ", ".join(filter(lambda x: x != "", [args_tuple_name, returns_tuple_name, LISTENER_T + " *"]))
+        return "\n".join([
+            f"#ifndef _VIOLA_FUNC_T_{self.name}",
+            f"#define _VIOLA_FUNC_T_{self.name}",
+            f"typedef void (*{self.name})({params});",
+            "#endif"
+        ])
+
     def as_header(self, func_name: str) -> str:
-        return f"void {func_name}({TUPLE_T} *, {TUPLE_T} *, {LISTENER_T} *)"
+        args_tuple_name, returns_tuple_name = self._tuple_c_names
+        return f"void {func_name}({args_tuple_name}, {returns_tuple_name}, {LISTENER_T} *)"
 
     @property
     def c_assigning_name(self) -> str:
-        return f"void(**)({TUPLE_T} *, {TUPLE_T} *, {LISTENER_T} *)"
+        return f"{self.name} *"
 
     @property
     def c_calling_name(self) -> str:
-        return f"void(*)({TUPLE_T} *, {TUPLE_T} *, {LISTENER_T} *)"
+        return f"{self.name} "
 
     def c_calling_name_with_var(self, var_name: str) -> str:
-        return f"void(*{var_name})({TUPLE_T} *, {TUPLE_T} *, {LISTENER_T} *)"
+        return f"{self.name} {var_name}"
 
     @classmethod
     def from_function_type_name(cls, function_type_name: FunctionTypeName) -> "AsyncFuncTypeName":
@@ -1440,7 +1738,8 @@ class FunctionName(GlobalVariableName):
     """
 
     def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], name: str, t: FunctionTypeName,
-                 arg_names: list[str], ret_names: list[str], export: bool, is_method: bool = False) -> None:
+                 arg_names: list[str], ret_names: list[str], export: bool, is_method: bool = False,
+                 is_native: bool = False) -> None:
         """
         创建函数名称。
         src_info: 源代码信息。
@@ -1450,6 +1749,8 @@ class FunctionName(GlobalVariableName):
         arg_names: 参数名称。
         ret_names: 返回值名称。
         export: 是否导出。
+        is_method: 是否为方法。
+        is_native: 是否为运行库提供的原生函数（编译器不生成其实现，调用时附加$sync后缀）。
         """
         super().__init__(src_info, namespace, name, t)
         if len(arg_names) != len(t.args):
@@ -1461,6 +1762,7 @@ class FunctionName(GlobalVariableName):
         self._arg_types: dict[str, TypeName] = {k: v for k, v in zip(arg_names, t.args)}
         self._kw_type = SymbolType.FUNCTION
         self._is_method = is_method
+        self._is_native: bool = is_native
 
     @property
     def arg_names(self) -> list[str]:
@@ -1514,19 +1816,21 @@ class FunctionName(GlobalVariableName):
     def as_define_name(self) -> str:
         """
         转换为定义时的名称。
+        定义与声明保持一致：参数为c_calling_name类型、返回值为c_assigning_name
+        类型（输出指针）的形参，最后是listener。形参名与函数体内的引用一致。
         """
-        return "void " + self._name + "(" + ", ".join(
-            list(map(lambda t, x: f"{t.name}${x}", self.type.args, self._arg_names)) + [
-                f"{LISTENER_T} *listener"]) + ")"
+        args_text: str = ", ".join(list(map(
+            lambda t, x: f"{t.c_calling_name} {x}", self.type.args, self._arg_names)))
+        rets_text: str = ", ".join(list(map(
+            lambda t, x: f"{t.c_assigning_name} {x}", self.type.returns, self._ret_names)))
+        params: list[str] = list(filter(lambda x: x != "", [args_text, rets_text, f"{LISTENER_T} *listener"]))
+        return "void " + self._name + "(" + ", ".join(params) + ")"
 
     def as_define_name_raw(self) -> str:
         """
-        转换为定义时的名称（不带$符号）。
+        转换为定义时的名称（与as_define_name相同，保留以兼容cpart函数）。
         """
-        return "void " + self._name + "(" + ", ".join(
-            list(map(lambda t, x: f"{t.name}{x}", self.type.args, self._arg_names))
-            + [f"{LISTENER_T} *listener"]
-        ) + ")"
+        return self.as_define_name()
 
     def as_method(self, cls: ClassName) -> "MethodName":
         """
@@ -1597,6 +1901,13 @@ class FunctionName(GlobalVariableName):
         return self._is_method
 
     @property
+    def is_native(self) -> bool:
+        """
+        获取该函数是否为运行库提供的原生函数。
+        """
+        return self._is_native
+
+    @property
     def ret_names(self) -> list[str]:
         """
         获取该函数返回值的名称。
@@ -1636,7 +1947,8 @@ class AsyncFuncName(FunctionName):
     """
 
     def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], name: str, t: AsyncFuncTypeName,
-                 arg_names: list[str], ret_names: list[str], export: bool) -> None:
+                 arg_names: list[str], ret_names: list[str], export: bool, is_method: bool = False,
+                 is_native: bool = False) -> None:
         """
         创建函数名称。
         src_info: 源代码信息。
@@ -1647,22 +1959,33 @@ class AsyncFuncName(FunctionName):
         ret_names: 返回值名称。
         export: 是否导出。
         """
-        super().__init__(src_info, namespace, name, t, arg_names, ret_names, export)
+        super().__init__(src_info, namespace, name, t, arg_names, ret_names, export, is_method, is_native)
 
     def as_define_name(self) -> str:
-        return f"void {self._name}({TUPLE_T} *params, {TUPLE_T} *returns, {LISTENER_T} *listener)"
+        return self._tuple_define_name()
 
     def as_define_name_raw(self) -> str:
-        return f"void {self._name}({TUPLE_T} *params, {TUPLE_T} *returns, {LISTENER_T} *listener)"
+        return self._tuple_define_name()
+
+    def as_declare(self) -> str:
+        return self._tuple_define_name() + ";"
+
+    def _tuple_define_name(self) -> str:
+        """生成异步函数以元组为形参的定义（或声明）名称。"""
+        args_tuple: TupleTypeName = TupleTypeName(self._src_info, self.type.args)
+        returns_tuple: TupleTypeName = TupleTypeName(self._src_info, self.type.returns)
+        return f"void {self._name}({args_tuple.c_calling_name} params, {returns_tuple.c_calling_name} returns, " \
+               f"{LISTENER_T} *listener)"
 
     @classmethod
     def from_function_name(cls, function_name: FunctionName) -> "AsyncFuncName":
         """
         从同步函数名创建。
         """
-        return cls(function_name._src_info, function_name._namespace, function_name._self_name + "$async",
+        return cls(function_name._src_info, function_name._namespace, function_name.name + "$async",
                    AsyncFuncTypeName.from_function_type_name(function_name.type), function_name._arg_names,
-                   function_name._ret_names, function_name._export)
+                   function_name._ret_names, function_name._export, function_name._is_method,
+                   function_name._is_native)
 
 
 class MethodName(PropertyVariableName):
@@ -1671,7 +1994,8 @@ class MethodName(PropertyVariableName):
     """
 
     def __init__(self, src_info: SourceInfo, cls: ClassName, name: str, t: FunctionTypeName, is_abstract: bool,
-                 is_static: bool, arg_names: list[str], ret_names: list[str], modifier: Modifier, export: bool) -> None:
+                 is_static: bool, arg_names: list[str], ret_names: list[str], modifier: Modifier, export: bool,
+                 is_native: bool = False, is_final: bool = False) -> None:
         """
         创建方法名称。
         src_info: 源代码信息。
@@ -1685,21 +2009,23 @@ class MethodName(PropertyVariableName):
         ret_names: 返回值名称。
         modifier: 访问权限。
         export: 是否导出。
+        is_native: 是否为运行库提供的原生方法。
         """
         cls_generic_args: list[str] = cls.generic_args_str if cls.generic_args_str is not None else []
         t_generic_args: list[str] = t.generic_args_str if t.generic_args_str is not None else []
-        is_static = is_static or name == "__new__"
+        is_static = is_static or name == "__new__" or name.startswith("__new__$")
         if not is_static:
             arg_types: list[TypeName] = [cls] + t.args
             t = FunctionTypeName(src_info, arg_types, t.returns, cls_generic_args + t_generic_args)
             arg_names: list[str] = ["_this"] + arg_names
         function_name: FunctionName = FunctionName(src_info, [], name, t, arg_names,
-                                                   ret_names, export, True)
+                                                   ret_names, export, True, is_native)
         super().__init__(src_info, cls.as_namespace(), function_name.name, t, modifier, is_static)
         self._cls: ClassName = cls
         self._is_abstract: bool = is_abstract
         self._modifier: Modifier = modifier
         self._method_name: str = name
+        self._is_final: bool = is_final
         self._function_name: FunctionName = function_name
         self._function_name._kw_type = SymbolType.METHOD
         self._kw_type = SymbolType.METHOD
@@ -1717,8 +2043,9 @@ class MethodName(PropertyVariableName):
 
     def as_function(self) -> FunctionName:
         """
-        转换为函数名。
+        转换为函数名（使用包含类命名空间的完整C名称）。
         """
+        self._function_name.rename(self.name)
         return self._function_name
 
     @property
@@ -1794,6 +2121,20 @@ class MethodName(PropertyVariableName):
         return self._is_abstract
 
     @property
+    def is_final(self) -> bool:
+        """
+        获取该方法是否为最终方法（不可重写）。
+        """
+        return self._is_final
+
+    @property
+    def export(self) -> bool:
+        """
+        获取该方法是否导出（编译器自动生成的方法标记为True）。
+        """
+        return self._function_name.export
+
+    @property
     def is_generic(self) -> bool:
         """
         获取该方法是否为泛型方法。
@@ -1827,7 +2168,8 @@ class MethodName(PropertyVariableName):
                           ),
                           self._is_abstract, self._is_static,
                           self._function_name.arg_names if self._is_static else self._function_name.arg_names[1:],
-                          self._function_name.ret_names, self._modifier, self._function_name.export)
+                          self._function_name.ret_names, self._modifier, self._function_name.export, False,
+                          self._is_final)
 
     def set_default_params(self, default_param_names: list[str]) -> None:
         """
@@ -1858,6 +2200,21 @@ object_destructor: MethodName = MethodName(
     Modifier.PUBLIC,
     True
 )
+
+# 所有元组类型共享的原生析构方法（惰性创建，避免与类型定义的循环依赖）
+_TUPLE_DEL_METHOD: Optional[MethodName] = None
+
+
+def _get_tuple_del_method(src_info: SourceInfo) -> MethodName:
+    """获取（必要时创建）元组共享的原生析构方法。C名称为viola$collections$Tuple$__del__。"""
+    global _TUPLE_DEL_METHOD
+    if _TUPLE_DEL_METHOD is None:
+        shared_cls: ClassName = ClassName(src_info, VIOLA_COLLECTIONS, "Tuple", None, False, False)
+        _TUPLE_DEL_METHOD = MethodName(
+            src_info, shared_cls, "__del__", FunctionTypeName(src_info, [], []), False,
+            False, [], [], Modifier.PRIVATE, True, True
+        )
+    return _TUPLE_DEL_METHOD
 Object.add_property(VIOLA_INIT, "$refCount", UINT32, Modifier.PRIVATE, False)
 Object.add_property(VIOLA_INIT, "$parent", VOID_PTR, Modifier.PRIVATE, False)
 Object.add_method("__del__", object_destructor)
@@ -1896,6 +2253,53 @@ StringTypeName.add_method(
         False, [], [], Modifier.PRIVATE, True
     )
 )
+
+
+def _add_native_method(
+        cls: ClassName, name: str, arg_types: list[TypeName], ret_types: list[TypeName],
+        arg_names: list[str], ret_names: list[str], modifier: Modifier = Modifier.PUBLIC
+) -> None:
+    """向内置类注册一个原生方法（实现由运行库提供）。"""
+    cls.add_method(name, MethodName(
+        VIOLA_INIT, cls, name, FunctionTypeName(VIOLA_INIT, arg_types, ret_types), False,
+        False, arg_names, ret_names, modifier, True, True
+    ))
+
+
+# 字符串方法（0.1运行库，实现于viola_libs/viola/lang/string.c）。
+# 注册顺序决定C名称中的重载序号（$_0、$_1等）。
+_add_native_method(StringTypeName, "__add__", [StringTypeName], [StringTypeName], ["s"], ["result"])
+_add_native_method(StringTypeName, "__eq__", [StringTypeName], [BOOL], ["s"], ["result"])
+_add_native_method(StringTypeName, "__getitem__", [INT64], [StringTypeName], ["index"], ["ch"])
+_add_native_method(StringTypeName, "__getitem__", [SliceTypeName], [StringTypeName], ["s"], ["result"])
+_add_native_method(StringTypeName, "__mul__", [UINT64], [StringTypeName], ["times"], ["result"])
+_add_native_method(StringTypeName, "__ne__", [StringTypeName], [BOOL], ["s"], ["result"])
+_add_native_method(StringTypeName, "__rmul__", [UINT64], [StringTypeName], ["times"], ["result"])
+_add_native_method(StringTypeName, "concat", [StringTypeName], [StringTypeName], ["s"], ["result"])
+_add_native_method(StringTypeName, "endswith", [StringTypeName], [BOOL], ["s"], ["result"])
+_add_native_method(StringTypeName, "endsWith", [StringTypeName], [BOOL], ["s"], ["result"])
+_add_native_method(StringTypeName, "isascii", [], [BOOL], [], ["result"])
+_add_native_method(StringTypeName, "join", [ArrayTypeName(VIOLA_INIT, StringTypeName)], [StringTypeName],
+                   ["s"], ["result"])
+_add_native_method(StringTypeName, "length", [], [SIZE_T], [], ["result"])
+_add_native_method(StringTypeName, "lower", [], [StringTypeName], [], ["result"])
+_add_native_method(StringTypeName, "replace", [StringTypeName, StringTypeName], [StringTypeName],
+                   ["old", "new"], ["result"])
+_add_native_method(StringTypeName, "repeat", [UINT64], [StringTypeName], ["times"], ["result"])
+_add_native_method(StringTypeName, "rsplit", [StringTypeName], [ArrayTypeName(VIOLA_INIT, StringTypeName)],
+                   ["s"], ["results"])
+_add_native_method(StringTypeName, "rsplit", [StringTypeName, UINT64], [ArrayTypeName(VIOLA_INIT, StringTypeName)],
+                   ["s", "maxsplit"], ["results"])
+_add_native_method(StringTypeName, "slice", [INT64, INT64], [StringTypeName], ["start", "end"], ["result"])
+_add_native_method(StringTypeName, "split", [StringTypeName], [ArrayTypeName(VIOLA_INIT, StringTypeName)],
+                   ["s"], ["results"])
+_add_native_method(StringTypeName, "split", [StringTypeName, UINT64], [ArrayTypeName(VIOLA_INIT, StringTypeName)],
+                   ["s", "maxsplit"], ["results"])
+_add_native_method(StringTypeName, "startswith", [StringTypeName], [BOOL], ["s"], ["result"])
+_add_native_method(StringTypeName, "startsWith", [StringTypeName], [BOOL], ["s"], ["result"])
+_add_native_method(StringTypeName, "unicode", [], [ArrayTypeName(VIOLA_INIT, UINT16)], [], ["result"])
+_add_native_method(StringTypeName, "upper", [], [StringTypeName], [], ["result"])
+
 SliceTypeName.add_method(
     "__del__", MethodName(
         VIOLA_INIT, SliceTypeName, "__del__", FunctionTypeName(VIOLA_INIT, [], []), False,
@@ -1904,6 +2308,11 @@ SliceTypeName.add_method(
 )
 
 ExceptionTypeName = ClassName(VIOLA_INIT, VIOLA_LANG_EXCEPTION, "Exception", None, False, False)
+# 与运行库viola$lang$exception$Exception结构体一致的字段
+ExceptionTypeName.add_property(VIOLA_INIT, "$refCount", UINT32, Modifier.PRIVATE, False)
+ExceptionTypeName.add_property(VIOLA_INIT, "$parent", VOID_PTR, Modifier.PRIVATE, False)
+ExceptionTypeName.add_property(VIOLA_INIT, "$$vtable", VOID_PTR, Modifier.PUBLIC, False)
+ExceptionTypeName.add_property(VIOLA_INIT, "message", StringTypeName, Modifier.PUBLIC, False)
 ExceptionTypeName.add_method(
     "__new__",
     MethodName(
@@ -1926,12 +2335,12 @@ _exception_what = MethodName(
     ExceptionTypeName,
     "what",
     FunctionTypeName(
-        VIOLA_INIT, [ExceptionTypeName], [StringTypeName]
+        VIOLA_INIT, [], [StringTypeName]
     ),
     False,
     False,
-    ["this"],
-    ["this"],
+    [],
+    ["result"],
     Modifier.PUBLIC,
     True
 )
@@ -1939,6 +2348,15 @@ ExceptionTypeName.add_method(
     "what",
     _exception_what
 )
+ExceptionTypeName.add_method(
+    "__del__", MethodName(
+        VIOLA_INIT, ExceptionTypeName, "__del__", FunctionTypeName(VIOLA_INIT, [], []), False,
+        False, [], [], Modifier.PRIVATE, True
+    )
+)
+# 内置泛型指针类型（unsafe Pointer::<T>），C层表示为void *
+PointerGenericClassName: ClassName = ClassName(VIOLA_INIT, VIOLA_LANG, "Pointer", None, False, False, ["T"])
+
 _perror = FunctionName(
     VIOLA_INIT,
     VIOLA_IO,
@@ -1951,6 +2369,47 @@ _perror = FunctionName(
 _print = FunctionName(
     VIOLA_INIT, VIOLA_IO, "print", FunctionTypeName(VIOLA_INIT, [StringTypeName], []),
     ["text"], [], True
+)
+_input = FunctionName(
+    VIOLA_INIT, VIOLA_IO, "input", FunctionTypeName(VIOLA_INIT, [], [StringTypeName]),
+    [], ["result"], True
+)
+
+# 文件类型与文件操作（0.1运行库，实现于viola_libs/viola/io/file.c）
+FileTypeName = ClassName(VIOLA_INIT, VIOLA_IO, "file", None, False, False)
+FileTypeName.add_method(
+    "__del__", MethodName(
+        VIOLA_INIT, FileTypeName, "__del__", FunctionTypeName(VIOLA_INIT, [], []), False,
+        False, [], [], Modifier.PRIVATE, True
+    )
+)
+_open = FunctionName(
+    VIOLA_INIT, VIOLA_IO, "open",
+    FunctionTypeName(VIOLA_INIT, [StringTypeName, StringTypeName, StringTypeName], [FileTypeName]),
+    ["path", "mode", "encoding"], ["f"], True
+)
+# open的默认参数：mode = "r"，encoding = "utf-8"。
+# 原生函数的默认参数全局变量由运行库viola_libs/viola/io/file.c定义
+_open.set_default_params(["mode", "encoding"])
+_read = FunctionName(
+    VIOLA_INIT, VIOLA_IO, "read",
+    FunctionTypeName(VIOLA_INIT, [FileTypeName], [StringTypeName]),
+    ["f"], ["result"], True
+)
+_read_bytes = FunctionName(
+    VIOLA_INIT, VIOLA_IO, "readBytes",
+    FunctionTypeName(VIOLA_INIT, [FileTypeName], [ArrayTypeName(VIOLA_INIT, UINT8)]),
+    ["f"], ["result"], True
+)
+_write = FunctionName(
+    VIOLA_INIT, VIOLA_IO, "write",
+    FunctionTypeName(VIOLA_INIT, [FileTypeName, StringTypeName], []),
+    ["f", "content"], [], True
+)
+_write_bytes = FunctionName(
+    VIOLA_INIT, VIOLA_IO, "writeBytes",
+    FunctionTypeName(VIOLA_INIT, [FileTypeName, ArrayTypeName(VIOLA_INIT, UINT8)], []),
+    ["f", "content"], [], True
 )
 
 
@@ -2031,7 +2490,7 @@ class GenericTable:
             if t in self._function_instances[function_name]:
                 raise InternalCompilerException("Function already exists.", self._source_info)
             self._function_instances[function_name][t] = function_name.instantiation_full(
-                f"{function_name.name}$_{len(self._function_instances[function_name])}", list(t)
+                f"{function_name.self_name}$_{len(self._function_instances[function_name])}", list(t)
             )
         else:
             raise InternalCompilerException("Function does not exist.", self._source_info)
@@ -2047,9 +2506,18 @@ class GenericTable:
             instances = self._function_instances
         else:
             raise InternalCompilerException("Unexpected type of symbol.", src_info)
-        if symbol not in instances:
-            return []
-        return list(instances[symbol].keys())
+        result: list[tuple[TypeName, ...]] = []
+        if symbol in instances:
+            for t in instances[symbol].keys():
+                # 泛型函数体内的递归调用（类型参数仍为泛型参数）不产生具体实例
+                if all(not isinstance(x, GenericArgument) for x in t):
+                    result.append(t)
+        if isinstance(symbol, FunctionName):
+            # 合并其他模块发起的实例化请求（调用发生在调用方模块）
+            for t in _GENERIC_FUNC_INSTANCE_REQUESTS.get(symbol.name, set()):
+                if all(not isinstance(x, GenericArgument) for x in t) and t not in result:
+                    result.append(t)
+        return result
 
     def get_cls_instance(self, class_name: ClassName, t: tuple[TypeName, ...]) -> ClassName:
         """
@@ -2213,6 +2681,9 @@ class _TypeNameParser:
         self._lexer: _TypeNameLexer = _TypeNameLexer()
 
     def parse(self, src_info: SourceInfo, type_str: str) -> Optional[TypeName]:
+        if type_str.strip() == "void":
+            # void类型等效于()类型（空元组）
+            return TupleTypeName(src_info, [])
         self._src_info = src_info
         self._current: int = -1
         self._tokens = self._lexer.lex(src_info, type_str) + [Token("", ["_EOF"], src_info)]
@@ -2275,6 +2746,8 @@ class _TypeNameParser:
                     return None
                 children_types.append(child)
                 expect_comma = True
+                # 前进到子类型之后（逗号或结束符号）
+                self._next()
             else:
                 return None
         return children_types
@@ -2287,16 +2760,6 @@ class _TypeNameParser:
             result: Optional[TypeName] = self._real_type_getter(self._tokens[self._current].text)
             if result is None:
                 return None
-            if self._current >= self._tokens_num - 1:
-                return result
-            self._next()
-            if self._match_type("::<"):
-                if not isinstance(result, ClassName):
-                    return None
-                type_args: Optional[list[TypeName]] = self._parse_type_list(">")
-                if type_args is None:
-                    return None
-                result = self._generic_table.get_cls_instance(result, tuple(type_args))
         elif self._match_type("("):
             self._back()
             result = self._parse_function_type_name()
@@ -2304,12 +2767,21 @@ class _TypeNameParser:
                 return None
         else:
             return None
-        while self._current < self._tokens_num:
+        # 数组后缀（[]）与泛型参数（::<...>）可以依次出现
+        while self._current < self._tokens_num - 1:
+            self._next()
             if self._match_type("[]"):
                 result = ArrayTypeName(self._src_info, result)
-                self._next()
+            elif self._match_type("::<"):
+                if not isinstance(result, ClassName):
+                    return None
+                type_args: Optional[list[TypeName]] = self._parse_type_list(">")
+                if type_args is None:
+                    return None
+                result = self._generic_table.get_cls_instance(result, tuple(type_args))
             else:
-                return result
+                self._back()
+                break
         return result
 
 
@@ -2323,18 +2795,245 @@ class SymbolTable:
         VIOLA_IO,
         VIOLA_COLLECTIONS
     )
+    # viola.math绑定：一元与二元浮点函数（名称，参数类型，返回类型）
+    _MATH_BINDINGS: list[tuple[str, list[TypeName], list[TypeName]]] = [
+        (name, [FLOAT64], [FLOAT64]) for name in [
+            "sqrt", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
+            "exp", "log", "log10", "log2", "fabs", "floor", "ceil", "round", "trunc"
+        ]
+    ] + [
+        (name, [FLOAT64, FLOAT64], [FLOAT64]) for name in [
+            "pow", "atan2", "fmod", "fmin", "fmax"
+        ]
+    ] + [
+        ("pi", [], [FLOAT64]),
+        ("e", [], [FLOAT64])
+    ]
+    # viola.os绑定
+    _OS_BINDINGS: list[tuple[str, list[TypeName], list[TypeName]]] = [
+        ("sleep", [UINT64], []),
+        ("exit", [INT32], []),
+        ("getEnv", [StringTypeName], [StringTypeName]),
+        ("time", [], [UINT64]),
+        ("system", [StringTypeName], [INT32])
+    ]
+    # viola.threads的Viola接口
+    _THREADS_BINDINGS: list[tuple[str, list[TypeName], list[TypeName]]] = [
+        ("addThread", [UINT32], []),
+        ("delThread", [UINT32], []),
+        ("getThreadsNum", [], [UINT32]),
+        ("setThreadsNum", [UINT32], [])
+    ]
+
+    @property
+    def current_cls(self) -> Optional[ClassName]:
+        """
+        获取当前正在编译的类（用于访问权限检查）。
+        """
+        return self._current_cls
+
+    @current_cls.setter
+    def current_cls(self, cls: Optional[ClassName]) -> None:
+        self._current_cls = cls
+
+    @classmethod
+    def tuple_type_defs(cls) -> list[str]:
+        """获取所有已注册元组类型的typedef文本（惰性生成）。"""
+        return list(map(lambda t: t.c_typedef_text, _TUPLE_TYPE_DEFS.values()))
+
+    @classmethod
+    def function_type_defs(cls) -> list[str]:
+        """获取所有已注册函数类型的函数指针typedef文本（惰性生成）。"""
+        sync_defs: list[str] = []
+        async_defs: list[str] = []
+        for t in _FUNCTION_TYPE_DEFS.values():
+            if t._IS_ASYNC:
+                async_defs.append(t.c_typedef_text)
+            else:
+                sync_defs.append(t.c_typedef_text)
+        return sync_defs + async_defs
+
+    @classmethod
+    def function_type_defs_sync(cls) -> list[str]:
+        """获取同步函数类型的typedef文本（不依赖元组类型定义）。"""
+        return [t.c_typedef_text for t in _FUNCTION_TYPE_DEFS.values() if not t._IS_ASYNC]
+
+    @classmethod
+    def function_type_defs_async(cls) -> list[str]:
+        """获取异步函数类型的typedef文本（引用参数/返回元组类型）。"""
+        return [t.c_typedef_text for t in _FUNCTION_TYPE_DEFS.values() if t._IS_ASYNC]
+
+    @classmethod
+    def array_type_decl_texts(cls) -> list[str]:
+        """获取所有已注册数组类型的结构体定义与方法声明文本。"""
+        results: list[str] = []
+        for arr_name, elem in _ARRAY_TYPE_DEFS.items():
+            elem_asg: str = elem.c_assigning_name
+            elem_call: str = elem.c_calling_name
+            results.append("\n".join([
+                f"#ifndef _VIOLA_ARRAY_T_{arr_name}",
+                f"#define _VIOLA_ARRAY_T_{arr_name}",
+                "typedef struct {",
+                "\tviola$lang$uint32 $refCount;",
+                "\tviola$lang$ptr $parent;",
+                f"\t{elem_asg} data;",
+                "\tviola$lang$uint64 size;",
+                f"}} {arr_name};",
+                f"void {arr_name}$__getitem__$_0({arr_name} *_this, viola$lang$uint64 item, "
+                f"{elem_asg} element, viola$threads$Listener *listener);",
+                f"void {arr_name}$__getitem__$_1({arr_name} *_this, viola$lang$slice *s, "
+                f"{arr_name} ** subarray, viola$threads$Listener *listener);",
+                f"void {arr_name}$concat$_0({arr_name} *_this, {arr_name} *other, "
+                f"{arr_name} ** result, viola$threads$Listener *listener);",
+                f"void {arr_name}$append$_0({arr_name} *_this, {elem_call} newElement, "
+                f"{arr_name} ** newArray, viola$threads$Listener *listener);",
+                f"void {arr_name}$insert$_0({arr_name} *_this, viola$lang$int64 location, "
+                f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener);",
+                f"void {arr_name}$length$_0({arr_name} *_this, viola$lang$uint64 * result, "
+                f"viola$threads$Listener *listener);",
+                f"void {arr_name}$__setitem__$_0({arr_name} *_this, viola$lang$uint64 index, "
+                f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener);",
+                f"void {arr_name}$__setitem__$_1({arr_name} *_this, viola$lang$slice *s, "
+                f"{arr_name} *newSubarray, {arr_name} ** newArray, viola$threads$Listener *listener);",
+                f"void {arr_name}$__del__({arr_name} *_this, viola$threads$Listener *listener);",
+                "#endif"
+            ]))
+        return results
+
+    @classmethod
+    def array_type_impl_texts(cls) -> list[str]:
+        """获取所有已注册数组类型方法的C实现文本（生成到唯一编译单元__main__.c中）。"""
+        results: list[str] = []
+        for arr_name, elem in _ARRAY_TYPE_DEFS.items():
+            elem_asg: str = elem.c_assigning_name
+            elem_call: str = elem.c_calling_name
+            elem_size: str = f"sizeof({elem_call.strip()})"
+            new_arr: str = (
+                f"{arr_name} *newResult = ({arr_name} *)malloc(sizeof({arr_name})); "
+                f"newResult->$refCount = 1; newResult->$parent = NULL;"
+            )
+            results.append("\n".join([
+                # 下标访问
+                f"void {arr_name}$__getitem__$_0({arr_name} *_this, viola$lang$uint64 item, "
+                f"{elem_asg} element, viola$threads$Listener *listener) {{",
+                "\t*element = _this->data[item];",
+                "}",
+                # 切片访问
+                f"void {arr_name}$__getitem__$_1({arr_name} *_this, viola$lang$slice *s, "
+                f"{arr_name} ** subarray, viola$threads$Listener *listener) {{",
+                "\tviola$lang$uint64 start = s->start;",
+                "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
+                "\tviola$lang$uint64 step = s->step;",
+                "\tviola$lang$uint64 count = start < end ? (end - start + step - 1) / step : 0;",
+                f"\t{new_arr}",
+                "\tnewResult->size = count;",
+                f"\tnewResult->data = count == 0 ? NULL : ({elem_asg})malloc({elem_size} * count);",
+                "\tviola$lang$uint64 j = 0;",
+                "\tfor (viola$lang$uint64 i = start; i < end; i += step) { newResult->data[j++] = _this->data[i]; }",
+                "\t*subarray = newResult;",
+                "}",
+                # 连接
+                f"void {arr_name}$concat$_0({arr_name} *_this, {arr_name} *other, "
+                f"{arr_name} ** result, viola$threads$Listener *listener) {{",
+                f"\t{new_arr}",
+                "\tnewResult->size = _this->size + other->size;",
+                f"\tnewResult->data = newResult->size == 0 ? NULL : ({elem_asg})malloc({elem_size} * newResult->size);",
+                "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) { newResult->data[i] = _this->data[i]; }",
+                "\tfor (viola$lang$uint64 i = 0; i < other->size; i++) { newResult->data[_this->size + i] = other->data[i]; }",
+                "\t*result = newResult;",
+                "}",
+                # 追加
+                f"void {arr_name}$append$_0({arr_name} *_this, {elem_call} newElement, "
+                f"{arr_name} ** newArray, viola$threads$Listener *listener) {{",
+                f"\t{new_arr}",
+                "\tnewResult->size = _this->size + 1;",
+                f"\tnewResult->data = ({elem_asg})malloc({elem_size} * newResult->size);",
+                "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) { newResult->data[i] = _this->data[i]; }",
+                "\tnewResult->data[_this->size] = newElement;",
+                "\t*newArray = newResult;",
+                "}",
+                # 插入
+                f"void {arr_name}$insert$_0({arr_name} *_this, viola$lang$int64 location, "
+                f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener) {{",
+                "\tviola$lang$uint64 loc = location < 0 ? 0 : (viola$lang$uint64)location;",
+                "\tloc = loc > _this->size ? _this->size : loc;",
+                f"\t{new_arr}",
+                "\tnewResult->size = _this->size + 1;",
+                f"\tnewResult->data = ({elem_asg})malloc({elem_size} * newResult->size);",
+                "\tfor (viola$lang$uint64 i = 0; i < loc; i++) { newResult->data[i] = _this->data[i]; }",
+                "\tnewResult->data[loc] = newElement;",
+                "\tfor (viola$lang$uint64 i = loc; i < _this->size; i++) { newResult->data[i + 1] = _this->data[i]; }",
+                "\t*newArray = newResult;",
+                "}",
+                # 长度
+                f"void {arr_name}$length$_0({arr_name} *_this, viola$lang$uint64 * result, "
+                f"viola$threads$Listener *listener) {{",
+                "\t*result = _this->size;",
+                "}",
+                # 索引赋值
+                f"void {arr_name}$__setitem__$_0({arr_name} *_this, viola$lang$uint64 index, "
+                f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener) {{",
+                f"\t{new_arr}",
+                "\tnewResult->size = _this->size;",
+                f"\tnewResult->data = newResult->size == 0 ? NULL : ({elem_asg})malloc({elem_size} * newResult->size);",
+                "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) { newResult->data[i] = _this->data[i]; }",
+                "\tnewResult->data[index] = newElement;",
+                "\t*newArray = newResult;",
+                "}",
+                # 切片赋值
+                f"void {arr_name}$__setitem__$_1({arr_name} *_this, viola$lang$slice *s, "
+                f"{arr_name} *newSubarray, {arr_name} ** newArray, viola$threads$Listener *listener) {{",
+                "\tviola$lang$uint64 start = s->start;",
+                "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
+                f"\t{new_arr}",
+                "\tnewResult->size = _this->size - (end - start) + newSubarray->size;",
+                f"\tnewResult->data = newResult->size == 0 ? NULL : ({elem_asg})malloc({elem_size} * newResult->size);",
+                "\tviola$lang$uint64 j = 0;",
+                "\tfor (viola$lang$uint64 i = 0; i < start; i++) { newResult->data[j++] = _this->data[i]; }",
+                "\tfor (viola$lang$uint64 i = 0; i < newSubarray->size; i++) { newResult->data[j++] = newSubarray->data[i]; }",
+                "\tfor (viola$lang$uint64 i = end; i < _this->size; i++) { newResult->data[j++] = _this->data[i]; }",
+                "\t*newArray = newResult;",
+                "}",
+                # 析构
+                f"void {arr_name}$__del__$_0({arr_name} *_this, viola$threads$Listener *listener) {{",
+                "\tif (_this->$refCount == 0) {",
+                "\t\tif (_this->$parent) { ((viola$lang$uint32 *)_this->$parent)[0]--; }",
+                "\t\telse {",
+                "\t\t\tfree(_this->data); _this->data = NULL;",
+                "\t\t\tfree(_this); _this = NULL;",
+                "\t\t}",
+                "\t}",
+                "}"
+            ]))
+        return results
 
     def __contains__(self, item: tuple[NamedSymbol | str, Optional[tuple[TypeName, ...]]]) -> bool:
         """
         判断一个符号是否存在于表中。
         """
         if isinstance(item[0], TypeName):
-            return all(t in self.symbols for t in item[0].used_types)
+            # 组合类型（元组、数组、函数等）检查其成员类型是否都已定义
+            for t in item[0].used_types:
+                if (t.name, None) in self.symbols or (self.clean_namespace(t.name), None) in self.symbols:
+                    continue
+                if isinstance(t, (TupleTypeName, ArrayTypeName, FunctionTypeName, ClassName)):
+                    if not self.__contains__((t, None)):
+                        return False
+                    continue
+                return False
+            return True
         if isinstance(item[0], NamedSymbol):
             if item[0].name.startswith(self._namespace_name + "$"):
                 return (item[0].name[len(self._namespace_name):], item[1]) in self.symbols
             return item[0] in self.symbols.values()
-        item = self.clean_namespace(item[0]), item[1]
+        original_name: str = item[0] if isinstance(item[0], str) else item[0].name
+        if original_name.startswith(TUPLE_T + "$") or original_name.endswith("$$array"):
+            # 组合类型（元组/数组）由编译器按需生成结构体定义
+            return True
+        if original_name.startswith("viola$lang$Pointer$") or original_name.startswith("Pointer$"):
+            # 指针类型
+            return True
+        item = self.clean_namespace(original_name), item[1]
         if item not in self.symbols:
             functions: list[tuple[str, Optional[tuple[TypeName, ...]]]] = [k for k in self.symbols.keys() if k[0] == item[0]]
             if isinstance(item[0], str) and item[1] is None:
@@ -2384,11 +3083,26 @@ class SymbolTable:
             if len(result) == 1:
                 return result[0]
             elif len(result) > 1:
+                # 子类重写的方法优先于继承的抽象方法；自身定义的方法优先于继承的方法
+                concrete = list(filter(lambda m: not m.is_abstract, result))
+                if len(concrete) == 1:
+                    return concrete[0]
+                if len(concrete) > 1:
+                    own = list(filter(lambda m: m.cls.name == self[cls_name, None].name, concrete))
+                    if len(own) == 1:
+                        return own[0]
                 raise CompilerException(f"Ambiguous method call: {cls_name}.{attr_name}({', '.join(t.raw_name for t in types)})", self._src_info)
             result = self.find_methods(cls_name, attr_name, [t.name for t in types], {})
             if len(result) == 1:
                 return result[0]
             elif len(result) > 1:
+                concrete = list(filter(lambda m: not m.is_abstract, result))
+                if len(concrete) == 1:
+                    return concrete[0]
+                if len(concrete) > 1:
+                    own = list(filter(lambda m: m.cls.name == self[cls_name, None].name, concrete))
+                    if len(own) == 1:
+                        return own[0]
                 raise CompilerException(f"Ambiguous method call: {cls_name}.{attr_name}({', '.join(t.raw_name for t in types)})", self._src_info)
         # item = item.replace(".", "$")
         if (item, types) not in self.symbols:
@@ -2401,6 +3115,12 @@ class SymbolTable:
                 item2 = item.replace(".", "$")
                 if (item2, None) in self.symbols:
                     return self.symbols[item2, None]
+                if item2.startswith("viola$lang$Pointer$") or item2.startswith("Pointer$"):
+                    # 指针类型：按指向的元素类型重建
+                    element_name = item2.split("Pointer$", 1)[1]
+                    element = self[element_name, None]
+                    if isinstance(element, TypeName):
+                        return PointerTypeName(self._src_info, element)
                 result = self._type_name_parser.parse(self._src_info, item2)
                 if result is not None and isinstance(result, ClassName) and (result.self_name, None) not in self.symbols:
                     self.add_to_root(result, result.self_name, None)
@@ -2418,9 +3138,43 @@ class SymbolTable:
         """
         self._symbols: list[dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]] = [{}]
         self._func_overload_times: dict[str, int] = {}
+        self._current_cls: Optional[ClassName] = None
         if not src_path == "" and not workspace == "":
+            # 元数据中的路径为缓存路径（含__viola_cache__与..段），
+            # 还原为真实的源文件路径
+            src_path = os.path.normpath(src_path)
+            workspace = os.path.normpath(workspace)
             src_path = os.path.splitext(src_path)[0]
-            dir_list: list[str] = os.path.relpath(src_path, workspace).replace("-", "_").split(os.sep)
+            rel: str = os.path.relpath(src_path, workspace)
+            if rel.startswith(".."):
+                # 模块位于工作区之外（如运行库viola_libs）：相对VIOLA_HOME计算命名空间
+                if "VIOLA_HOME" in os.environ:
+                    for lib_root in os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":"):
+                        lib_root = lib_root.strip()
+                        if lib_root == "":
+                            continue
+                        try:
+                            rel_in_lib: str = os.path.relpath(src_path, lib_root)
+                        except ValueError:
+                            continue
+                        if not rel_in_lib.startswith(".."):
+                            rel = rel_in_lib
+                            break
+            if rel == "":
+                # 元数据还原后无法推导：尝试相对VIOLA_HOME
+                if "VIOLA_HOME" in os.environ:
+                    for lib_root in os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":"):
+                        lib_root = lib_root.strip()
+                        if lib_root == "":
+                            continue
+                        try:
+                            rel_in_lib: str = os.path.relpath(src_path, lib_root)
+                        except ValueError:
+                            continue
+                        if not rel_in_lib.startswith(".."):
+                            rel = rel_in_lib
+                            break
+            dir_list: list[str] = rel.replace("-", "_").split(os.sep)
         else:
             dir_list = []
         self._namespace: list[NamespaceName] = list(map(lambda x: NamespaceName(x), dir_list))
@@ -2456,12 +3210,42 @@ class SymbolTable:
         ]
         for t in builtin_types:
             self.add(t, t.self_name, None)
+        self.add(SIZE_T, "size_t", None)
+        self.add(PointerGenericClassName, PointerGenericClassName.self_name, None)
+        self._generic_table.add_cls_def(PointerGenericClassName)
         self.add(Object, Object.self_name, None)
         self.add(StringTypeName, StringTypeName.self_name, None)
         self.add(SliceTypeName, SliceTypeName.self_name, None)
         self.add(ExceptionTypeName, ExceptionTypeName.self_name, None)
+        self.add(FileTypeName, FileTypeName.self_name, None)
         self.add(_perror, _perror.self_name, [StringTypeName])
         self.add(_print, _print.self_name, [StringTypeName])
+        self.add(_input, _input.self_name, [])
+        self.add(_open, _open.self_name, [StringTypeName, StringTypeName, StringTypeName])
+        self.add(_read, _read.self_name, [FileTypeName])
+        self.add(_read_bytes, _read_bytes.self_name, [FileTypeName])
+        self.add(_write, _write.self_name, [FileTypeName, StringTypeName])
+        self.add(_write_bytes, _write_bytes.self_name, [FileTypeName, ArrayTypeName(VIOLA_INIT, UINT8)])
+        # viola.math 与 viola.os 的绑定函数（原生，实现于运行库）
+        for name, args, rets in SymbolTable._MATH_BINDINGS:
+            func = FunctionName(VIOLA_INIT, [NamespaceName("viola"), NamespaceName("math")], name,
+                                FunctionTypeName(VIOLA_INIT, args, rets),
+                                [f"arg{i}" for i in range(len(args))],
+                                [f"ret{i}" for i in range(len(rets))], True)
+            self.add(func, func.self_name, args)
+        for name, args, rets in SymbolTable._OS_BINDINGS:
+            func = FunctionName(VIOLA_INIT, [NamespaceName("viola"), NamespaceName("os")], name,
+                                FunctionTypeName(VIOLA_INIT, args, rets),
+                                [f"arg{i}" for i in range(len(args))],
+                                [f"ret{i}" for i in range(len(rets))], True)
+            self.add(func, func.self_name, args)
+        # viola.threads 的Viola接口
+        for name, args, rets in SymbolTable._THREADS_BINDINGS:
+            func = FunctionName(VIOLA_INIT, [NamespaceName("viola"), NamespaceName("threads")], name,
+                                FunctionTypeName(VIOLA_INIT, args, rets),
+                                [f"arg{i}" for i in range(len(args))],
+                                [f"ret{i}" for i in range(len(rets))], True)
+            self.add(func, func.self_name, args)
 
     def add(self, symbol: NamedSymbol, name: str, types: Optional[list[TypeName]]) -> None:
         """
@@ -2577,6 +3361,17 @@ class SymbolTable:
         matches = dict(map(
             lambda x: (x[0][0], x[1]) if not x[1].kw_type == SymbolType.FUNCTION else x, matches.items()
         ))
+        # 精确匹配优先：参数数量相同且每个参数类型名称完全一致时，优先选择精确匹配的重载
+        exact_matches = dict(filter(
+            lambda x: len(x[0][1]) == args_length and all(
+                args_tuple[i].name == x[0][1][i].name for i in range(args_length)
+            ) and all(
+                x[1].arg_types_dict[y].name == kwargs_declaration[y].name for y in kwargs_declaration.keys()
+            ),
+            matches.items()
+        ))
+        if len(exact_matches) > 0:
+            return list(exact_matches.values())
         return list(matches.values())
 
     def find_method(self, src_info: SourceInfo, cls_name: str, name: str, args: Optional[list[str]],
@@ -2656,6 +3451,7 @@ class SymbolTable:
         """
         获取泛型函数的实例化对象。
         """
+        _GENERIC_FUNC_INSTANCE_REQUESTS.setdefault(func_name.name, set()).add(t)
         return self._generic_table.get_func_instance(func_name, t)
 
     def get_generic_instance(self, name: ClassName | FunctionName | MethodName,
@@ -2820,21 +3616,32 @@ class SymbolTable:
             item_args: list[str] = item[2].split("%") if len(item) > 2 else []
             item_returns: list[str] = item[3].split("%") if len(item) > 3 else []
             item_default_args: list[str] = item[4].split(" ") if len(item) > 4 else []
-        # noinspection PyTypeChecker
-        args = list(map(lambda arg: self[arg, None], item_args[::2])) if len(item_args) > 1 else []
-        if any(map(lambda arg: not isinstance(arg, TypeName), args)):
-            raise CompilerException("Function arguments must be types.", self._src_info)
-        if (item_name, tuple(args)) in self:
-            raise CompilerException(f"Function {item_name} already exists.", self._src_info)
-        args: list[TypeName]
-        # noinspection PyTypeChecker
-        returns: list[TypeName] = list(map(lambda ret: self[ret, None], item_returns[::2])) if len(item_returns) > 1 else []
-        if any(map(lambda ret: not isinstance(ret, TypeName), returns)):
-            raise CompilerException("Function returns must be types.", self._src_info)
+        # 泛型参数在解析参数/返回类型期间临时注册为符号
+        generic_arg_objs: list[GenericArgument] = [GenericArgument(self._src_info, g) for g in generic_args if g != ""]
+        for arg in generic_arg_objs:
+            self.add(arg, arg.name, None)
+        try:
+            # noinspection PyTypeChecker
+            args = list(map(lambda arg: self[arg, None], item_args[::2])) if len(item_args) > 1 else []
+            if any(map(lambda arg: not isinstance(arg, TypeName), args)):
+                raise CompilerException("Function arguments must be types.", self._src_info)
+            if (item_name, tuple(args)) in self:
+                raise CompilerException(f"Function {item_name} already exists.", self._src_info)
+            args: list[TypeName]
+            # noinspection PyTypeChecker
+            returns: list[TypeName] = list(map(lambda ret: self[ret, None], item_returns[::2])) if len(item_returns) > 1 else []
+            if any(map(lambda ret: not isinstance(ret, TypeName), returns)):
+                raise CompilerException("Function returns must be types.", self._src_info)
+        finally:
+            for arg in generic_arg_objs:
+                self.remove(arg.name)
         func_type = FunctionTypeName(self._src_info, args, returns, generic_args)
         if item_name not in self._func_overload_times:
             self._func_overload_times[item_name] = 0
         func_namespace, func_self_name = SymbolTable._split_qualified_name(item_name)
+        if len(func_namespace) == 0:
+            # 未限定的函数名使用本模块的命名空间
+            func_namespace = self._namespace
         func = FunctionName(self._src_info, func_namespace,
                             f"{func_self_name}$_{self._func_overload_times[item_name]}", func_type,
                             item_args[1::2] if len(item_args) > 1 else [],
@@ -2849,6 +3656,9 @@ class SymbolTable:
             if v is not None:
                 self.add(v, k, None)
         self.add(func, item_name, args)
+        if len(generic_args) > 0:
+            # 泛型函数注册到泛型表，供泛型调用实例化
+            self._generic_table.add_func_def(func)
 
     def _read_global_var_decl(self, item: list[str]) -> None:
         """
@@ -2859,6 +3669,9 @@ class SymbolTable:
         item_name: str = item[1]
         item_type: str = item[0]
         var_namespace, var_self_name = SymbolTable._split_qualified_name(item_name)
+        if len(var_namespace) == 0:
+            # 未限定的变量名使用本模块的命名空间
+            var_namespace = self._namespace
         # noinspection PyTypeChecker
         self.add(GlobalVariableName(self._src_info, var_namespace, var_self_name, self[item_type, None]), item_name, None)
 
@@ -2884,9 +3697,16 @@ class SymbolTable:
         generic_arg_obj_cls: list[GenericArgument] = cls.generic_args if cls.generic_args is not None else []
         for arg in generic_arg_obj_cls:
             self.add(arg, arg.name, None)
-        is_abstract: bool = "abstract" in item_name[2:]
-        is_static: bool = "static" in item_name[2:] or method_name.endswith(".__new__")
+        is_abstract: bool = "abstract" in item_name[2:] or cls.is_interface
+        is_static: bool = "static" in item_name[2:] or method_name.endswith(".__new__") or method_name == "__new__"
         export: bool = "export" in item_name[2:]
+        is_final: bool = "final" in item_name[2:]
+        # 父类的final方法不可重写
+        if cls.parent is not None and cls.parent != Object:
+            for (p_name, _), p_method in cls.parent.methods.items():
+                if p_name == method_name and p_method.is_final:
+                    raise CompilerException(
+                        f"Method {cls.raw_name}.{method_name} can not override final method.", self._src_info)
         item_args: list[str] = item[2].split("%")
         item_returns: list[str] = item[3].split("%")
         item_default_args: list[str] = item[4].split(" ")
@@ -2907,7 +3727,7 @@ class SymbolTable:
         method = MethodName(
             self._src_info, cls, f"{method_name}$_{self._func_overload_times[f'{cls.name}.{method_name}']}",
             func_type, is_abstract, is_static, item_args[1::2] if len(item_args) > 1 else [],
-            item_returns[1::2] if len(item_returns) > 1 else [], modifier, export
+            item_returns[1::2] if len(item_returns) > 1 else [], modifier, export, False, is_final
         )
         self._func_overload_times[f"{cls.name}.{method_name}"] += 1
         method.set_default_params(item_default_args)
@@ -2933,17 +3753,44 @@ class SymbolTable:
         if (cls_name, None) in self:
             raise CompilerException(f"Class {cls_name} already exists.", self._src_info)
         cls_namespace, cls_self_name = SymbolTable._split_qualified_name(cls_name)
+        if len(cls_namespace) == 0:
+            # 未限定的类名使用本模块的命名空间
+            cls_namespace = self._namespace
+        modifiers: list[str] = item[0].split(" ")[1:]
         parent: ClassName = Object
-        if item[0].split(" ")[0].split("%")[1] != "object":
-            parent_name = item[0].split(" ")[0].split("%")[1]
+        parents_text: str = item[0].split(" ")[0].split("%")[1]
+        if parents_text != "object":
+            parent_names: list[str] = parents_text.split(",")
             # noinspection PyTypeChecker
-            parent = self[parent_name, None]
+            parent = self[parent_names[0], None]
             if not isinstance(parent, ClassName):
-                raise CompilerException(f"$parent class {parent_name} is not a class.", self._src_info)
-        is_abstract: bool = "abstract" in item[0].split(" ")[1:]
-        is_c_part: bool = "c" in item[0].split(" ")[1:]
-        generic_args: list[str] = item[1].split(" ")
-        cls = ClassName(self._src_info, cls_namespace, cls_self_name, parent, is_abstract, is_c_part, generic_args)
+                raise CompilerException(f"$parent class {parent_names[0]} is not a class.", self._src_info)
+            if parent.is_final:
+                raise CompilerException(f"Class {parent_names[0]} is final and can not be inherited.", self._src_info)
+            # 其余父类型为实现的接口
+            interfaces: list[ClassName] = []
+            for interface_name in parent_names[1:]:
+                # noinspection PyTypeChecker
+                interface = self[interface_name, None]
+                if not isinstance(interface, ClassName) or not interface.is_interface:
+                    raise CompilerException(f"{interface_name} is not an interface.", self._src_info)
+                interfaces.append(interface)
+            cls_interfaces = interfaces
+        is_abstract: bool = "abstract" in modifiers
+        is_c_part: bool = "c" in modifiers
+        is_final: bool = "final" in modifiers
+        is_wrapper: bool = "wrapper" in modifiers
+        is_unsafe: bool = "unsafe" in modifiers
+        is_interface: bool = "interface" in modifiers
+        if is_interface:
+            # 接口不可实例化，方法均为抽象方法
+            is_abstract = True
+        generic_args: list[str] = list(filter(lambda x: x != "", item[1].split(" ")))
+        cls = ClassName(self._src_info, cls_namespace, cls_self_name, parent, is_abstract, is_c_part, generic_args,
+                        is_final, is_wrapper, is_unsafe, is_interface)
+        cls._export = "export" in modifiers
+        if parents_text != "object" and len(parent_names) > 1:
+            cls._interfaces = cls_interfaces
         if len(generic_args) > 0:
             self._generic_table.add_cls_def(cls)
         # noinspection PyTypeChecker
@@ -2951,8 +3798,6 @@ class SymbolTable:
         for arg in generic_arg_obj:
             self.add(arg, arg.name, None)
         if parent is not None:
-            for name, prop in parent.properties.items():
-                cls.add_property_object(name, prop)
             # 继承父类的方法：将父类方法并入子类的方法表，使子类实例
             # 可以直接调用继承的方法。__del__ 不复制，每个类都会生成
             # 自己的析构方法。
@@ -2963,7 +3808,9 @@ class SymbolTable:
             vtable: ClassName = ClassName(self._src_info, [], cls.name + "$$vtable", None, False,
                                           False)
             self.add(vtable, self.clean_namespace(cls.raw_name) + ".$$vtable", None)
-            # cls.add_property(self._src_info, "$$vtable", vtable, Modifier.PUBLIC, True)
+            # 实例中保存其类型的TypeInfo指针，供catch与动态转换使用（由构造函数赋值）
+            if "$$vtable" not in cls.properties:
+                cls.add_property(self._src_info, "$$vtable", VOID_PTR, Modifier.PUBLIC, False)
         item_loc: int = 2
         while not item[item_loc] == "END CLASS":
             item_text: list[str] = item[item_loc].split(" ")
@@ -2974,15 +3821,23 @@ class SymbolTable:
             property_name: str = item_text[1].split("%")[1]
             # noinspection PyTypeChecker
             t: TypeName = self[type_name, None]
-            cls.add_property(self._src_info, property_name, t, self.__get_modifier(item_text[2:]), "static" in item_text[2:])
+            cls.add_property(self._src_info, property_name, t, self.__get_modifier(item_text[2:]),
+                             "static" in item_text[2:], "unsafe" in item_text[2:])
             if item_loc == len(item) - 1:
                 raise CompilerException(f"Unexpected end of class {cls_name}", self._src_info)
             item_loc += 1
+        if parent is not None:
+            # 在解析完类体后复制父类属性（含object的$refCount、$parent），
+            # 子类重新声明的同名属性优先（属性遮蔽）
+            for name, prop in parent.properties.items():
+                if name not in cls.properties:
+                    cls.add_property_object(name, prop)
         cls_key_name = cls.self_name if cls.raw_name.startswith(self._namespace_without_import) else cls.raw_name
-        if not cls.is_c_part:
+        if not cls.is_c_part and not cls.is_wrapper:
+            # 普通类自动注册析构方法；wrapper类由用户实现__del__（并用del(super)释放普通成员）
             del_method = MethodName(
                 self._src_info, cls, "__del__", FunctionTypeName(self._src_info, [], []),
-                False, False, [], [], Modifier.PUBLIC, False
+                False, False, [], [], Modifier.PUBLIC, True
             )
             cls.add_method("__del__", del_method)
             self.add(del_method, cls_key_name + ".__del__", [cls])

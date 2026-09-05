@@ -13,10 +13,13 @@ violac/whole_test/template_projects
 *.vla.vlaexpr
 *.vla.vlasymt
 *.vla.vlasymtab
+*.vlasymt
 *.vla.vlatoken
 *.vlamk.toml
 *.vla.c
 *.vla.h
 env.txt
-!violac/unit_test/test/cache/file.vlasymt
-!violac/unit_test/test/workspace/src/file.vla.vlasymt
+!violac/unit_test/test/cache/file.vlasymtab
+!violac/unit_test/test/src/file.vla.vlasymtab
+!violac/unit_test/test/workspace/src/file.vla.vlasymtab
+开发疑问记录.txt

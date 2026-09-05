@@ -2,9 +2,9 @@
 // Tests: object update operator for classes and arrays
 
 class ${CLASS_NAME} {
-    ${PROP_TYPE_1} ${PROP_NAME_1};
-    ${PROP_TYPE_2} ${PROP_NAME_2};
-    ${PROP_TYPE_3} ${PROP_NAME_3};
+    public ${PROP_TYPE_1} ${PROP_NAME_1};
+    public ${PROP_TYPE_2} ${PROP_NAME_2};
+    public ${PROP_TYPE_3} ${PROP_NAME_3};
 
     public sq __new__(${PROP_TYPE_1} ${PROP_NAME_1}, ${PROP_TYPE_2} ${PROP_NAME_2}, ${PROP_TYPE_3} ${PROP_NAME_3}) -> (this) {
         this.${PROP_NAME_1} = ${PROP_NAME_1};

@@ -93,6 +93,7 @@ def get_prefix(path: str, identifier: str) -> str:
     - 添加`void`类型（等效于`()`类型）。
 - `viola.io.files`
     - 添加对外部文件的串行读写系统：由子线程发起请求，主线程执行请求并返回相关数据。
+    - 添加标准输入输出功能
 - `viola/lang/global_resource_manager.c`
     - 添加基于请求的全局资源管理器（见`viola_lib_dev_plan_zh.md`）。
 - `viola.lang.thread`
@@ -109,7 +110,7 @@ def get_prefix(path: str, identifier: str) -> str:
         - `sq doWhile::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result);`
 - `viola.util.functools`
     - 添加函数式编程原语：
-        - `fn map::<T, U>(T[] iterable, (T) -> (U) mapper, bool useAsync) -> (U[] result);`
+        - `fn map::<T, U>(T[] iterable, (T) -> (U) mapper, booluseAsync) -> (U[] result);`
         - `fn filter::<T>(T[] iterable, (T) -> (bool) predicate, bool useAsync) -> (T[] result);`
         - `fn reduce::<T>(T[] iterable, (T[]) -> (T) reducer, uint32 reduceSize, bool useAsync) -> (T result);`
         - `fn expand::<T>(T[] inputs, (T[]) -> (T[]) expander, uint32 targetSize) -> (T[] result);`（先将`inputs`拷贝一份到`results`，然后反复将最后`inputs.length`个元素送入`expander`，产生的新元素追加到`result`末尾，直至`result`的长度不小于`targetSize`。）
@@ -180,3 +181,4 @@ sq myFunction() -> () {
 - `viola.util.hashmap`
     - 定义接口`interface Hashable`，要求实现`fn hash() -> (uint32);`方法。
     - 用哈希表实现字典类`class dict::<K, V>`和集合类`class set::<T>`。
+

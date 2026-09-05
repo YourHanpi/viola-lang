@@ -296,7 +296,9 @@ class Lexer(FSM):
         update.set_output("UPDATE")
         eq.set_output("EQ")
         not_state.add_transfer("=", ne)
+        ne.set_output("NE")
         not_state.set_output("NOT")
+        ne.set_output("NE")
         lt.add_transfer("=", le)
         lt.add_transfer("<", lshift)
         lt.set_output("LT")
@@ -307,7 +309,7 @@ class Lexer(FSM):
         rshift.set_output("RSHIFT")
         le.set_output("LE")
         ge.set_output("GE")
-        invert.set_output("INVERT")
+        invert.set_output("INVERSE")
         return first
 
     @staticmethod
@@ -337,6 +339,7 @@ class Lexer(FSM):
             "export",
             "extends",
             "false",
+            "final",
             "finally",
             "fn",
             "from",
@@ -378,6 +381,17 @@ class Lexer(FSM):
             current.add_transfer("LETTER", identifier_state)
             current.add_transfer("DIGIT", identifier_state)
             current.add_transfer("_", identifier_state)
+        # r 前缀原始字符串（不做转义处理）
+        r_state = first.transfer(Token("r", ["r"]))
+        if r_state is not None:
+            raw_body: StateNode = StateNode()
+            raw_end: StateNode = StateNode()
+            r_state.add_transfer("\"", raw_body)
+            r_state.add_transfer("\'", raw_body)
+            raw_body.add_transfer("CHAR", raw_body)
+            raw_body.add_transfer("\"", raw_end)
+            raw_body.add_transfer("\'", raw_end)
+            raw_end.set_output("RAW_STRING")
         return first
 
     @staticmethod
@@ -420,6 +434,7 @@ class Lexer(FSM):
         oct_state: StateNode = StateNode()
         bin_state: StateNode = StateNode()
         float_state: StateNode = StateNode()
+        long_float_state: StateNode = StateNode()
         unsigned_state: StateNode = StateNode()
         size_state1: StateNode = StateNode()
         size_state2: StateNode = StateNode()
@@ -439,14 +454,18 @@ class Lexer(FSM):
         zero_state.add_transfer("CHAR_X", hex_state)
         zero_state.add_transfer("DIGIT", oct_state)
         zero_state.add_transfer("CHAR_B", bin_state)
+        zero_state.add_transfer("CHAR_O", oct_state)
         zero_state.add_transfer("CHAR_S", size_state1)
         zero_state.set_output("INT32")
         double_float_state.add_transfer("DIGIT", double_float_state)
         double_float_state.add_transfer("CHAR_E", exponential_state1)
         double_float_state.add_transfer("CHAR_F", float_state)
+        double_float_state.add_transfer("CHAR_L", long_float_state)
         double_float_state.set_output("DOUBLE")
+        long_float_state.set_output("DOUBLE")
         exponential_state1.add_transfer("DIGIT", exponential_state2)
-        exponential_state2.add_transfer("SIGN", exponential_state2)
+        exponential_state1.add_transfer("+", exponential_state2)
+        exponential_state1.add_transfer("-", exponential_state2)
         exponential_state2.add_transfer("DIGIT", exponential_state2)
         exponential_state2.add_transfer("CHAR_F", float_state)
         exponential_state2.set_output("DOUBLE")
@@ -469,10 +488,12 @@ class Lexer(FSM):
         size_state1.add_transfer("CHAR_Z", size_state2)
         size_state2.set_output("SIZE_T")
         unsigned_state.add_transfer("DIGIT", unsigned_n_state)
-        unsigned_n_state.set_output("UINT32")
-        signed_state.add_transfer("DIGIT", signed_n_state)
-        signed_n_state.set_output("INT32")
+        unsigned_state.set_output("UINT_N")
+        unsigned_n_state.add_transfer("DIGIT", unsigned_n_state)
         unsigned_n_state.set_output("UINT_N")
+        signed_state.add_transfer("DIGIT", signed_n_state)
+        signed_state.set_output("INT_N")
+        signed_n_state.add_transfer("DIGIT", signed_n_state)
         signed_n_state.set_output("INT_N")
         return first
 

@@ -534,12 +534,16 @@ class TestLexerLexWithWriter(unittest.TestCase):
     def setUp(self):
         self.lexer = Lexer("/test/workspace")
 
+    @patch("frontend.lexer.remove_file_lock")
+    @patch("frontend.lexer.set_file_lock")
     @patch("frontend.lexer.Logger")
     @patch("os.path.exists")
     @patch("os.path.getmtime")
     @patch("os.makedirs")
-    def test_lex_with_writer_skip_when_cache_newer(self, mock_makedirs, mock_getmtime, mock_exists, mock_logger):
+    def test_lex_with_writer_skip_when_cache_newer(self, mock_makedirs, mock_getmtime, mock_exists, mock_logger,
+                                                   mock_set_lock, mock_remove_lock):
         """Should skip and return SUCCESS when cache is newer than source."""
+        mock_set_lock.return_value = True
         mock_exists.return_value = True
         mock_getmtime.side_effect = [100, 200]  # source older than cache
         mock_logger.return_value = MagicMock()
@@ -547,13 +551,17 @@ class TestLexerLexWithWriter(unittest.TestCase):
         result = self.lexer.lex_with_writer("/test/src/file.vla", thread_index=1)
         self.assertEqual(result.state, TaskResultState.SUCCESS)
 
+    @patch("frontend.lexer.remove_file_lock")
+    @patch("frontend.lexer.set_file_lock")
     @patch("frontend.lexer.Logger")
     @patch("os.path.exists")
     @patch("os.path.getmtime")
     @patch("builtins.open", new_callable=mock_open, read_data="hello\n")
     @patch("os.makedirs")
-    def test_lex_with_writer_lexes_when_source_newer(self, mock_makedirs, mock_file, mock_getmtime, mock_exists, mock_logger):
+    def test_lex_with_writer_lexes_when_source_newer(self, mock_makedirs, mock_file, mock_getmtime, mock_exists,
+                                                     mock_logger, mock_set_lock, mock_remove_lock):
         """Should lex when source is newer than cache."""
+        mock_set_lock.return_value = True
         mock_exists.side_effect = lambda p: p.endswith(".vla")
         mock_getmtime.side_effect = [200, 100]  # source newer than cache
         mock_logger.return_value = MagicMock()
