@@ -463,7 +463,7 @@ class UnpackExpr(Expression):
                 self._src_info
             )
         for ret, expected_type in zip(returns[:-1], expr_type.types[:len(returns) - 1]):
-            if not ret.type.convertable_to(expected_type, self._symbol_table.symbols):
+            if not ret.type.convertible_to(expected_type, self._symbol_table.symbols):
                 raise CompilerException(
                     f"Type mismatch: {ret.type.raw_name} can not convert to {expected_type.raw_name}.",
                     self._src_info
@@ -471,7 +471,7 @@ class UnpackExpr(Expression):
         last_expected_type = TupleTypeName(self._src_info, expr_type.types[-1:])
         if len(last_expected_type.types) == 1:
             last_expected_type = last_expected_type.types[0]
-        if not returns[-1].type.convertable_to(last_expected_type, self._symbol_table.symbols):
+        if not returns[-1].type.convertible_to(last_expected_type, self._symbol_table.symbols):
             raise CompilerException(
                 f"Type mismatch: {returns[-1].type.raw_name} can not convert to {last_expected_type.raw_name}.",
                 self._src_info
@@ -1908,7 +1908,7 @@ class AttrOp(Expression):
             if m_name != name:
                 continue
             if len(m_types) == len(static_arg_types):
-                if all(static_arg_types[i].convertable_to(m_types[i], self._symbol_table.symbols) for i in range(len(m_types))):
+                if all(static_arg_types[i].convertible_to(m_types[i], self._symbol_table.symbols) for i in range(len(m_types))):
                     matches.append(method)
         # 再尝试动态方法（首参为调用者自身）
         dynamic_arg_types = [caller_type] + static_arg_types
@@ -1916,7 +1916,7 @@ class AttrOp(Expression):
             if m_name != name:
                 continue
             if len(m_types) == len(dynamic_arg_types):
-                if all(dynamic_arg_types[i].convertable_to(m_types[i], self._symbol_table.symbols) for i in range(len(m_types))):
+                if all(dynamic_arg_types[i].convertible_to(m_types[i], self._symbol_table.symbols) for i in range(len(m_types))):
                     matches.append(method)
         if len(matches) == 1:
             method = matches[0]
@@ -3043,7 +3043,7 @@ class ItemOp(CallOp):
             )
         arg_tuple_type = TupleTypeName(self._src_info, [expr_type] + self.arg_types)
         for k, v in get_item_methods.items():
-            if arg_tuple_type.convertable_to(TupleTypeName(self._src_info, list(k[1])), self._symbol_table.symbols):
+            if arg_tuple_type.convertible_to(TupleTypeName(self._src_info, list(k[1])), self._symbol_table.symbols):
                 new_expr: AttrOp = AttrOp(self._src_info, self._symbol_table)
                 new_expr.set_caller(expr)
                 new_expr.set_attr("__getitem__")
@@ -3538,11 +3538,11 @@ class ConditionalOp(Operator):
             raise CompilerException(
                 f"Type {self._expr_list[0].return_type.raw_name} (expression: {self._expr_list[0].text}) "
                 f"is not a base type.", self._src_info)
-        if not self._expr_list[1].return_type.convertable_to(self._type_name, self._symbol_table.symbols):
+        if not self._expr_list[1].return_type.convertible_to(self._type_name, self._symbol_table.symbols):
             raise CompilerException(
                 f"Type {self._expr_list[1].return_type.raw_name} (expression: {self._expr_list[1].text}) "
                 f"can not convert to {self._type_name.raw_name}.", self._src_info)
-        if not self._expr_list[2].return_type.convertable_to(self._type_name, self._symbol_table.symbols):
+        if not self._expr_list[2].return_type.convertible_to(self._type_name, self._symbol_table.symbols):
             raise CompilerException(
                 f"Type {self._expr_list[2].return_type.raw_name} (expression: {self._expr_list[2].text}) "
                 f"can not convert to {self._type_name.raw_name}.", self._src_info)

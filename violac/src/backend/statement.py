@@ -474,16 +474,16 @@ class DeclStmt(Statement):
             elif len(self._var) == len(expr_type.types):
                 type_list: list[TypeName] = list(map(lambda var: var.type, self._var))
                 for i, (t0, t1) in enumerate(zip(type_list, expr_type.types)):
-                    if not t1.convertable_to(t0, self._symbol_table.symbols):
+                    if not t1.convertible_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
             else:
                 type_list: list[TypeName] = list(map(lambda var: var.type, self._var[:-1]))
                 for i, (t0, t1) in enumerate(zip(type_list, expr_type.types[:len(type_list)])):
-                    if not t1.convertable_to(t0, self._symbol_table.symbols):
+                    if not t1.convertible_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
-                if not TupleTypeName(self._src_info, expr_type.types[len(type_list):]).convertable_to(
+                if not TupleTypeName(self._src_info, expr_type.types[len(type_list):]).convertible_to(
                         self._var[-1].type, self._symbol_table.symbols):
                     raise CompilerException(
                         f"{TupleTypeName(self._src_info, expr_type.types[len(type_list):]).raw_name} cannot be assigned to {self._var[-1].type.raw_name}.",
@@ -491,7 +491,7 @@ class DeclStmt(Statement):
         else:
             if len(self._var) > 1:
                 raise CompilerException("Too many variables for unpacking.", self._src_info)
-            if not expr_type.convertable_to(self._var[0].type, self._symbol_table.symbols):
+            if not expr_type.convertible_to(self._var[0].type, self._symbol_table.symbols):
                 raise CompilerException(f"{expr_type.raw_name} cannot be assigned to {self._var[0].type.raw_name}.",
                                         self._src_info)
 
@@ -756,16 +756,16 @@ class AssignStmt(Statement):
             elif len(self._var) == len(expr_type.types):
                 type_list: list[TypeName] = list(map(lambda var: var.type, self._var))
                 for i, (t0, t1) in enumerate(zip(type_list, expr_type.types)):
-                    if not t1.convertable_to(t0, self._symbol_table.symbols):
+                    if not t1.convertible_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
             else:
                 type_list: list[TypeName] = list(map(lambda var: var.type, self._var[:-1]))
                 for i, (t0, t1) in enumerate(zip(type_list, expr_type.types[:len(type_list)])):
-                    if not t1.convertable_to(t0, self._symbol_table.symbols):
+                    if not t1.convertible_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
-                if not TupleTypeName(self._src_info, expr_type.types[len(type_list):]).convertable_to(
+                if not TupleTypeName(self._src_info, expr_type.types[len(type_list):]).convertible_to(
                         self._var[-1].type, self._symbol_table.symbols):
                     raise CompilerException(
                         f"{TupleTypeName(self._src_info, expr_type.types[len(type_list):]).raw_name} cannot be assigned to {self._var[-1].type.raw_name}.",
@@ -1239,7 +1239,7 @@ class ThrowStmt(Statement):
         """设置抛出的异常表达式。"""
         expr.validate()
         # noinspection PyTypeChecker
-        if not expr.return_type.convertable_to(ExceptionTypeName, self._symbol_table.symbols):
+        if not expr.return_type.convertible_to(ExceptionTypeName, self._symbol_table.symbols):
             raise CompilerException(f"Type {expr.return_type.raw_name} cannot be thrown.", self._src_info)
         self._to_throw_expr = expr
 
@@ -2591,7 +2591,7 @@ class CastOp(Expression):
 
     def __check_dynamic_cast(self) -> bool:
         """检查是否需要进行动态类型转换。"""
-        result = not self._expr.return_type.convertable_to(self._type_name, self._symbol_table.symbols)
+        result = not self._expr.return_type.convertible_to(self._type_name, self._symbol_table.symbols)
         if result:
             self._temp_var_name = self._symbol_table.get_counter()
             self._throw_stmt = ThrowStmt(self._src_info, self._symbol_table, self._var_states)

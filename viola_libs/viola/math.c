@@ -42,14 +42,3 @@ MATH_BINARY_FUNC(atan2, atan2)
 MATH_BINARY_FUNC(fmod, fmod)
 MATH_BINARY_FUNC(fmin, fmin)
 MATH_BINARY_FUNC(fmax, fmax)
-
-/* 常量 */
-void viola$math$pi(viola$lang$float64 *result, viola$threads$Listener *listener) {
-    (void)listener;
-    *result = 3.14159265358979323846;
-}
-
-void viola$math$e(viola$lang$float64 *result, viola$threads$Listener *listener) {
-    (void)listener;
-    *result = 2.71828182845904523536;
-}

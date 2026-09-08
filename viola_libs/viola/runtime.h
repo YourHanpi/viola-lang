@@ -195,8 +195,8 @@ VIOLA_MATH_BINARY(atan2)
 VIOLA_MATH_BINARY(fmod)
 VIOLA_MATH_BINARY(fmin)
 VIOLA_MATH_BINARY(fmax)
-void viola$math$pi(viola$lang$float64 *result, viola$threads$Listener *listener);
-void viola$math$e(viola$lang$float64 *result, viola$threads$Listener *listener);
+const double viola$math$PI = 3.14159265358979323846;
+const double viola$math$E = 2.71828182845904523536;
 #undef VIOLA_MATH_UNARY
 #undef VIOLA_MATH_BINARY
 

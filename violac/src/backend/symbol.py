@@ -216,7 +216,7 @@ class TypeName(NamedSymbol, ABC):
         pass
 
     @abstractmethod
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple["TypeName", ...]]], NamedSymbol]) -> bool:
         """
         检查此类型是否可转换为目标类型。
@@ -284,7 +284,7 @@ class AnyTypeName(TypeName):
     def c_calling_name(self) -> str:
         raise CompilerException("Can't call any type.", self._src_info)
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple["TypeName", ...]]], NamedSymbol]) -> bool:
         return True
 
@@ -327,7 +327,7 @@ class BaseTypeName(TypeName):
     def c_calling_name(self) -> str:
         return f"{self.name} "
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
         return isinstance(target, BaseTypeName)
 
@@ -437,7 +437,7 @@ class GenericArgument(TypeName):
     def c_calling_name(self) -> str:
         raise CompilerException("Generic argument is not instantiated.", self._src_info)
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
         # raise CompilerException("Generic argument is not instantiated.", self._src_info)
         return True
@@ -752,7 +752,7 @@ class ClassName(TypeName):
     def c_calling_name(self) -> str:
         return f"{self.name} *"
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
         if isinstance(target, ClassName):
             if target.name == self.name or target.self_name == "object":
@@ -986,10 +986,6 @@ _ARRAY_TYPE_DEFS: dict[str, TypeName] = {}
 _GENERIC_FUNC_INSTANCE_REQUESTS: dict[str, set[tuple[TypeName, ...]]] = {}
 
 
-
-
-
-
 def _type_is_fully_concrete(t: TypeName) -> bool:
     """判断类型是否完全实例化（不含泛型参数、空数组或数组方法类占位类型）。"""
     if isinstance(t, GenericArgument):
@@ -1006,6 +1002,7 @@ def _type_is_fully_concrete(t: TypeName) -> bool:
         # 空数组字面量的占位元素类型
         return False
     return True
+
 
 def register_tuple_type(t: "TupleTypeName") -> None:
     """注册元组类型，使编译器在模块头文件中生成其结构体定义。
@@ -1118,13 +1115,13 @@ class ArrayTypeName(ClassName):
     def c_calling_name(self) -> str:
         return f"{self._element_type.name}$$array *"
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
         if target.name == "object":
             return True
         if not isinstance(target, ArrayTypeName):
             return False
-        return self._element_type.convertable_to(target.element_type, symbol_dict)
+        return self._element_type.convertible_to(target.element_type, symbol_dict)
 
     @property
     def element_type(self) -> TypeName:
@@ -1149,9 +1146,9 @@ class EmptyArrayTypeName(ArrayTypeName):
     def __init__(self, src_info: SourceInfo) -> None:
         super().__init__(src_info, BaseTypeName("empty", "_"))
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
-        return super().convertable_to(target, symbol_dict) or isinstance(target, ArrayTypeName)
+        return super().convertible_to(target, symbol_dict) or isinstance(target, ArrayTypeName)
 
     @property
     def element_type(self) -> TypeName:
@@ -1203,7 +1200,7 @@ class PointerTypeName(ClassName):
         # 指针由用户手动管理内存，不参与自动释放
         return False
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
         if isinstance(target, PointerTypeName):
             return True
@@ -1240,20 +1237,6 @@ class TupleTypeName(ClassName):
         # 注册到符号表，以便在头文件中生成结构体定义
         register_tuple_type(self)
 
-    def has_method(self, name: str) -> bool:
-        """所有元组类型共享同一C名称的析构方法，由运行库提供。"""
-        if name == "__del__":
-            return True
-        return super().has_method(name)
-
-    @property
-    def methods(self) -> dict[tuple[str, tuple[TypeName, ...]], "MethodName"]:
-        """获取方法表。元组的__del__方法为惰性共享的原生方法。"""
-        result: dict[tuple[str, tuple[TypeName, ...]], MethodName] = dict(self._methods)
-        if "__del__" not in map(lambda x: x[0], result.keys()):
-            result[("__del__", ())] = _get_tuple_del_method(self._src_info)
-        return result
-
     @property
     def c_alloc_name(self) -> str:
         return self.name
@@ -1289,16 +1272,30 @@ class TupleTypeName(ClassName):
             "#endif"
         ])
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
         if isinstance(target, TupleTypeName):
             if len(self.types) != len(target.types):
                 return False
-            return all(list(map(lambda t, u: t.convertable_to(u, symbol_dict), self._type_args, target.types)))
+            return all(list(map(lambda t, u: t.convertible_to(u, symbol_dict), self._type_args, target.types)))
         return False
+
+    def has_method(self, name: str) -> bool:
+        """所有元组类型共享同一C名称的析构方法，由运行库提供。"""
+        if name == "__del__":
+            return True
+        return super().has_method(name)
 
     def instantiation(self, real_types: dict["GenericArgument", "TypeName"]) -> "TypeName":
         return TupleTypeName(self._src_info, list(map(lambda t: t.instantiation(real_types), self.types)))
+
+    @property
+    def methods(self) -> dict[tuple[str, tuple[TypeName, ...]], "MethodName"]:
+        """获取方法表。元组的__del__方法为惰性共享的原生方法。"""
+        result: dict[tuple[str, tuple[TypeName, ...]], MethodName] = dict(self._methods)
+        if "__del__" not in map(lambda x: x[0], result.keys()):
+            result[("__del__", ())] = _get_tuple_del_method(self._src_info)
+        return result
 
     @property
     def type_names(self) -> list[str]:
@@ -1350,11 +1347,11 @@ class AutoTypeName(TypeName):
             raise CompilerException("Can not infer type.", self._src_info)
         return self._real_type.c_calling_name
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple["TypeName", ...]]], NamedSymbol]) -> bool:
         if self._real_type is None:
             raise CompilerException("Can not infer type.", self._src_info)
-        return self._real_type.convertable_to(target, symbol_dict)
+        return self._real_type.convertible_to(target, symbol_dict)
 
     def instantiation(self, real_types: dict["GenericArgument", "TypeName"]) -> "TypeName":
         if self._real_type is None:
@@ -1506,11 +1503,11 @@ class FunctionTypeName(TypeName):
         """
         return f"{self.name} {var_name}"
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
         if isinstance(target, FunctionTypeName):
-            return (self._args_tuple.convertable_to(target._args_tuple, symbol_dict) and
-                    self._returns_tuple.convertable_to(target._returns_tuple, symbol_dict))
+            return (self._args_tuple.convertible_to(target._args_tuple, symbol_dict) and
+                    self._returns_tuple.convertible_to(target._returns_tuple, symbol_dict))
         return False
 
     @property
@@ -1715,9 +1712,9 @@ class EnumName(TypeName):
     def c_calling_name(self) -> str:
         return self._based_type.c_calling_name
 
-    def convertable_to(self, target: "TypeName",
+    def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
-        return self._based_type.convertable_to(target, symbol_dict)
+        return self._based_type.convertible_to(target, symbol_dict)
 
     @property
     def is_generic(self) -> bool:
@@ -1810,7 +1807,8 @@ class FunctionName(GlobalVariableName):
             if isinstance(t, GenericArgument):
                 return f"// GENERIC FUNCTION {self._name}"
         args_text = ", ".join(list(map(lambda t, a: f"{t.c_calling_name} {a}", self.type.args, self._arg_names)))
-        returns_text = ", ".join(list(map(lambda t, r: f"{t.c_assigning_name} {r}", self.type.returns, self._ret_names)))
+        returns_text = ", ".join(
+            list(map(lambda t, r: f"{t.c_assigning_name} {r}", self.type.returns, self._ret_names)))
         return f"void {self.name}({', '.join(filter(lambda x: x != '', [args_text, returns_text, LISTENER_T + ' *listener']))})"
 
     def as_define_name(self) -> str:
@@ -1932,7 +1930,8 @@ class FunctionName(GlobalVariableName):
         for name in default_param_names:
             # noinspection PyUnresolvedReferences
             var_type: TypeName = self._type.args[self._arg_names.index(name)]
-            self._default_params[name] = GlobalVariableName(self._src_info, self.as_namespace(), "$default$" + name, var_type)
+            self._default_params[name] = GlobalVariableName(self._src_info, self.as_namespace(), "$default$" + name,
+                                                            var_type)
 
     @property
     def type(self) -> FunctionTypeName:
@@ -2223,10 +2222,11 @@ def _get_tuple_del_method(src_info: SourceInfo) -> MethodName:
             False, [], [], Modifier.PRIVATE, True, True
         )
     return _TUPLE_DEL_METHOD
+
+
 Object.add_property(VIOLA_INIT, "$refCount", UINT32, Modifier.PRIVATE, False)
 Object.add_property(VIOLA_INIT, "$parent", VOID_PTR, Modifier.PRIVATE, False)
 Object.add_method("__del__", object_destructor)
-
 
 # 切片类型名称
 SliceTypeName = ClassName(VIOLA_INIT, VIOLA_LANG, "slice", None, False, False)
@@ -2810,18 +2810,19 @@ class SymbolTable:
     )
     # viola.math绑定：一元与二元浮点函数（名称，参数类型，返回类型）
     _MATH_BINDINGS: list[tuple[str, list[TypeName], list[TypeName]]] = [
-        (name, [FLOAT64], [FLOAT64]) for name in [
+                                                                           (name, [FLOAT64], [FLOAT64]) for name in [
             "sqrt", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh",
             "exp", "log", "log10", "log2", "fabs", "floor", "ceil", "round", "trunc"
         ]
-    ] + [
-        (name, [FLOAT64, FLOAT64], [FLOAT64]) for name in [
+                                                                       ] + [
+                                                                           (name, [FLOAT64, FLOAT64], [FLOAT64]) for
+                                                                           name in [
             "pow", "atan2", "fmod", "fmin", "fmax"
         ]
-    ] + [
-        ("pi", [], [FLOAT64]),
-        ("e", [], [FLOAT64])
-    ]
+                                                                       ] + [
+                                                                           ("pi", [], [FLOAT64]),
+                                                                           ("e", [], [FLOAT64])
+                                                                       ]
     # viola.os绑定
     _OS_BINDINGS: list[tuple[str, list[TypeName], list[TypeName]]] = [
         ("sleep", [UINT64], []),
@@ -3076,7 +3077,8 @@ class SymbolTable:
             return True
         item = self.clean_namespace(original_name), item[1]
         if item not in self.symbols:
-            functions: list[tuple[str, Optional[tuple[TypeName, ...]]]] = [k for k in self.symbols.keys() if k[0] == item[0]]
+            functions: list[tuple[str, Optional[tuple[TypeName, ...]]]] = [k for k in self.symbols.keys() if
+                                                                           k[0] == item[0]]
             if isinstance(item[0], str) and item[1] is None:
                 if len(functions) > 0:
                     return True
@@ -3137,7 +3139,9 @@ class SymbolTable:
                     own = list(filter(lambda m: m.cls.name == self[cls_name, None].name, concrete))
                     if len(own) == 1:
                         return own[0]
-                raise CompilerException(f"Ambiguous method call: {cls_name}.{attr_name}({', '.join(t.raw_name for t in types)})", self._src_info)
+                raise CompilerException(
+                    f"Ambiguous method call: {cls_name}.{attr_name}({', '.join(t.raw_name for t in types)})",
+                    self._src_info)
             result = self.find_methods(cls_name, attr_name, [
                 SymbolTable._type_lookup_name(t) for t in types], {})
             if len(result) == 1:
@@ -3154,7 +3158,9 @@ class SymbolTable:
                     own = list(filter(lambda m: m.cls.name == self[cls_name, None].name, concrete))
                     if len(own) == 1:
                         return own[0]
-                raise CompilerException(f"Ambiguous method call: {cls_name}.{attr_name}({', '.join(t.raw_name for t in types)})", self._src_info)
+                raise CompilerException(
+                    f"Ambiguous method call: {cls_name}.{attr_name}({', '.join(t.raw_name for t in types)})",
+                    self._src_info)
         # item = item.replace(".", "$")
         if (item, types) not in self.symbols:
             if types is None and (item, None) in self.symbols:
@@ -3173,7 +3179,8 @@ class SymbolTable:
                     if isinstance(element, TypeName):
                         return PointerTypeName(self._src_info, element)
                 result = self._type_name_parser.parse(self._src_info, item2)
-                if result is not None and isinstance(result, ClassName) and (result.self_name, None) not in self.symbols:
+                if result is not None and isinstance(result, ClassName) and (result.self_name,
+                                                                             None) not in self.symbols:
                     self.add_to_root(result, result.self_name, None)
                 if result is None:
                     raise CompilerException(f"Type {item} not found", self._src_info)
@@ -3237,7 +3244,8 @@ class SymbolTable:
         self._src_info: SourceInfo = SourceInfo(src_path)
         self._generic_table: GenericTable = GenericTable(self._src_info, self._namespace)
         self._namespace_without_import: tuple[str, ...] = \
-            tuple([*map(lambda x: ".".join(y.name for y in x) + ".", SymbolTable._NAMESPACES_WITHOUT_IMPORT), self._namespace_name + "."])
+            tuple([*map(lambda x: ".".join(y.name for y in x) + ".", SymbolTable._NAMESPACES_WITHOUT_IMPORT),
+                   self._namespace_name + "."])
         self._init_builtin_types()
 
         def __real_type_getter(name: str) -> Optional[TypeName]:
@@ -3394,14 +3402,14 @@ class SymbolTable:
         matches: dict[tuple[str, tuple[TypeName, ...]], FunctionName | MethodName] = dict(
             filter(
                 lambda x: (x[0][0] == name or x[1].name == name) and len(x[0][1]) >= args_length and all(
-                    map(lambda i: args_tuple[i].convertable_to(x[0][1][i], self.symbols), range(args_length))
+                    map(lambda i: args_tuple[i].convertible_to(x[0][1][i], self.symbols), range(args_length))
                 ),
                 self.symbols.items()
             )
         )
         matches = dict(filter(lambda x: all(y in x[1].arg_names for y in kwargs.keys()), matches.items()))
         matches = dict(filter(
-            lambda x: all(x[1].arg_types_dict[y].convertable_to(kwargs_declaration[y])
+            lambda x: all(x[1].arg_types_dict[y].convertible_to(kwargs_declaration[y])
                           for y in kwargs_declaration.keys()),
             matches.items()
         ))
@@ -3466,10 +3474,10 @@ class SymbolTable:
         kwargs_types: dict[str, TypeName] = dict(map(lambda x: (x, self[kwargs[x], None]), kwargs.keys()))
         methods = dict(filter(lambda x: x[0][0] == name, cls.methods.items()))
         methods = dict(filter(lambda x: len(x[0][1]) >= len(arg_types), methods.items()))
-        methods = dict(filter(lambda x: all(map(lambda i: arg_types[i].convertable_to(x[0][1][i], self.symbols),
+        methods = dict(filter(lambda x: all(map(lambda i: arg_types[i].convertible_to(x[0][1][i], self.symbols),
                                                 range(len(arg_types)))), methods.items()))
         methods = dict(filter(lambda x: all(
-            x[1].arg_types_dict[y].convertable_to(kwargs_types[y], self.symbols) for y in kwargs_types.keys()
+            x[1].arg_types_dict[y].convertible_to(kwargs_types[y], self.symbols) for y in kwargs_types.keys()
         ), methods.items()))
         return list(methods.values())
 
@@ -3693,7 +3701,8 @@ class SymbolTable:
                 raise CompilerException(f"Function {item_name} already exists.", self._src_info)
             args: list[TypeName]
             # noinspection PyTypeChecker
-            returns: list[TypeName] = list(map(lambda ret: self[ret, None], item_returns[::2])) if len(item_returns) > 1 else []
+            returns: list[TypeName] = list(map(lambda ret: self[ret, None], item_returns[::2])) if len(
+                item_returns) > 1 else []
             if any(map(lambda ret: not isinstance(ret, TypeName), returns)):
                 raise CompilerException("Function returns must be types.", self._src_info)
         finally:
@@ -3748,7 +3757,8 @@ class SymbolTable:
             # 未限定的变量名使用本模块的命名空间
             var_namespace = self._namespace
         # noinspection PyTypeChecker
-        self.add(GlobalVariableName(self._src_info, var_namespace, var_self_name, self[item_type, None]), item_name, None)
+        self.add(GlobalVariableName(self._src_info, var_namespace, var_self_name, self[item_type, None]), item_name,
+                 None)
 
     def _read_method_decl(self, item: list[str]) -> None:
         """
@@ -3994,6 +4004,7 @@ class VariableState(Enum):
     ASYNC_ASSIGNED: 异步赋值。
     ASSIGNED: 已赋值。
     """
+
     def __gt__(self, other: "VariableState") -> bool:
         return self.value > other.value
 

@@ -63,6 +63,6 @@ fn fmax(float64 x, float64 y) -> (float64 result);
 // ================= 常量 =================
 
 // 圆周率π
-fn pi() -> (float64 result);
+float64 pi = 3.14159265358979323846;
 // 自然常数e
-fn e() -> (float64 result);
+float64 e = 2.71828182845904523536;

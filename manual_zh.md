@@ -786,7 +786,7 @@ class Image {
 Image img0; // 声明一个对象变量
 Image img1 = Image.black(3, 100, 100); // 注意：这里调用的是静态方法
 img2 = img1.drawLine(0, 0, 100, 100, [255, 255, 255]); // 这里既可以调用静态方法，也可以调用实例方法
-Image img3(3, 100, 100, zeros::<uint8>(30000)); // 相当于Image img3 = Image(3, 100, 100, zeros<uint8>(30000));
+Image img3(3, 100, 100, zeros::<uint8>(30000)); // 相当于Image img3 = Image(3, 100, 100, zeros::<uint8>(30000));
 ```
 
 类似基本数据类型，我们也可以直接将类类型的数据传入函数。例如：

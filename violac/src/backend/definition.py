@@ -1572,8 +1572,8 @@ class EnumDef(Definition):
 
     def add_enum(self, name: str, expr: Expression) -> None:
         """添加枚举值，包含名称和初始值表达式。"""
-        if not expr.return_type.convertable_to(self._based_type, self._symbol_table.symbols):
-            raise CompilerException(f"{expr.return_type} is not convertable to {self._based_type}.", self._src_info)
+        if not expr.return_type.convertible_to(self._based_type, self._symbol_table.symbols):
+            raise CompilerException(f"{expr.return_type} is not convertible to {self._based_type}.", self._src_info)
         var: GlobalVariableName = GlobalVariableName(self._src_info, self._decl.as_namespace(), name, self._based_type)
         self._enum.append((var, expr))
 

@@ -91,17 +91,185 @@ def get_prefix(path: str, identifier: str) -> str:
 - 编译器内置
     - 添加指针（`unsafe Pointer::<T>`）。
     - 添加`void`类型（等效于`()`类型）。
+    - **（新增）** 将“无访问修饰符”的默认情况从`protected`改为`public`。
+    - **（新增）** 添加对模块的访问修饰符语义。其中：
+        - `public`：公共访问修饰符，表示该成员可以被任何其他模块访问。
+        - `protected`：受保护访问修饰符，表示该成员只能被同一模块中的其他成员访问。
+        - `private`：私有访问修饰符，表示该成员只能被自身访问。
+        - 默认情况为`public`。
+    - **（新增）** 将所有函数（无论静态还是动态）封装为结构体（`viola.lang.function.Function`类，原`Closure`类，视为`object`的子类），但调用静态函数时仍然传递函数指针。其中，`Function`类应至少包含以下成员：
+        - `viola$lang$function$A$ *asyncPtr`（C声明）或`Pointer::<viola.lang.function.AsyncPtr> asyncPtr`（Viola声明）：异步函数指针。
+        - `viola$lang$function$S$ *syncPtr`（C声明）或`Pointer::<viola.lang.function.SyncPtr> syncPtr`（Viola声明）：同步函数指针。
+        - `void *capture`（C声明）或`Pointer::<Tuple> capture`（Viola声明）：捕获的环境，为元组类型。
+        - `string[] argNames`（Viola声明）：参数名称（不包括捕获的环境参数）。
+    - **（新增）** 将所有元组封装为`object`类的子类。
+    - **（新增）** 支持闭包按参数名进行传参的功能。如果依赖于哈希表的实现，请推迟至0.2版本。
 - `viola.io.files`
     - 添加对外部文件的串行读写系统：由子线程发起请求，主线程执行请求并返回相关数据。
     - 添加标准输入输出功能
+- `viola.lang`**（新增）**
+    - 为`string`类追加方法：
+        - `fn count(string sub) -> (uint32 result);`
+        - `fn find(string sub) -> (uint32 result);`
+        - `fn float() -> (float64 result);`
+        - `static fn fromFloat(float64 value) -> (string result);`
+        - `static fn fromInt(int64 value, uint8 base = 10) -> (string result);`（只需支持2~16进制）
+        - `fn index(string sub) -> (uint32 result);`
+        - `fn int(uint8 base = 10) -> (int64 result);`（只需支持2~16进制）
+        - `fn isalnum() -> (bool result);`
+        - `fn isalpha() -> (bool result);`
+        - `fn isdecimal() -> (bool result);`
+        - `fn isdigit() -> (bool result);`
+        - `fn isidentifier() -> (bool result);`
+        - `fn islower() -> (bool result);`
+        - `fn isnumeric() -> (bool result);`
+        - `fn isprintable() -> (bool result);`
+        - `fn isspace() -> (bool result);`
+        - `fn isupper() -> (bool result);`
+        - `fn ljust(uint32 length, string fillChar) -> (string result);`
+        - `fn lstrip(string toRemove = " \t\n\r") -> (string result);`
+        - `fn replace(string oldSub, string newSub, uint32 count = 0) -> (string result);`
+        - `fn rfind(string sub) -> (uint32 result);`
+        - `fn rindex(string sub) -> (uint32 result);`
+        - `fn rjust(uint32 length, string fillChar) -> (string result);`
+        - `fn rstrip(string toRemove = " \t\n\r") -> (string result);`
+        - `fn strip(string toRemove = " \t\n\r") -> (string result);`
+        - `fn swapcase() -> (string result);`
+        - `fn zfill(uint32 length) -> (string result);`
+- `viola.lang.global_resource_manager`**（新增）**
+    - 添加`_Request`类型的声明（在相应C头文件的`viola$lang$global_resource_manager$Request`中定义，需要添加引用计数）。
+    - 添加请求向量表的注册函数`sq register_request_handler(uint32 request_id, (_Request) -> () handler) -> ();`。
 - `viola/lang/global_resource_manager.c`
     - 添加基于请求的全局资源管理器（见`viola_lib_dev_plan_zh.md`）。
 - `viola.lang.thread`
     - 添加线程调度系统（见`viola_lib_dev_plan_zh.md`）。
 - `viola.math`
     - 直接包含`math.h`并生成相关绑定函数。
+    - **新增如下内容：**
+        - 常量：`nan`, `inf`, `tau`；
+        - 双曲函数及反双曲函数；
+        - 弧度制与角度制的互相转换函数；
+        - 欧几里得距离计算函数`fn dist(double[] a, double[] b) -> (double result);`，要求`a`和`b`的长度相同；
+        - 误差函数、补误差函数、伽马函数、阶乘函数；
+        - 浮点数的指数与尾数的分离与组合函数；
+        - 最大公约数和最小公倍数函数；
+        - 欧几里得范数计算函数`fn hypot(double[] a) -> (double result);`；
+        - 各种对数（包括一个重载：`fn log(double x, double base) -> (double result);`）；
+        - 排列数和组合数的计算函数；
+        - 整数部分和小数部分的分离函数`fn modf(double x) -> (double fractional, double integer);`；
+        - IEEE 754风格的小数余数函数`fn remainder(double x, double y) -> (double result);`；
+        - 各类无效值（包括无穷）的判断函数。
 - `viola.os`
     - 绑定Windows和POSIX的相关接口，使用条件编译分别处理。
+    - **新增如下内容（其中涉及到文件操作的，应当由子线程发送请求、由主线程串行执行）：**
+        - `int32 STDERR_FILENO;`
+        - `int32 STDIN_FILENO;`
+        - `int32 STDOUT_FILENO;`
+        - `class Stat;`
+        - `fn access(string path, uint32 mode) -> (bool result);`
+        - `sq chdir(string path) -> ();`
+        - `sq chflags(string path, uint32 flags) -> ();`
+        - `sq chmod(string path, uint32 mode) -> ();`
+        - `sq chown(string path, uint32 uid, uint32 gid) -> ();`
+        - `sq chroot(string path) -> ();`
+        - `sq close(int32 fd) -> ();`
+        - `sq closerange(int32 fd1, int32 fd2) -> ();`
+        - `fn dup(int32 fd) -> (int32 result);`
+        - `fn dup2(int32 fd1, int32 fd2) -> (int32 result);`
+        - `sq fchdir(int32 fd) -> ();`
+        - `sq fchmod(int32 fd, uint32 mode) -> ();`
+        - `sq fchown(int32 fd, uint32 uid, uint32 gid) -> ();`
+        - `sq fdatasync(int32 fd) -> ();`
+        - `sq fdopen(int32 fd) -> (FILE result);`
+        - `fn fpathconf(int32 fd, int32 name) -> (int32 result);`
+        - `fn fstat(int32 fd) -> (Stat result);`
+        - `sq ftruncate(int32 fd, uint32 size) -> ();`
+        - `fn getcwd() -> (string result);`
+        - `fn getcwdb() -> (string result);`
+        - `fn getgid() -> (uint32 result);`
+        - `fn getuid() -> (uint32 result);`
+        - `fn isatty(int32 fd) -> (bool result);`
+        - `sq lchflags(string path, uint32 flags) -> ();`
+        - `sq lchmod(string path, uint32 mode) -> ();`
+        - `sq lchown(string path, uint32 uid, uint32 gid) -> ();`
+        - `sq link(string path, string newPath) -> ();`
+        - `fn listdir(string path) -> (string[] result);`
+        - `sq lseek(int32 fd, int32 offset, int32 whence) -> (int32 result);`
+        - `fn lstat(string path) -> (Stat result);`
+        - `fn major(uint32 dev) -> (uint32 result);`
+        - `fn makedev(uint32 major, uint32 minor) -> (uint32 result);`
+        - `sq makedirs(string path, uint32 mode = 0o777) -> ();`
+        - `fn minor(uint32 dev) -> (uint32 result);`
+        - `sq mkdir(string path, uint32 mode = 0o777) -> ();`
+        - `sq mkfifo(string path, uint32 mode = 0o666) -> ();`
+        - `sq mknod(string path, uint32 mode = 0o666, uint32 dev = 0) -> ();`
+        - `sq open(string path, uint32 flags, uint32 mode = 0o666) -> (int32 fd);`
+        - `sq openpty() -> (int32 result);`
+        - `fn pathconf(string path, int32 name) -> (int32 result);`
+        - `sq pipe() -> (int32 result);`
+        - `sq popen(string command, string mode) -> (FILE result);`
+        - `sq read(int32 fd, uint32 nbyte) -> (string result);`
+        - `sq readlink(string path) -> (string result);`
+        - `sq remove(string path) -> ();`
+        - `sq removedirs(string path) -> ();`
+        - `sq rename(string oldPath, string newPath) -> ();`
+        - `sq renames(string oldPath, string newPath) -> ();`
+        - `sq rmdir(string path) -> ();`
+        - `fn stat(string path) -> (Stat result);`
+        - `sq stat_float_times(bool useFloat) -> ();`
+        - `fn statvfs(string path) -> (StatVFS result);`
+        - `fn tcgetpgrp(int32 fd) -> (int32 result);`
+        - `sq tcsetpgrp(int32 fd, int32 pgid) -> ();`
+        - `fn ttyname(int32 fd) -> (string result);`
+        - `sq unlink(string path) -> ();`
+        - `sq utime(string path, uint32 atime, uint32 mtime) -> ();`
+        - `sq write(int32 fd, string data) -> (uint32 result);`
+- `viola.os.path`**（新增）**
+    - 添加路径处理功能，例如：
+        - `string pathsep;`
+        - `fn abspath(string path) -> (string result);`
+        - `fn basename(string path) -> (string result);`
+        - `fn commonpath(string[] paths) -> (string result);`
+        - `fn commonprefix(string[] paths) -> (string result);`
+        - `fn dirname(string path) -> (string result);`
+        - `fn exists(string path) -> (bool result);`
+        - `fn getatime(string path) -> (uint64 result);`
+        - `fn getctime(string path) -> (uint64 result);`
+        - `fn getmtime(string path) -> (uint64 result);`
+        - `fn getsize(string path) -> (uint64 result);`
+        - `fn isabs(string path) -> (bool result);`
+        - `fn isdir(string path) -> (bool result);`
+        - `fn isfile(string path) -> (bool result);`
+        - `fn islink(string path) -> (bool result);`
+        - `fn ismount(string path) -> (bool result);`
+        - `fn join(string[] paths) -> (string result);`
+        - `fn normpath(string path) -> (string result);`
+        - `fn realpath(string path) -> (string result);`
+        - `fn samefile(string path1, string path2) -> (bool result);`
+        - `fn sameopenfile(int32 fd1, int32 fd2) -> (bool result);`
+        - `fn split(string path) -> (string[] result);`
+        - `fn splitext(string path) -> (string[] result);`
+- `viola.stat`**（新增）**
+    - 添加文件状态功能，例如：
+        - `uint32 S_IFDIR;`
+        - `uint32 S_IFREG;`
+        - `uint32 S_IRGRP;`
+        - `uint32 S_IROTH;`
+        - `uint32 S_IRUSR;`
+        - `uint32 S_IWGRP;`
+        - `uint32 S_IWOTH;`
+        - `uint32 S_IWUSR;`
+        - `uint32 S_IXGRP;`
+        - `uint32 S_IXOTH;`
+        - `uint32 S_IXUSR;`
+        - `fn S_ISBLK(uint32 mode) -> (bool result);`
+        - `fn S_ISCHR(uint32 mode) -> (bool result);`
+        - `fn S_ISDIR(uint32 mode) -> (bool result);`
+        - `fn S_ISFIFO(uint32 mode) -> (bool result);`
+        - `fn S_ISLNK(uint32 mode) -> (bool result);`
+        - `fn S_ISREG(uint32 mode) -> (bool result);`
+        - `fn S_ISSOCK(uint32 mode) -> (bool result);`
+        - `fn filemode(uint32 mode) -> (string result);`
 - `viola.util.control_flow`（即`viola/util/control_flow.vla`，其余类似）
     - 添加用于循环的函数：
         - `sq forEach::<T, U>(T[] iterable, (T) -> (U) mapper) -> (U[] result);`（和`map`函数的区别是，`forEach`保证顺序，而`map`不保证。）
@@ -119,7 +287,19 @@ def get_prefix(path: str, identifier: str) -> str:
 ### 漏洞修复
 
 - 修复函数类型在C语言层上的表示，使之符合语法。
-- 修复元组类型在C语言层上的表示，使之成为包含`c_calling_type`类型成员的结构体。
+- 修复元组类型在C语言层上的表示，使之成为包含`c_calling_type`所示类型成员的结构体。
+- 修复尾递归优化 **（新增）**。当前尾递归优化算法为：
+
+```c
+int recursive(T1 x, T2 y) {
+// mark:
+    return recursive(f(y), g(x));   // x = f(y); y = g(x); goto mark;
+                                    // 这相当于x = f(y); y = g(f(y));，与语义不符
+    // 应当为（或者类似于）：
+    // T1 $new$x = f(y); T2 $new$y = g(x); x = $new$x; y = $new$y; goto mark;
+    // 注意确保f(y)和g(x)的执行顺序，以免潜在的副作用导致混乱
+}
+```
 
 ## Viola 0.2
 
@@ -179,6 +359,6 @@ sq myFunction() -> () {
 ```
 
 - `viola.util.hashmap`
-    - 定义接口`interface Hashable`，要求实现`fn hash() -> (uint32);`方法。
+    - 定义接口`interface Hashable`，这一接口要求实现`fn hash() -> (uint32);`方法。
     - 用哈希表实现字典类`class dict::<K, V>`和集合类`class set::<T>`。
 
