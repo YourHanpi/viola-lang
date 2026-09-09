@@ -30,8 +30,12 @@ RUNTIME_SOURCES = [
     os.path.join("viola", "io", "file.c"),
     os.path.join("viola", "math.c"),
     os.path.join("viola", "os.c"),
+    os.path.join("viola", "os", "path.c"),
+    os.path.join("viola", "stat.c"),
 ]
-GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2"]
+GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2",
+             # 见run_full_test.py中的说明（异常处理代码与-O2内联的交互）
+             "-fno-inline"]
 
 
 def get_c_sources(output_dir: str) -> list[str]:
@@ -87,6 +91,9 @@ def main() -> None:
         executable += ".exe"
     gcc_cmd = ["gcc", *GCC_FLAGS,
                f"-I{os.path.join(VIOLA_LIBS_DIR, 'viola')}",
+               # 嵌套模块（如viola/os.vla.h）以"viola/io.vla.h"形式包含其他
+               # 模块头文件，需将输出目录加入头文件搜索路径
+               f"-I{output_dir}",
                f"-include{os.path.join(VIOLA_LIBS_DIR, 'viola', 'runtime.h')}",
                "-o", executable, *sources, "-lpthread"]
     print("gcc", " ".join(GCC_FLAGS), "-o", executable, "<N个源文件>")

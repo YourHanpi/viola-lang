@@ -1,11 +1,183 @@
 // Viola操作系统接口库声明。
 //
 // 命名空间：viola.os
-// 实现位于viola_libs/viola/os.c（绑定Windows与POSIX接口）。
-// 本文件仅为C实现的函数提供Viola声明（分号代替函数体）。
+// 实现位于viola_libs/viola/os.c（绑定Windows与POSIX接口，
+// 使用条件编译）。本文件仅为C实现的常量、类和函数提供Viola声明
+// （分号代替函数体）。
+//
+// 其中涉及到文件操作的函数由子线程发送请求、由主线程串行执行
+// （见global_resource_manager）。
+//
+// 注意：0.1版Viola尚无异常机制，sq函数执行失败时静默忽略
+// （fn函数在失败时返回约定值，见各函数注释）。
 
 import cpart "runtime.h";
+from viola.io import file;
 
+// ================= 标准文件描述符 =================
+int32 STDERR_FILENO;
+int32 STDIN_FILENO;
+int32 STDOUT_FILENO;
+// ================= open的flags常量（POSIX取值，Windows在运行库内转换） =================
+uint32 O_APPEND;
+uint32 O_BINARY;
+uint32 O_CREAT;
+uint32 O_EXCL;
+uint32 O_RDONLY;
+uint32 O_RDWR;
+uint32 O_TRUNC;
+uint32 O_WRONLY;
+
+// ================= 文件状态 =================
+// 文件状态信息（字段与Python的stat_result一致）
+wrapper class Stat {
+    public uint32 st_mode;
+    public uint64 st_ino;
+    public uint64 st_dev;
+    public uint64 st_nlink;
+    public uint32 st_uid;
+    public uint32 st_gid;
+    public uint64 st_size;
+    public uint64 st_atime;
+    public uint64 st_mtime;
+    public uint64 st_ctime;
+    public sq __del__() -> ();
+}
+// 文件系统信息（字段与Python的statvfs_result一致）
+wrapper class StatVFS {
+    public uint64 f_bsize;
+    public uint64 f_frsize;
+    public uint64 f_blocks;
+    public uint64 f_bfree;
+    public uint64 f_bavail;
+    public uint64 f_files;
+    public uint64 f_ffree;
+    public uint64 f_favail;
+    public uint64 f_flag;
+    public uint64 f_namemax;
+    public sq __del__() -> ();
+}
+
+// ================= 文件与目录操作 =================
+// 判断路径是否可按mode访问（mode为R_OK=4/W_OK=2/X_OK=1的组合；
+// Windows上仅mode=0（存在性检查）有意义）。失败返回false。
+fn access(string path, uint32 mode) -> (bool result);
+// 改变当前工作目录
+sq chdir(string path) -> ();
+// 改变文件标志（仅POSIX）
+sq chflags(string path, uint32 flags) -> ();
+// 改变文件权限
+sq chmod(string path, uint32 mode) -> ();
+// 改变文件所有者（仅POSIX）
+sq chown(string path, uint32 uid, uint32 gid) -> ();
+// 改变根目录（仅POSIX）
+sq chroot(string path) -> ();
+// 关闭文件描述符
+sq close(int32 fd) -> ();
+// 关闭[fd1, fd2]范围内的文件描述符
+sq closerange(int32 fd1, int32 fd2) -> ();
+// 复制文件描述符（失败返回-1）
+fn dup(int32 fd) -> (int32 result);
+// 复制文件描述符到指定编号（失败返回-1）
+fn dup2(int32 fd1, int32 fd2) -> (int32 result);
+// 改变当前工作目录（经文件描述符，仅POSIX）
+sq fchdir(int32 fd) -> ();
+// 改变文件权限（经文件描述符，仅POSIX）
+sq fchmod(int32 fd, uint32 mode) -> ();
+// 改变文件所有者（经文件描述符，仅POSIX）
+sq fchown(int32 fd, uint32 uid, uint32 gid) -> ();
+// 同步文件数据到磁盘
+sq fdatasync(int32 fd) -> ();
+// 由文件描述符创建viola.io.file（按"r"模式包装，读写共用同一句柄）
+sq fdopen(int32 fd) -> (file result);
+// 获取文件描述符的配置值（仅POSIX，失败返回-1）
+fn fpathconf(int32 fd, int32 name) -> (int32 result);
+// 获取文件描述符的状态（失败返回空状态）
+fn fstat(int32 fd) -> (Stat result);
+// 截断文件（仅POSIX）
+sq ftruncate(int32 fd, uint32 size) -> ();
+// 获取当前工作目录
+fn getcwd() -> (string result);
+// 获取当前工作目录（字节形式；Viola中与getcwd一致）
+fn getcwdb() -> (string result);
+// 获取组ID（Windows上恒为0）
+fn getgid() -> (uint32 result);
+// 获取用户ID（Windows上恒为0）
+fn getuid() -> (uint32 result);
+// 判断文件描述符是否为终端
+fn isatty(int32 fd) -> (bool result);
+// 改变文件标志（不跟随符号链接，仅POSIX）
+sq lchflags(string path, uint32 flags) -> ();
+// 改变文件权限（不跟随符号链接，仅POSIX）
+sq lchmod(string path, uint32 mode) -> ();
+// 改变文件所有者（不跟随符号链接，仅POSIX）
+sq lchown(string path, uint32 uid, uint32 gid) -> ();
+// 创建硬链接
+sq link(string path, string newPath) -> ();
+// 列出目录内容（文件名数组）
+fn listdir(string path) -> (string[] result);
+// 移动文件读写位置（返回新位置，失败返回-1；whence: 0=开头 1=当前 2=末尾）
+sq lseek(int32 fd, int32 offset, int32 whence) -> (int32 result);
+// 获取路径状态（不跟随符号链接；Windows上与stat一致）
+fn lstat(string path) -> (Stat result);
+// 提取设备号的主设备号
+fn major(uint32 dev) -> (uint32 result);
+// 由主次设备号构造设备号
+fn makedev(uint32 major, uint32 minor) -> (uint32 result);
+// 递归创建目录
+sq makedirs(string path, uint32 mode = 0o777) -> ();
+// 提取设备号的次设备号
+fn minor(uint32 dev) -> (uint32 result);
+// 创建目录
+sq mkdir(string path, uint32 mode = 0o777) -> ();
+// 创建命名管道（仅POSIX）
+sq mkfifo(string path, uint32 mode = 0o666) -> ();
+// 创建设备节点（仅POSIX）
+sq mknod(string path, uint32 mode = 0o666, uint32 dev = 0) -> ();
+// 打开文件（flags为O_*常量的组合，失败返回-1）
+sq open(string path, uint32 flags, uint32 mode = 0o666) -> (int32 fd);
+// 打开伪终端（仅POSIX，失败返回-1）
+sq openpty() -> (int32 result);
+// 获取路径的配置值（仅POSIX，失败返回-1）
+fn pathconf(string path, int32 name) -> (int32 result);
+// 创建管道（返回读端文件描述符，失败返回-1）
+sq pipe() -> (int32 result);
+// 执行命令并返回可读取其输出的viola.io.file
+sq popen(string command, string mode) -> (file result);
+// 读取文件描述符（最多nbyte字节，失败返回空字符串）
+sq read(int32 fd, uint32 nbyte) -> (string result);
+// 读取符号链接目标（仅POSIX，失败返回空字符串）
+sq readlink(string path) -> (string result);
+// 删除文件
+sq remove(string path) -> ();
+// 递归删除空目录（自底向上，遇到非空目录停止）
+sq removedirs(string path) -> ();
+// 重命名文件或目录
+sq rename(string oldPath, string newPath) -> ();
+// 递归重命名（必要时创建中间目录）
+sq renames(string oldPath, string newPath) -> ();
+// 删除空目录
+sq rmdir(string path) -> ();
+// 获取路径状态（失败返回空状态）
+fn stat(string path) -> (Stat result);
+// 无操作（Python兼容保留接口）
+sq stat_float_times(bool useFloat) -> ();
+// 获取文件系统信息（失败返回空信息）
+fn statvfs(string path) -> (StatVFS result);
+// 获取终端前台进程组（仅POSIX，失败返回-1）
+fn tcgetpgrp(int32 fd) -> (int32 result);
+// 设置终端前台进程组（仅POSIX）
+sq tcsetpgrp(int32 fd, int32 pgid) -> ();
+// 获取文件描述符对应的终端名（失败返回空字符串）
+fn ttyname(int32 fd) -> (string result);
+// 删除文件（同remove）
+sq unlink(string path) -> ();
+// 设置文件访问与修改时间
+sq utime(string path, uint32 atime, uint32 mtime) -> ();
+// 写入文件描述符（返回写入字节数）
+sq write(int32 fd, string data) -> (uint32 result);
+
+// ================= 进程与其他 =================
 // 休眠指定毫秒数
 sq sleep(uint64 milliseconds) -> ();
 // 退出程序并返回退出码（不会返回）

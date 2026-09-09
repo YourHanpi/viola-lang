@@ -8,6 +8,8 @@
 import cpart "runtime.h";
 
 wrapper class Exception {
+    // 构造函数（实现于viola_libs/viola/lang/exception.c）
+    public sq __new__(string message) -> (this);
     // 获取异常消息
     public fn what() -> (string result);
     // 释放异常对象

@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Strings Test Template
 // Tests: string declaration, concatenation, slicing, methods
 

@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Functions Test Template
 // Tests: function declaration, definition, calling, default values, anonymous functions
 

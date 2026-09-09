@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola C Compatibility Test Template
 // Tests: cpart functions and cpart imports
 

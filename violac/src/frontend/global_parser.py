@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .utils import ParserGenericTable, ParsingResult, TokenStreamIO
 from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS
-from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
+from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, IMPORTS_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -62,6 +62,10 @@ class GlobalParser:
         self._exceptions: list[CompilerException] = []
         self._src_info: SourceInfo = VIOLA_INIT.copy()
         self._imports: dict[str, str] = {}
+        self._import_module_paths: list[str] = []
+        # 由import引入的符号裸名集合（写入符号类型表时需过滤，避免
+        # 把导入符号误当作本模块自身导出的符号）
+        self._imported_names: set[str] = set()
         self._parser_generic_table: ParserGenericTable = ParserGenericTable()
         self._symbol_types: dict[str, tuple[str, list[str]]] = {}
         self._logger: Logger = Logger(f"Parser[0]")
@@ -81,6 +85,8 @@ class GlobalParser:
         self._expr_tokens.clear()
         self._symbol_types.clear()
         self._imports = {}
+        self._import_module_paths.clear()
+        self._imported_names.clear()
         self._load_tokens(tokens)
         self._move_to_first_token()
         command: list[str] = []
@@ -128,7 +134,10 @@ class GlobalParser:
             return None
         if os.path.exists(file_path + SYMBOL_TABLE_POSTFIX) and \
                 os.path.getmtime(src_path) < os.path.getmtime(file_path + SYMBOL_TABLE_POSTFIX):
-            # 已解析过且源文件未更新，直接复用已有结果
+            # 已解析过且源文件未更新，直接复用已有结果。
+            # 被导入的模块同样需要编译：从导入缓存恢复模块路径并记录，
+            # 由parse_to_file安排其run-vm任务（输出已是最新时会被跳过）
+            self._record_import_module_paths(file_path)
             return ParsingResult.read(file_path)
         tokens: list[Token] = TokenStreamIO.read(file_path + TOKEN_POSTFIX)
         result = self.parse(tokens)
@@ -148,6 +157,9 @@ class GlobalParser:
         cache_file_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
         self._src_info: SourceInfo = SourceInfo(file_abs_path)
         self._logger.info(f"Start parsing {file_path}")
+        # 解析器实例在线程池中复用，防止上一次解析的记录残留
+        self._import_module_paths.clear()
+        self._imported_names.clear()
         if not self._set_file_lock(cache_file_path):
             # 该文件正在被其他线程解析，重新入队等待
             self._logger.debug("File is being parsed by another thread")
@@ -163,7 +175,12 @@ class GlobalParser:
                 self._logger.info(f"Successfully parsed {file_path}")
             if result is not None:
                 result.write(cache_file_path, file_abs_path, self._workspace)
-                return TaskResult(TaskResultState.SUCCESS, [["violac", "parse-expr", file_path]])
+                data: list[list[str]] = [["violac", "parse-expr", file_path]]
+                # 导入的模块（缓存命中，未走自身任务链）也需要被编译，
+                # 安排其run-vm任务（输出已是最新时会被_skip检查跳过）
+                for module_src in self._import_module_paths:
+                    data.append(["violac", "run-vm", module_src])
+                return TaskResult(TaskResultState.SUCCESS, data)
             elif len(self._tasks) > 0:
                 return TaskResult(TaskResultState.DELAYED, self._tasks)
             return TaskResult(TaskResultState.FAILURE)
@@ -266,6 +283,9 @@ class GlobalParser:
         for name, (t, type_args) in self._symbol_types.items():
             if "." in name:
                 continue
+            if name in self._imported_names:
+                # 由import引入的符号不属于本模块，不写入符号类型表
+                continue
             lines.append(f"{name}%{t}%{type_args}")
         with open(file_path + SYMBOL_TYPE_POSTFIX, "w") as f:
             f.write("\n".join(lines))
@@ -279,6 +299,38 @@ class GlobalParser:
         """
         return [token for token in tokens if "_BLANK" not in token.type and "_COMMENT" not in token.type]
     
+    def _record_import_module_paths(self, cache_file_path: str) -> None:
+        """
+        从导入缓存（.vlaimports）恢复被导入模块的路径并记录，
+        供parse_to_file安排其编译任务（模块解析命中缓存时使用）。
+        """
+        imports_path = cache_file_path + IMPORTS_POSTFIX
+        if not os.path.exists(imports_path):
+            return
+        root_paths: list[str] = [self._workspace]
+        if "VIOLA_HOME" in os.environ:
+            root_paths += os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":")
+        with open(imports_path, "r") as f:
+            for line in f.readlines():
+                value = line.strip().split("=", 1)[1] if "=" in line else ""
+                # 导入缓存的值是符号限定名（如viola.io.file），
+                # 逐级截短以找到所属模块（直接检查文件存在性，
+                # 不走_find_import以免对非模块名记录错误）
+                parts: list[str] = value.split(".")
+                while len(parts) > 0:
+                    module_rel = ".".join(parts).replace(".", os.sep) + ".vla"
+                    found = False
+                    for root_path in root_paths:
+                        src_path = os.path.abspath(os.path.join(root_path, module_rel))
+                        if os.path.exists(src_path):
+                            if src_path not in self._import_module_paths:
+                                self._import_module_paths.append(src_path)
+                            found = True
+                            break
+                    if found:
+                        break
+                    parts = parts[:-1]
+
     def _find_import(self, namespace: str) -> Optional[tuple[str, str, str, str]]:
         """
         根据命名空间寻找需要导入的模块位置。
@@ -350,6 +402,11 @@ class GlobalParser:
         if not os.path.exists(symbol_table_path):
             self._add_task(["violac", "parse", token_path])
             return None
+        # 模块缓存已存在：记录其源文件路径，解析成功后由parse_to_file
+        # 安排run-vm任务，确保导入的模块也被编译（缓存命中的模块
+        # 不会走其自身的parse→run-vm任务链）
+        if token_path not in self._import_module_paths:
+            self._import_module_paths.append(token_path)
         with open(symbol_table_path, "r") as file:
             text_list: list[str] = file.read().split("\n")
         # 符号表文件头部固定为三行：源路径、缓存目录、分隔符
@@ -436,7 +493,10 @@ class GlobalParser:
         if head in ["FUNC", "FUNCTION", "METHOD"]:
             # 名称行：函数名或"类名 方法名"（后接修饰符）
             name_parts: list[str] = result[0].split(" ")
-            name_parts[0] = namespace + "." + name_parts[0]
+            if "." not in name_parts[0]:
+                # 未限定的名称属于被导入模块自身，加上其命名空间限定；
+                # 已含点号的名称是该模块导入的其他模块符号，保持原限定
+                name_parts[0] = namespace + "." + name_parts[0]
             result[0] = " ".join(name_parts)
             # 参数行与返回行中的类型名（%分隔的偶数位）
             for i in range(1, len(result)):
@@ -451,13 +511,15 @@ class GlobalParser:
                 parts: list[str] = result[i].split("%")
                 if len(parts) > 1:
                     parts[0] = GlobalParser._qualify_type_name(parts[0], namespace, module_names)
-                    parts[1] = namespace + "." + parts[1]
+                    if "." not in parts[1]:
+                        parts[1] = namespace + "." + parts[1]
                     result[i] = "%".join(parts)
         elif head == "CLASS":
             # 名称行：类名%父类名（后接修饰符）
             name_line: list[str] = result[0].split(" ")
             cls_parent: list[str] = name_line[0].split("%")
-            cls_parent[0] = namespace + "." + cls_parent[0]
+            if "." not in cls_parent[0]:
+                cls_parent[0] = namespace + "." + cls_parent[0]
             if len(cls_parent) > 1 and cls_parent[1] in module_names:
                 cls_parent[1] = namespace + "." + cls_parent[1]
             name_line[0] = "%".join(cls_parent)
@@ -530,6 +592,9 @@ class GlobalParser:
         if not os.path.exists(symbol_types_path):
             self._add_task(["violac", "parse", token_path])
             return
+        # 模块缓存已存在：记录其源文件路径（见_load_symbol中的说明）
+        if token_path not in self._import_module_paths:
+            self._import_module_paths.append(token_path)
         with open(symbol_types_path, "r") as file:
             texts: list[str] = file.readlines()
         for text in texts:
@@ -545,7 +610,11 @@ class GlobalParser:
                     # from...import：导入名保持原名，但原始符号名需要模块限定
                     original_name = namespace + "." + original_name
                 self._symbol_types[kv_list[0]] = kv_list[1], type_args
-                self._imports[kv_list[0]] = original_name
+                # 已有同名映射时保留先导入的映射（本模块显式导入优先于
+                # 其他模块传递导入的同名符号）
+                if kv_list[0] not in self._imports:
+                    self._imports[kv_list[0]] = original_name
+                self._imported_names.add(kv_list[0])
                 if len(type_args) > 0:
                     self._parser_generic_table.add(kv_list[0], type_args)
 
@@ -877,23 +946,12 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_closure_stmt(self, token_buffer: list[Token]) -> Optional[tuple[list[str], list[str]]]:
-        """解析闭包声明语句。"""
-        if len(token_buffer) == 1:
-            self._next()
-            if not self._match_type("IDENTIFIER"):
-                self._raise("Unexpected token: " + self._get_current().text)
-            func_name: str = self._get_current().text
-            self._back()
-            closure_result = self._parse_func([], self._get_current().type[0], True)
-            if closure_result is None:
-                return None
-            commands = closure_result[0]
-            return ["MAKE STMT DECL", "MAKE EXPR CLOSURE"] + commands + [
-                "CALL SET_DEF", "CALL SET_EXPR", "MAKE EXPR AUTO_TYPE_REF", f"CALL ADD_VAR {func_name}",
-                "CALL FINISH"
-            ], []
-        self._back(len(token_buffer) - 1)
-        if not self._match_type("AUTO"):
+        """解析闭包声明语句（auto 名称 = sq/fn(...) -> (...) {...};）。"""
+        if len(token_buffer) < 2:
+            self._raise("Unexpected token: " + self._get_current().text)
+            return None
+        self._back(len(token_buffer))
+        if not (self._match_type("IDENTIFIER") and self._get_current().text == "auto"):
             self._raise("Please use auto type here.")
             return None
         self._next()
@@ -905,12 +963,23 @@ class GlobalParser:
         if not self._match_type("ASSIGN"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
-        closure_result = self._parse_func([], self._get_current().text, True, True)
+        self._next()
+        closure_result = self._parse_func([], "SQ" if "SQ" in self._get_current().type else "FN", True, True)
         if closure_result is None:
             return None
         commands = closure_result[0]
+        # 闭包为匿名函数，无符号表条目：把参数名与返回类型信息附加到DEF命令
+        # （格式：MAKE DEF SQ/FN !ANONYMOUS <参数类型%参数名%...>!<返回类型%返回名%...>）
+        closure_symbol = closure_result[1]
+        rets_info: str = closure_symbol[3] if len(closure_symbol) > 3 else ""
+        # 找到DEF命令行（可能位于若干SET_INFO位置信息命令之后）
+        for i, cmd_line in enumerate(commands):
+            if cmd_line.startswith("MAKE DEF "):
+                commands[i] = " ".join(cmd_line.split(" ")[:4]) + " " + closure_symbol[2] + \
+                    ("!" + rets_info if rets_info != "" else "")
+                break
         return ["MAKE STMT DECL", "MAKE EXPR CLOSURE"] + commands + [
-            "CALL SET_DEF", "CALL SET_EXPR", "MAKE EXPR AUTO_TYPE_REF", f"CALL ADD_VAR {func_name}",
+            "CALL SET_DEF", "CALL SET_VAR_VALUE", "MAKE EXPR AUTO_TYPE_REF", f"CALL ADD_VAR {func_name}",
             "CALL FINISH"
         ], []
 
@@ -968,14 +1037,21 @@ class GlobalParser:
     @_set_loc_command
     def _parse_const_def(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
         """解析常量定义。"""
-        if len(prefixes) > 0:
-            self._raise(f"Unexpected prefix: {' '.join(prefixes)}")
+        unexpected: list[str] = list(filter(lambda p: p not in ["PUBLIC", "PROTECTED", "PRIVATE"], prefixes))
+        if len(unexpected) > 0:
+            self._raise(f"Unexpected prefix: {' '.join(unexpected)}")
         command: list[str] = ["MAKE DEF CONST"]
         stmt_result = self._parse_stmt()
         if stmt_result is None:
             return None
         command += stmt_result[0] + ["CALL SET_STMT"]
         symbol = ["VAR"] + stmt_result[1]
+        if len(symbol) > 1 and "%" in symbol[1]:
+            parts: list[str] = [symbol[1].rstrip()] + list(filter(lambda p: p != "", prefixes))
+            symbol[1] = " ".join(parts)
+            # 全局变量注册到符号类型表，使from...import能映射其限定名
+            var_name: str = symbol[1].split(" ")[0].split("%")[1]
+            self._symbol_types[var_name] = ("VAR", [])
         command += ["CALL FINISH"]
         return command, symbol
 
@@ -1024,6 +1100,7 @@ class GlobalParser:
             if pure_decl_expected is not None and not pure_decl_expected:
                 self._raise("Unexpected token: " + self._get_current().text)
                 return None
+            self._next()
             return ["MAKE STMT DECL"] + name_command + ["CALL FINISH"], symbol
         if not self._match_type("ASSIGN"):
             if pure_decl_expected is not None and pure_decl_expected:
@@ -1055,13 +1132,22 @@ class GlobalParser:
         """
         start_pos: int = self._current
         token_buffer: list[Token] = []
-        while not self._match_type("SEMICOLON") and not self._match_type("FN") and not self._match_type("SQ"):
+        # 顶层收集语句记号：花括号块（闭包体等）内的分号与fn/sq不终止收集
+        brace_count: int = 0
+        while self._current < self._tokens_num and \
+                not (self._match_type("SEMICOLON") and brace_count == 0) and \
+                not (self._match_type("FN") and brace_count == 0) and \
+                not (self._match_type("SQ") and brace_count == 0):
+            if self._match_type("L_CURLY_BRACKET"):
+                brace_count += 1
+            elif self._match_type("R_CURLY_BRACKET"):
+                brace_count -= 1
             token_buffer.append(self._get_current())
             self._next()
         if len(token_buffer) == 0:
             self._next()
             return ["MAKE STMT OP"], []
-        is_closure: bool = self._get_current().type in ["FN", "SQ"]
+        is_closure: bool = "FN" in self._get_current().type or "SQ" in self._get_current().type
         if is_closure:
             return self._parse_closure_stmt(token_buffer)
         self._back_to(start_pos)
@@ -1088,7 +1174,8 @@ class GlobalParser:
     @_set_loc_command
     def _parse_def(self) -> Optional[tuple[list[str], list[str]]]:
         """解析顶层定义（声明式函数、过程式函数、类、枚举、常量）。"""
-        prefixes = self._parse_prefixes(["ABSTRACT", "CPART", "EXPORT", "STATIC", "FINAL", "UNSAFE", "WRAPPER"])
+        prefixes = self._parse_prefixes(["ABSTRACT", "CPART", "EXPORT", "STATIC", "FINAL", "UNSAFE", "WRAPPER",
+                                         "PUBLIC", "PROTECTED", "PRIVATE"])
         if prefixes is None:
             return None
         if self._match_type("SQ"):
@@ -1334,10 +1421,14 @@ class GlobalParser:
             self._raise(f"Unexpected func type: {func_type}")
             return None
         self._next()
-        if not self._match_type("IDENTIFIER"):
-            self._raise(f"Unexpected token: {self._get_current().text}")
-            return None
-        func_name: str = self._get_current().text if not is_closure else "!ANONYMOUS"
+        if is_closure:
+            # 闭包为匿名函数，无函数名
+            func_name: str = "!ANONYMOUS"
+        else:
+            if not self._match_type("IDENTIFIER"):
+                self._raise(f"Unexpected token: {self._get_current().text}")
+                return None
+            func_name = self._get_current().text
         is_method = cls_name != ""
         if func_type == "SQ" and func_name == "__new__" and is_method:
             func_type = "CONSTRUCTOR"
@@ -1628,6 +1719,10 @@ class GlobalParser:
             self._next()
             commands = [self._add_parsing_slice(expr_results), f"CALL ADD_STATIC_PROP {prop_name}"]
         elif self._match_type("SEMICOLON"):
+            if is_static:
+                # 静态属性是全局唯一的，要求有初始值
+                self._raise("Static properties must have an initial value.")
+                return None
             self._next()
         else:
             self._raise("Unexpected token: " + self._get_current().text)
@@ -1638,7 +1733,9 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_del_super_stmt(self) -> Optional[tuple[list[str], list[str]]]:
-        """解析del(super);语句（wrapper类的__del__中释放普通成员）。"""
+        """解析del(super);语句（wrapper类的__del__中释放普通成员）。
+        del是viola.lang模块的内置函数（不是关键字），此处按内置函数语义
+        解析其特殊形式del(super)。"""
         self._next()
         if not self._match_type("L_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -1693,7 +1790,9 @@ class GlobalParser:
         """解析非async语句（分派到各类具体语句解析器）。"""
         if self._match_type("RETURN"):
             return self._parse_return_stmt()
-        if self._match_type("DEL"):
+        if self._match_type("IDENTIFIER") and self._get_current().text == "del":
+            # del不是关键字，而是viola.lang模块的内置函数；
+            # del(super);语句由解析器按内置函数语义特殊处理
             return self._parse_del_super_stmt()
         if self._match_type("THROW"):
             return self._parse_throw_stmt()
@@ -1756,8 +1855,11 @@ class GlobalParser:
         is_tuple: bool = False
         is_array: bool = False
         result: list[str] = []
+        first_identifier: Optional[str] = None
         while self._current < self._tokens_num:
             token = self._get_current()
+            if first_identifier is None and "IDENTIFIER" in token.type:
+                first_identifier = token.text
             result.append(token.text)
             if "L_BRACKET" in token.type:
                 l_bracket_count += 1
@@ -1802,7 +1904,7 @@ class GlobalParser:
                         # 空返回类型 ()
                         result.append(self._get_current().text)
                         self._next()
-                        return "".join(result)
+                        return self._qualify_imported_type("".join(result), first_identifier)
                     dst_type = self._parse_type()
                     if dst_type is None:
                         return None
@@ -1812,14 +1914,26 @@ class GlobalParser:
                     result.append(dst_type)
                     result.append(self._get_current().text)
                     self._next()
-                    return "".join(result)
-                return "".join(result)
+                    return self._qualify_imported_type("".join(result), first_identifier)
+                return self._qualify_imported_type("".join(result), first_identifier)
             if l_bracket_count < 0 or l_angle_bracket_count < 0 or l_square_bracket_count < 0:
                 self._raise(f"Unexpected token {token.text}")
                 return None
             self._next()
         self._raise("Unexpected EOF")
         return None
+
+    def _qualify_imported_type(self, type_str: str, first_identifier: Optional[str]) -> str:
+        """
+        类型若以导入的类名开头，替换为其限定名（如Stat -> viola.os.Stat）。
+        导入映射中的函数名不会被替换（它们不是类型）。
+        """
+        if first_identifier is None or "." in first_identifier:
+            return type_str
+        if first_identifier in self._imports and first_identifier in self._symbol_types and \
+                self._symbol_types[first_identifier][0] == "CLASS":
+            return self._imports[first_identifier] + type_str[len(first_identifier):]
+        return type_str
 
     @_set_loc_command
     def _parse_typedef_stmt(self) -> Optional[tuple[list[str], list[str]]]:

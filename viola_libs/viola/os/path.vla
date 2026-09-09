@@ -1,0 +1,58 @@
+// Viola路径处理库声明。
+//
+// 命名空间：viola.os.path
+// 实现位于viola_libs/viola/os/path.c（Windows使用反斜杠语义，
+// POSIX使用正斜杠语义，使用条件编译）。本文件仅为C实现的
+// 常量和函数提供Viola声明（分号代替函数体）。
+//
+// 其中涉及到文件系统查询的函数（exists、isdir、getsize等）
+// 由子线程发送请求、由主线程串行执行（见global_resource_manager）。
+
+import cpart "runtime.h";
+
+// 路径分隔符（Windows为";"，POSIX为":"）
+string pathsep;
+// 返回路径的绝对路径表示
+fn abspath(string path) -> (string result);
+// 返回路径的最后一个组件
+fn basename(string path) -> (string result);
+// 返回所有路径的最长公共目录前缀
+fn commonpath(string[] paths) -> (string result);
+// 返回所有路径的最长公共字符前缀
+fn commonprefix(string[] paths) -> (string result);
+// 返回路径的目录部分
+fn dirname(string path) -> (string result);
+// 判断路径是否存在
+fn exists(string path) -> (bool result);
+// 获取最后访问时间（秒）
+fn getatime(string path) -> (uint64 result);
+// 获取创建时间（秒）
+fn getctime(string path) -> (uint64 result);
+// 获取最后修改时间（秒）
+fn getmtime(string path) -> (uint64 result);
+// 获取文件大小（字节）
+fn getsize(string path) -> (uint64 result);
+// 判断是否为绝对路径
+fn isabs(string path) -> (bool result);
+// 判断是否为目录
+fn isdir(string path) -> (bool result);
+// 判断是否为普通文件
+fn isfile(string path) -> (bool result);
+// 判断是否为符号链接（Windows上恒为false）
+fn islink(string path) -> (bool result);
+// 判断是否为挂载点
+fn ismount(string path) -> (bool result);
+// 用路径分隔符连接多个路径
+fn join(string[] paths) -> (string result);
+// 规范化路径（折叠".."、"."与重复分隔符）
+fn normpath(string path) -> (string result);
+// 返回路径的规范绝对路径（解析符号链接，Windows上等效于abspath）
+fn realpath(string path) -> (string result);
+// 判断两个路径是否指向同一文件
+fn samefile(string path1, string path2) -> (bool result);
+// 判断两个文件描述符是否指向同一文件
+fn sameopenfile(int32 fd1, int32 fd2) -> (bool result);
+// 将路径拆分为(head, tail)
+fn split(string path) -> (string[] result);
+// 将路径拆分为(root, ext)
+fn splitext(string path) -> (string[] result);

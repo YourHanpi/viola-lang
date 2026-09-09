@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Arrays Test Template
 // Tests: array declaration, initialization, access, slicing, methods, and built-in functions
 

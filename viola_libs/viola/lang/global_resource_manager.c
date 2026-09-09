@@ -18,6 +18,25 @@ viola$lang$global_resource_manager$RequestQueue
 
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* 0.1新增：以Viola函数注册的请求处理器表（按request_id索引） */
+static viola$lang$function$Function **s_violaHandlers = NULL;
+static uint32_t s_violaHandlerCapacity = 0;
+/* 请求处理器分发时使用的监听器（请求由主线程执行） */
+static viola$threads$Listener s_handlerListener;
+
+/* 将Viola处理器的调用适配为C层请求处理器 */
+static void violaHandlerDispatch(viola$lang$global_resource_manager$Request *request) {
+    viola$lang$function$Function *fn = NULL;
+    if (request->type < s_violaHandlerCapacity) {
+        fn = s_violaHandlers[request->type];
+    }
+    if (fn != NULL && fn->syncPtr != NULL) {
+        ((void (*)(viola$lang$global_resource_manager$Request *,
+                   viola$threads$Listener *, void *))fn->syncPtr)(
+            request, &s_handlerListener, fn->$capture);
+    }
+}
+
 void viola$lang$global_resource_manager$init(void) {
     if (viola$lang$global_resource_manager$handlerVector != NULL) {
         return;
@@ -40,8 +59,12 @@ void viola$lang$global_resource_manager$init(void) {
     viola$lang$global_resource_manager$queue->head = 0;
     viola$lang$global_resource_manager$queue->tail = 0;
     viola$lang$global_resource_manager$queue->size = 0;
-    /* 注册文件请求处理器 */
+    /* 请求处理器分发监听器（请求在主线程执行） */
+    viola$threads$initListener(&s_handlerListener, 0);
+    /* 注册各资源模块的请求处理器 */
     viola$io$registerFileHandlers();
+    viola$os$registerOsHandlers();
+    viola$os$path$registerPathHandlers();
 }
 
 void viola$lang$global_resource_manager$handleRequest(
@@ -115,5 +138,53 @@ void viola$lang$global_resource_manager$drainRequests(void) {
         viola$lang$global_resource_manager$queue->size--;
         pthread_mutex_unlock(&s_mutex);
         viola$lang$global_resource_manager$handleRequest(request);
+        /* 引用计数为0的请求在入队时由调用方清零（如文件请求由提交方自行释放），
+           仅在请求携带引用计数（>0）时由管理器释放 */
+        if (request->$refCount > 0) {
+            request->$refCount--;
+            if (request->$refCount == 0) {
+                free(request);
+            }
+        }
+    }
+}
+
+/* 0.1新增：以Viola函数注册请求处理器 */
+void viola$lang$global_resource_manager$register_request_handler(
+        viola$lang$uint32 request_id, viola$lang$function$Function *handler,
+        viola$threads$Listener *listener) {
+    (void)listener;
+    if (handler == NULL) {
+        return;
+    }
+    if (s_violaHandlers == NULL) {
+        s_violaHandlerCapacity = 16;
+        s_violaHandlers = (viola$lang$function$Function **)calloc(
+            (size_t)s_violaHandlerCapacity, sizeof(viola$lang$function$Function *));
+    }
+    while (request_id >= s_violaHandlerCapacity) {
+        uint32_t newCapacity = s_violaHandlerCapacity * 2;
+        s_violaHandlers = (viola$lang$function$Function **)realloc(
+            s_violaHandlers, sizeof(viola$lang$function$Function *) * newCapacity);
+        memset(s_violaHandlers + s_violaHandlerCapacity, 0,
+               sizeof(viola$lang$function$Function *) * (newCapacity - s_violaHandlerCapacity));
+        s_violaHandlerCapacity = newCapacity;
+    }
+    s_violaHandlers[request_id] = handler;
+    viola$lang$global_resource_manager$registerHandler(request_id, violaHandlerDispatch);
+}
+
+/* 请求析构：引用计数减一，归零时释放 */
+void viola$lang$global_resource_manager$Request$__del__$_0(
+        viola$lang$global_resource_manager$Request *_this, viola$threads$Listener *listener) {
+    (void)listener;
+    if (_this == NULL) {
+        return;
+    }
+    if (_this->$refCount > 0) {
+        _this->$refCount--;
+        if (_this->$refCount == 0) {
+            free(_this);
+        }
     }
 }

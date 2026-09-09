@@ -7,7 +7,16 @@
 
 import cpart "lang/string.h";
 
+// 内置释放函数。del不是关键字，而是本模块的内置函数。
+// del(super);（wrapper类__del__中释放普通成员）由编译器特殊处理：
+// 生成当前类的$__del__super$_0调用；其余形式的del调用为原生空操作
+// （实现于viola_libs/viola/runtime.c的viola$lang$del）。
+sq del(object _this) -> ();
+
 wrapper class string {
+    // 构造函数（data为已有的uint16数组指针，长度未知时视为空字符串，
+    // 主要供内部使用；实现于viola_libs/viola/lang/string.c）
+    public sq __new__(ptr data) -> (this);
     // 字符串连接，等效于concat方法
     public fn __add__(string s) -> (string result);
     // 判断字符串是否相等
@@ -58,6 +67,71 @@ wrapper class string {
     public fn unicode() -> (uint16[] result);
     // 返回字符串大写
     public fn upper() -> (string result);
+    // ================= 0.1新增方法 =================
+    // 统计sub非重叠出现的次数
+    public fn count(string sub) -> (uint32 result);
+    // 返回sub首次出现的索引（未找到返回UINT32_MAX）
+    public fn find(string sub) -> (uint32 result);
+    // 返回sub最后一次出现的索引（未找到返回UINT32_MAX）
+    public fn rfind(string sub) -> (uint32 result);
+    // 与find一致（未找到返回UINT32_MAX）
+    public fn index(string sub) -> (uint32 result);
+    // 与rfind一致（未找到返回UINT32_MAX）
+    public fn rindex(string sub) -> (uint32 result);
+    // 解析为浮点数（支持inf/nan与科学计数法）
+    public fn float() -> (float64 result);
+    // 解析为十进制整数
+    public fn int() -> (int64 result);
+    // 按base（2~16）解析为整数
+    public fn int(uint8 base) -> (int64 result);
+    // 十进制整数转换为字符串
+    public static fn fromInt(int64 value) -> (string result);
+    // 按base（2~16）将整数转换为字符串
+    public static fn fromInt(int64 value, uint8 base) -> (string result);
+    // 浮点数转换为字符串
+    public static fn fromFloat(float64 value) -> (string result);
+    // 是否全部为字母或数字
+    public fn isalnum() -> (bool result);
+    // 是否全部为字母
+    public fn isalpha() -> (bool result);
+    // 是否全部为十进制数字
+    public fn isdecimal() -> (bool result);
+    // 是否全部为数字
+    public fn isdigit() -> (bool result);
+    // 是否为合法标识符
+    public fn isidentifier() -> (bool result);
+    // 是否全部为小写
+    public fn islower() -> (bool result);
+    // 是否全部为数字（含Unicode数字）
+    public fn isnumeric() -> (bool result);
+    // 是否全部为可打印字符
+    public fn isprintable() -> (bool result);
+    // 是否全部为空白字符
+    public fn isspace() -> (bool result);
+    // 是否全部为大写
+    public fn isupper() -> (bool result);
+    // 左侧用fillChar填充到length长度
+    public fn ljust(uint32 length, string fillChar) -> (string result);
+    // 去除左侧空白（默认 " \t\n\r"）
+    public fn lstrip() -> (string result);
+    // 去除左侧toRemove集合中的字符
+    public fn lstrip(string toRemove) -> (string result);
+    // 右侧用fillChar填充到length长度
+    public fn rjust(uint32 length, string fillChar) -> (string result);
+    // 去除右侧空白（默认 " \t\n\r"）
+    public fn rstrip() -> (string result);
+    // 去除右侧toRemove集合中的字符
+    public fn rstrip(string toRemove) -> (string result);
+    // 去除两侧空白（默认 " \t\n\r"）
+    public fn strip() -> (string result);
+    // 去除两侧toRemove集合中的字符
+    public fn strip(string toRemove) -> (string result);
+    // 大小写互换
+    public fn swapcase() -> (string result);
+    // 左侧补零到length长度（符号保持在最前）
+    public fn zfill(uint32 length) -> (string result);
+    // 替换子串（count为0时替换全部）
+    public fn replace(string oldSub, string newSub, uint32 count) -> (string result);
     // 释放字符串数据
     public sq __del__() -> ();
 }

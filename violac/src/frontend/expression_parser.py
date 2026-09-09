@@ -722,6 +722,7 @@ class ExprParser(GlobalParser):
         if self._match_type("_EOF"):
             self._raise("Unexpected end of expression")
             return None
+        is_identifier_chain: bool = False
         if self._match_type("L_BRACKET"):
             result = self._parse_bracket_expr(_ExprState.EXPR_STARTING)
         elif self._match_type("L_SQUARE_BRACKET"):
@@ -730,6 +731,7 @@ class ExprParser(GlobalParser):
             result = self._parse_curly_bracket_expr(_ExprState.EXPR_STARTING)
         elif self._match_types(["IDENTIFIER", "THIS"]):
             result = self._parse_attr_expr()
+            is_identifier_chain = True
         elif self._match_types(["INT32", "UINT32", "INT_N", "UINT_N", "SIZE_T"]):
             result = self._parse_int()
         elif self._match_types(["FLOAT", "DOUBLE"]):
@@ -745,7 +747,41 @@ class ExprParser(GlobalParser):
             return None
         if result is None:
             return None
+        if not is_identifier_chain:
+            # 非标识符链的操作数（如字符串字面量）同样支持
+            # 属性访问/调用/索引等后缀操作（如"abc".count("a")）
+            result = self.__parse_postfix_chain(result)
         return result
+
+    def __parse_postfix_chain(self, operand: tuple[list[str], _ExprState]) -> tuple[list[str], _ExprState]:
+        """解析操作数的后缀链（.属性、调用、索引）。"""
+        result: tuple[list[str], _ExprState] = operand
+        while True:
+            if self._match_type("DOT"):
+                self._next()
+                if not self._match_type("IDENTIFIER"):
+                    self._raise("Unexpected token: " + self._get_current().text)
+                    return result
+                attr: str = self._get_current().text
+                self._next()
+                result = (["MAKE EXPR ATTR_OP"] + result[0] +
+                          ["CALL SET_CALLER", "CALL SET_ATTR " + attr], _ExprState.CALLABLE_ENDING)
+            elif self._match_type("L_BRACKET") and \
+                    _is_substate(_ExprState.CALLABLE_ENDING, result[1]):
+                arg_list_result = self._parse_arg_list()
+                if arg_list_result is None:
+                    return result
+                result = (["MAKE EXPR CALL_OP"] + arg_list_result + result[0] + ["CALL SET_FUNC"],
+                          _ExprState.CALLABLE_ENDING)
+            elif self._match_type("L_SQUARE_BRACKET") and \
+                    _is_substate(_ExprState.INDEXABLE_ENDING, result[1]):
+                index_result = self._parse_square_bracket_expr(result[1])
+                if index_result is None:
+                    return result
+                result = (["MAKE EXPR ITEM_OP"] + index_result[0] + result[0] + ["CALL SET_EXPR_LEFT"],
+                          _ExprState.CALLABLE_ENDING)
+            else:
+                return result
 
     @_set_loc_command_with_state
     def _parse_or(self, end_pos: int) -> Optional[tuple[list[str], _ExprState]]:

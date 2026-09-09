@@ -1,0 +1,6 @@
+interface I2 {
+    int badProp;
+    fn f() -> (int r);
+}
+sq main() -> () {
+}

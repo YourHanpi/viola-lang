@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Operators Test Template
 // Tests: arithmetic, relational, logical, bitwise, and other operators
 

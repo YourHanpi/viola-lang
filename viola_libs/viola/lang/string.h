@@ -28,6 +28,9 @@ typedef struct viola$lang$uint16$$array {
 } viola$lang$uint16$$array;
 #endif
 
+/* 字符串相等比较（供编译器生成的按参数名传参代码使用） */
+int viola$lang$string$equals(const viola$lang$string *a, const viola$lang$string *b);
+
 /* 字符串方法（实现于string.c） */
 void viola$lang$string$__new__$_0(viola$lang$ptr data, viola$lang$string **this,
                                   viola$threads$Listener *listener);
@@ -88,5 +91,74 @@ void viola$lang$string$unicode$_0(viola$lang$string *_this, viola$lang$uint16$$a
                                   viola$threads$Listener *listener);
 void viola$lang$string$upper$_0(viola$lang$string *_this, viola$lang$string **result,
                                 viola$threads$Listener *listener);
+
+/* ================= 0.1新增方法 ================= */
+void viola$lang$string$count$_0(viola$lang$string *_this, viola$lang$string *sub,
+                                viola$lang$uint32 *result, viola$threads$Listener *listener);
+void viola$lang$string$find$_0(viola$lang$string *_this, viola$lang$string *sub,
+                               viola$lang$uint32 *result, viola$threads$Listener *listener);
+void viola$lang$string$rfind$_0(viola$lang$string *_this, viola$lang$string *sub,
+                                viola$lang$uint32 *result, viola$threads$Listener *listener);
+void viola$lang$string$index$_0(viola$lang$string *_this, viola$lang$string *sub,
+                                viola$lang$uint32 *result, viola$threads$Listener *listener);
+void viola$lang$string$rindex$_0(viola$lang$string *_this, viola$lang$string *sub,
+                                 viola$lang$uint32 *result, viola$threads$Listener *listener);
+void viola$lang$string$float$_0(viola$lang$string *_this, viola$lang$float64 *result,
+                                viola$threads$Listener *listener);
+void viola$lang$string$int$_0(viola$lang$string *_this, viola$lang$int64 *result,
+                              viola$threads$Listener *listener);
+void viola$lang$string$int$_1(viola$lang$string *_this, viola$lang$uint8 base,
+                              viola$lang$int64 *result, viola$threads$Listener *listener);
+void viola$lang$string$fromInt$_0(viola$lang$int64 value, viola$lang$string **result,
+                                  viola$threads$Listener *listener);
+void viola$lang$string$fromInt$_1(viola$lang$int64 value, viola$lang$uint8 base,
+                                  viola$lang$string **result, viola$threads$Listener *listener);
+void viola$lang$string$fromFloat$_0(viola$lang$float64 value, viola$lang$string **result,
+                                    viola$threads$Listener *listener);
+void viola$lang$string$isalnum$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener);
+void viola$lang$string$isalpha$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener);
+void viola$lang$string$isdecimal$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                    viola$threads$Listener *listener);
+void viola$lang$string$isdigit$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener);
+void viola$lang$string$isidentifier$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                       viola$threads$Listener *listener);
+void viola$lang$string$islower$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener);
+void viola$lang$string$isnumeric$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                    viola$threads$Listener *listener);
+void viola$lang$string$isprintable$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                      viola$threads$Listener *listener);
+void viola$lang$string$isspace$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener);
+void viola$lang$string$isupper$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener);
+void viola$lang$string$ljust$_0(viola$lang$string *_this, viola$lang$uint32 length,
+                                viola$lang$string *fillChar, viola$lang$string **result,
+                                viola$threads$Listener *listener);
+void viola$lang$string$lstrip$_0(viola$lang$string *_this, viola$lang$string **result,
+                                 viola$threads$Listener *listener);
+void viola$lang$string$lstrip$_1(viola$lang$string *_this, viola$lang$string *toRemove,
+                                 viola$lang$string **result, viola$threads$Listener *listener);
+void viola$lang$string$rjust$_0(viola$lang$string *_this, viola$lang$uint32 length,
+                                viola$lang$string *fillChar, viola$lang$string **result,
+                                viola$threads$Listener *listener);
+void viola$lang$string$rstrip$_0(viola$lang$string *_this, viola$lang$string **result,
+                                 viola$threads$Listener *listener);
+void viola$lang$string$rstrip$_1(viola$lang$string *_this, viola$lang$string *toRemove,
+                                 viola$lang$string **result, viola$threads$Listener *listener);
+void viola$lang$string$strip$_0(viola$lang$string *_this, viola$lang$string **result,
+                                viola$threads$Listener *listener);
+void viola$lang$string$strip$_1(viola$lang$string *_this, viola$lang$string *toRemove,
+                                viola$lang$string **result, viola$threads$Listener *listener);
+void viola$lang$string$swapcase$_0(viola$lang$string *_this, viola$lang$string **result,
+                                   viola$threads$Listener *listener);
+void viola$lang$string$zfill$_0(viola$lang$string *_this, viola$lang$uint32 length,
+                                viola$lang$string **result, viola$threads$Listener *listener);
+void viola$lang$string$replace$_1(viola$lang$string *_this, viola$lang$string *old,
+                                  viola$lang$string *new, viola$lang$uint32 count,
+                                  viola$lang$string **result, viola$threads$Listener *listener);
 
 #endif /* VIOLA_LANG_STRING_H */

@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Exceptions Test Template
 // Tests: try, catch, finally, throw
 

@@ -7,10 +7,12 @@ violac/src_modified
 violac/whole_test/test_compiled
 violac/whole_test/template_projects
 .claude
+*.bin
 *.log
 *.vlacmd
 *.vlacmd0
 *.vlaexpr
+*.vlaimport
 *.vlasymt
 *.vlasymtab
 *.vlatoken

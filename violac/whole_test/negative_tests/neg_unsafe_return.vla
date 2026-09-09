@@ -1,0 +1,16 @@
+wrapper class W1 {
+    unsafe uint32 raw;
+    public sq __new__() -> (this) {
+        this.raw = 1;
+    }
+    public sq __del__() -> () {
+        del(super);
+    }
+}
+// 返回unsafe成员（uint32值拷贝是允许的，返回指针不允许）：
+fn getPtr() -> (Pointer::<uint8> r) {
+    Pointer::<uint8> p;
+    r = p;
+}
+sq main() -> () {
+}

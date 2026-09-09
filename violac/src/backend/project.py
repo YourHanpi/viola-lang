@@ -2,7 +2,8 @@
 from .compiling_item import CompilingItem
 from .definition import Definition, GlobalDef, FromImportDef
 from .statement import CStmt
-from .symbol import NamespaceName, TypeName, ArrayTypeName, SymbolTable, StringTypeName, VariableStateTable
+from .symbol import NamespaceName, TypeName, ArrayTypeName, SymbolTable, StringTypeName, VariableStateTable, \
+    type_def_class_names
 from utils import SourceInfo, InternalCompilerException, COMPILER_PARAMS, VIOLA_INIT
 
 import os
@@ -34,10 +35,19 @@ class SourceFile(CompilingItem):
         self._is_finished: bool = False
         self._symbol_table: SymbolTable = symbol_table
         self._var_states: VariableStateTable = var_states
+        # 已实例化的(泛型定义, 类型实参)缓存（refresh_generic_instances的不动点迭代去重）。
+        # 键使用类型实参的名称元组而非对象身份：类型查找可能重建等价类型对象
+        # （如数组类型按C名重建），按身份比较会导致缓存永不命中
+        self._refreshed_instances: set[tuple[int, tuple[str, ...]]] = set()
 
     def add_def(self, definition: Definition) -> None:
         """向源文件中添加一个定义。"""
         self._definitions.append(definition)
+
+    @property
+    def definitions(self) -> list[Definition]:
+        """获取源文件的所有定义。"""
+        return self._definitions
         if definition.global_init_text is not None and definition.global_init_text != "":
             # 去重：优化后的语句可能重复产生相同的全局初始化文本（如调试标记）
             for stmt in self._global_stmt:
@@ -98,17 +108,19 @@ class SourceFile(CompilingItem):
         # 元组与数组类型的结构体定义（带include guard，确定性文本，可安全地出现在所有模块头文件中）
         # 数组在前：元组成员可能引用数组类型
         from .definition import ClassDef
+        own_classes: set[str] = {
+            d.decl.name for d in self._definitions + self._instances if isinstance(d, ClassDef)
+        }
         forward_decls: list[str] = [
-            f"typedef struct {d.decl.name} {d.decl.name};"
-            for d in self._definitions + self._instances
-            if isinstance(d, ClassDef)
+            f"typedef struct {name} {name};"
+            for name in sorted(own_classes | type_def_class_names())
         ]
         # 依赖顺序：数组 -> 同步函数指针 -> 元组（成员可能引用同步函数指针） -> 异步函数指针（引用元组）
         type_defs: list[str] = forward_decls + SymbolTable.array_type_decl_texts() + \
             SymbolTable.function_type_defs_sync() + SymbolTable.tuple_type_defs() + \
             SymbolTable.function_type_defs_async()
         if not os.path.exists(os.path.dirname(self._dst_code_path)):
-            os.makedirs(os.path.dirname(self._dst_code_path))
+            os.makedirs(os.path.dirname(self._dst_code_path), exist_ok=True)
         with open(self._dst_code_path, "w", encoding=COMPILER_PARAMS["encoding"]) as f:
             f.write(f"#define _VIOLA_IMPORT_{'$'.join(map(lambda x: x.name, self._namespace))}$__all__ 1\n")
             f.write(f"#include \"{os.path.basename(self._dst_header_path)}\"\n\n")
@@ -117,29 +129,51 @@ class SourceFile(CompilingItem):
         with open(self._dst_header_path, "w", encoding=COMPILER_PARAMS["encoding"]) as f:
             f.write("\n\n".join(type_defs + headers))
 
-    def refresh_generic_instances(self) -> None:
-        """合并其他模块发起的泛型实例化请求，补充实例。"""
+    def refresh_generic_instances(self) -> bool:
+        """合并其他模块发起的泛型实例化请求，补充实例。
+
+        返回本轮是否新增了实例。实例化过程中可能产生新的实例化请求
+        （泛型函数体调用其他泛型函数），因此调用方需迭代至不动点。
+        已实例化的(泛型定义, 类型实参)对缓存于_refreshed_instances，
+        避免不动点迭代的每一轮都重建全部已知实例（实例化包含完整的
+        深拷贝与代码生成，代价较高）。
+        """
         if not hasattr(self, "_generic_defs"):
-            return
+            return False
         # 用实例的C函数名去重（SqDef无decl属性，取内部_decl）
         def inst_name(inst: Definition) -> str:
             if hasattr(inst, "decl") and getattr(inst, "decl", None) is not None:
                 return inst.decl.name
             return getattr(getattr(inst, "_decl", None), "name", "")
         known: set[str] = {inst_name(inst) for inst in self._instances}
+        changed: bool = False
         for g in self._generic_defs:
-            for inst in g.instantiation_full_all():
+            decl = getattr(g, "_decl", None) if getattr(g, "_decl", None) is not None else getattr(g, "decl", None)
+            type_args_list: list[tuple[TypeName, ...]] = self._symbol_table.get_all_to_instantiate_symbols(
+                self._src_info, decl)
+            for t in type_args_list:
+                cache_key = (id(g), tuple(x.name for x in t))
+                if cache_key in self._refreshed_instances:
+                    continue
+                self._refreshed_instances.add(cache_key)
+                if hasattr(g, "instantiation_full"):
+                    inst = g.instantiation_full(t)
+                else:
+                    # 泛型类（ClassDef）：instantiation(t)按类型实参实例化
+                    inst = g.instantiation(t)
                 name: str = inst_name(inst)
                 if name != "" and name in known:
                     continue
                 self._instances.append(inst)
                 if name != "":
                     known.add(name)
+                changed = True
                 inst_init: Optional[str] = inst.global_init_text
                 if inst_init:
                     inst_stmt = CStmt(VIOLA_INIT, self._symbol_table, self._var_states)
                     inst_stmt.add_text(inst_init)
                     self._global_stmt.append(inst_stmt)
+        return changed
 
     def _initialize_all_symbols(self) -> None:
         """初始化所有泛型符号的实例化。"""
@@ -224,7 +258,11 @@ class _MainFile:
             "}"
         ]
         # 运行库类型定义与数组方法实现（元组/数组按类型生成，仅此一个编译单元）
-        runtime_defs: list[str] = \
+        # 类型定义可能引用各模块的类，先生成这些类的前置声明
+        fwd_decls: list[str] = [
+            f"typedef struct {name} {name};" for name in sorted(type_def_class_names())
+        ]
+        runtime_defs: list[str] = fwd_decls + \
             SymbolTable.array_type_decl_texts() + SymbolTable.function_type_defs_sync() + \
             SymbolTable.tuple_type_defs() + SymbolTable.function_type_defs_async() + \
             SymbolTable.array_type_impl_texts()
@@ -276,17 +314,29 @@ class Project:
         self._main_file.set_entry(self._entry_namespace)
 
     def add_source_file(self, source_file: SourceFile) -> None:
-        """添加一个源文件到项目中。"""
+        """添加一个源文件到项目中。
+
+        同一个源文件可能被多个导入方触发重复编译（并发任务竞争），
+        重复添加时直接忽略。
+        """
         if source_file.src_path in self._source_files:
-            raise InternalCompilerException(f"SourceFile {source_file.src_path} is already added", self._src_info)
+            return
         self._source_files[source_file.src_path] = source_file
         self._main_file.add_global_call(self._get_namespace(source_file.src_path))
 
     def finish(self) -> None:
         """完成项目构建，完成主入口文件的生成。"""
-        # 全部模块编译完成后，合并各模块发起的泛型实例化请求并重写输出
+        # 全部模块编译完成后，合并各模块发起的泛型实例化请求并重写输出。
+        # 实例化可能产生新的实例化请求（泛型函数体调用其他泛型函数，
+        # 请求注册可能晚于被调泛型的快照），迭代至不动点后再统一写出。
+        for _ in range(64):
+            changed: bool = False
+            for source_file in self._source_files.values():
+                if source_file.refresh_generic_instances():
+                    changed = True
+            if not changed:
+                break
         for source_file in self._source_files.values():
-            source_file.refresh_generic_instances()
             source_file.write()
         self._main_file.finish()
 

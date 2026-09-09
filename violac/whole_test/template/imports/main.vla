@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Imports Test Template - Main File
 // Tests: import and from...import statements
 

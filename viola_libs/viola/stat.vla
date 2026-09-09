@@ -1,0 +1,35 @@
+// Viola文件状态库声明。
+//
+// 命名空间：viola.stat
+// 实现位于viola_libs/viola/stat.c（绑定Windows与POSIX的stat相关接口，
+// 使用条件编译）。本文件仅为C实现的常量和函数提供Viola声明
+// （分号代替函数体）。
+//
+// 注意：S_IFBLK、S_IFLNK、S_ISSOCK等类型位在Windows上不存在对应
+// 文件类型，相关判断函数在Windows上恒为false（仍提供统一定义）。
+
+import cpart "runtime.h";
+
+// ================= 文件类型位 =================
+uint32 S_IFDIR;
+uint32 S_IFREG;
+// ================= 权限位 =================
+uint32 S_IRGRP;
+uint32 S_IROTH;
+uint32 S_IRUSR;
+uint32 S_IWGRP;
+uint32 S_IWOTH;
+uint32 S_IWUSR;
+uint32 S_IXGRP;
+uint32 S_IXOTH;
+uint32 S_IXUSR;
+// ================= 文件类型判断 =================
+fn S_ISBLK(uint32 mode) -> (bool result);
+fn S_ISCHR(uint32 mode) -> (bool result);
+fn S_ISDIR(uint32 mode) -> (bool result);
+fn S_ISFIFO(uint32 mode) -> (bool result);
+fn S_ISLNK(uint32 mode) -> (bool result);
+fn S_ISREG(uint32 mode) -> (bool result);
+fn S_ISSOCK(uint32 mode) -> (bool result);
+// 将权限位转换为类似"-rwxr-xr-x"的字符串
+fn filemode(uint32 mode) -> (string result);

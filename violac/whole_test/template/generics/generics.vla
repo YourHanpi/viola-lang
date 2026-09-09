@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Generics Test Template
 // Tests: generic classes
 

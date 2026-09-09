@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Basic Data Types Test Template
 // Tests: bool, int, int8-int64, uint, uint8-uint64, size_t, float, float32-64, double
 

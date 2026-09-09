@@ -1,0 +1,26 @@
+// Viola函数类型声明。
+//
+// 命名空间：viola.lang.function
+// 实现位于viola_libs/viola/runtime.h（viola$lang$function$Function结构体）。
+// Function/SyncPtr/AsyncPtr为编译器内置类型（viola.lang的内置绑定），
+// 此处以wrapper类提供Viola声明（0.1起，原Closure更名为Function）。
+
+import cpart "runtime.h";
+
+// 同步函数指针（不透明类型，调用时按具体函数签名转换）
+wrapper class SyncPtr {
+}
+
+// 异步函数指针（不透明类型，参数为参数元组与返回元组）
+wrapper class AsyncPtr {
+}
+
+// 函数值：所有函数（无论静态还是动态）作为值使用时均封装为本结构体。
+// 调用静态函数时仍然传递函数指针。
+// 成员（以内置注册为准，此处声明仅作文档用途）：
+//   Pointer::<viola.lang.function.AsyncPtr> asyncPtr;  // 异步函数指针
+//   Pointer::<viola.lang.function.SyncPtr> syncPtr;    // 同步函数指针
+//   Pointer::<Tuple> $capture;                        // 捕获的环境（元组类型）
+//   string[] argNames;                                // 参数名称（不含捕获环境参数）
+wrapper class Function {
+}

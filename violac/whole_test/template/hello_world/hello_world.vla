@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Hello World Test Template
 // This template tests basic program structure with print output
 

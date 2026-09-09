@@ -13,7 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sched.h>
 #endif
 
@@ -92,6 +94,7 @@ static void handleOpen(viola$lang$global_resource_manager$Request *base) {
         f->$parent = NULL;
         f->$$vtable = NULL;
         f->fp = fp;
+        f->isPopen = 0;
         *req->resultFile = f;
     }
     req->done = 1;
@@ -100,7 +103,11 @@ static void handleOpen(viola$lang$global_resource_manager$Request *base) {
 static void handleClose(viola$lang$global_resource_manager$Request *base) {
     viola$io$FileRequest *req = (viola$io$FileRequest *)base;
     if (req->file != NULL && req->file->fp != NULL) {
-        fclose((FILE *)req->file->fp);
+        if (req->file->isPopen) {
+            pclose((FILE *)req->file->fp);
+        } else {
+            fclose((FILE *)req->file->fp);
+        }
         req->file->fp = NULL;
     }
     req->done = 1;
@@ -185,13 +192,21 @@ void viola$io$registerFileHandlers(void) {
 
 /* ================= Viola接口 ================= */
 
+/* file.__new__(path, mode, encoding) -> this（与open函数等效） */
+void viola$io$file$__new__$_0(viola$lang$string *path, viola$lang$string *mode,
+                              viola$lang$string *encoding, viola$io$file **this,
+                              viola$threads$Listener *listener) {
+    viola$io$open(path, mode, encoding, this, listener);
+}
+
 /* open()的默认参数全局变量（编译器生成的默认参数引用指向这里）：
- * mode = "r"，encoding = "utf-8"。 */
+ * mode = "r"，encoding = "utf-8"。引用计数为1使清理代码不会释放
+ * 该静态对象（见开发疑问记录70）。 */
 static viola$lang$string _viola_io_default_mode = {
-    0, NULL, 1, (viola$lang$uint16 *)&(viola$lang$uint16[]){ 'r' }
+    1, NULL, 1, (viola$lang$uint16 *)&(viola$lang$uint16[]){ 'r' }
 };
 static viola$lang$string _viola_io_default_encoding = {
-    0, NULL, 5, (viola$lang$uint16 *)&(viola$lang$uint16[]){ 'u', 't', 'f', '-', '8' }
+    1, NULL, 5, (viola$lang$uint16 *)&(viola$lang$uint16[]){ 'u', 't', 'f', '-', '8' }
 };
 viola$lang$string *viola$io$open$$default$mode = &_viola_io_default_mode;
 viola$lang$string *viola$io$open$$default$encoding = &_viola_io_default_encoding;

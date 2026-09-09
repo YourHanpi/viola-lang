@@ -91,14 +91,38 @@ struct viola$lang$exception$Exception {
 };
 extern viola$dynamic$TypeInfo viola$lang$exception$Exception$$vtable;
 
-/* ================= 闭包 ================= */
-typedef struct viola$lang$function$Closure {
+/* ================= 函数（Function） ================= */
+/* 同步/异步函数指针的不透明类型（具体调用时按函数签名转换）。
+   注：计划文档中的viola$lang$function$S$ / viola$lang$function$A$名称
+   与按签名生成的函数指针typedef族（S$<args>$$R$<rets>）冲突，
+   故采用AsyncPtr / SyncPtr命名（见开发疑问记录）。 */
+typedef void (*viola$lang$function$SyncPtr)(void);
+typedef void (*viola$lang$function$AsyncPtr)(void);
+
+/* 字符串数组类型（viola$lang$string$$array，供Function.argNames使用；
+   带include guard，与string.h中的定义互斥） */
+#ifndef _VIOLA_ARRAY_T_viola$lang$string$$array
+#define _VIOLA_ARRAY_T_viola$lang$string$$array
+typedef struct viola$lang$string$$array {
     viola$lang$uint32 $refCount;
     viola$lang$ptr $parent;
-    void *$sync;
-    void *$async;
+    viola$lang$string **data;
+    viola$lang$uint64 size;
+} viola$lang$string$$array;
+#endif
+
+/* 函数值结构体（原Closure，0.1起更名为Function并扩展）。
+   所有函数（无论静态还是动态）作为值使用时均封装为本结构体；
+   调用静态函数时仍然直接传递函数指针。 */
+typedef struct viola$lang$function$Function {
+    viola$lang$uint32 $refCount;
+    viola$lang$ptr $parent;
+    viola$lang$function$AsyncPtr *asyncPtr;
+    viola$lang$function$SyncPtr *syncPtr;
+    /* 捕获的环境（元组类型）。以$开头，避免被用户代码意外修改 */
     void *$capture;
-} viola$lang$function$Closure;
+    viola$lang$string$$array *argNames;
+} viola$lang$function$Function;
 
 /* ================= 元组（共享析构） ================= */
 /* 具体的元组结构体由编译器按元素类型生成（成员为$0、$1等）；
@@ -117,6 +141,8 @@ typedef struct viola$io$file {
     viola$lang$ptr $parent;
     viola$lang$ptr $$vtable;
     void *fp;
+    /* 是否为popen创建的文件（关闭时使用pclose而非fclose） */
+    viola$lang$int32 isPopen;
 } viola$io$file;
 
 /* 本头文件内的数组类型（布局与编译器生成的数组结构体一致）。
@@ -150,6 +176,21 @@ void viola$io$write(viola$io$file *file, viola$lang$string *content,
 void viola$io$writeBytes(viola$io$file *file, viola$lang$uint8$$array *content,
                          viola$threads$Listener *listener);
 void viola$io$file$__del__$_0(viola$io$file *_this, viola$threads$Listener *listener);
+void viola$io$file$__new__$_0(viola$lang$string *path, viola$lang$string *mode,
+                              viola$lang$string *encoding, viola$io$file **this,
+                              viola$threads$Listener *listener);
+/* 注册文件请求处理器（由全局资源管理器初始化时调用，实现于viola/io/file.c） */
+void viola$io$registerFileHandlers(void);
+
+/* ================= viola.os ================= */
+/* 注册操作系统请求处理器（由全局资源管理器初始化时调用，实现于viola/os.c） */
+void viola$os$registerOsHandlers(void);
+/* 注册路径查询请求处理器（由全局资源管理器初始化时调用，实现于viola/os/path.c） */
+void viola$os$path$registerPathHandlers(void);
+
+/* ================= viola.lang ================= */
+/* viola.lang.del内置实现（仅del(super)有意义，由编译器特殊处理；其余为空操作） */
+void viola$lang$del(viola$lang$object *_this, viola$threads$Listener *listener);
 
 /* ================= viola.lang.exception ================= */
 void viola$lang$exception$Exception$__new__$_0(viola$lang$string *message,
@@ -195,8 +236,6 @@ VIOLA_MATH_BINARY(atan2)
 VIOLA_MATH_BINARY(fmod)
 VIOLA_MATH_BINARY(fmin)
 VIOLA_MATH_BINARY(fmax)
-const double viola$math$PI = 3.14159265358979323846;
-const double viola$math$E = 2.71828182845904523536;
 #undef VIOLA_MATH_UNARY
 #undef VIOLA_MATH_BINARY
 

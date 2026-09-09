@@ -18,10 +18,12 @@ typedef struct viola$threads$Listener viola$threads$Listener;
 /* 请求类型编码 */
 typedef uint32_t viola$lang$global_resource_manager$RequestType;
 
-/* 请求结构体，其中的第一个成员是请求类型编码，类型为RequestType */
+/* 请求结构体，其中的第一个成员是请求类型编码，类型为RequestType。
+   0.1起包含引用计数（提交方持有初始引用，处理完成后释放）。 */
 typedef struct viola$lang$global_resource_manager$Request viola$lang$global_resource_manager$Request;
 struct viola$lang$global_resource_manager$Request {
     viola$lang$global_resource_manager$RequestType type;
+    uint32_t $refCount;
 };
 
 /* 请求向量表 */
@@ -57,5 +59,14 @@ void viola$lang$global_resource_manager$registerHandler(
 void viola$lang$global_resource_manager$enqueueRequest(viola$lang$global_resource_manager$Request *request);
 /* 主线程处理所有待处理请求（在waitListener的空闲期间调用）。 */
 void viola$lang$global_resource_manager$drainRequests(void);
+/* 0.1新增：以Viola函数（Function结构体）注册请求处理器。
+   声明文件见viola/lang/global_resource_manager.vla：
+   sq register_request_handler(uint32 request_id, (_Request) -> () handler) -> (); */
+void viola$lang$global_resource_manager$register_request_handler(
+    viola$lang$uint32 request_id, viola$lang$function$Function *handler,
+    viola$threads$Listener *listener);
+/* 请求析构（引用计数减一，归零时释放） */
+void viola$lang$global_resource_manager$Request$__del__$_0(
+    viola$lang$global_resource_manager$Request *_this, viola$threads$Listener *listener);
 
 #endif /* VIOLA_GLOBAL_RESOURCE_MANAGER_H */

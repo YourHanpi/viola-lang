@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Object Update Operator Test Template
 // Tests: object update operator for classes and arrays
 

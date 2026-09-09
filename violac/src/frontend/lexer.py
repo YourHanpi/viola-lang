@@ -87,6 +87,9 @@ class Lexer(FSM):
             else:
                 self._src_info.set_text("")
             current_loc += 1
+        if len(char_buf) > 0 and self._current.output is not None and self._current.output != "_BLANK":
+            # 文件末尾没有换行符时，刷新最后一个记号（如孤立的"}"）
+            tokens.append(Token("".join(char_buf), [self._current.output], self._src_info.copy()))
         return tokens
 
     def lex_with_writer(self, file_path: str, thread_index: int = 0) -> TaskResult:

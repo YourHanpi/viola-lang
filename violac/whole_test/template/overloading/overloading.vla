@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Overloading Test Template
 // Tests: function overloading and operator overloading
 

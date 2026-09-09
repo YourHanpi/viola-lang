@@ -1,9 +1,12 @@
+from viola.io import *;
 // Viola 0.1 运行库综合测试
 // 测试：viola.lang.string、viola.io（print/文件读写）、viola.math、
 //       viola.os、viola.threads、viola.util.control_flow、viola.util.functools
 
 import viola.util.control_flow as control_flow;
 import viola.util.functools as functools;
+from viola.math import *;
+from viola.threads import *;
 
 fn doubleValue(int x) -> (int result) {
     result = x * 2;
@@ -52,7 +55,7 @@ sq main() -> () {
     // 数学
     double root = sqrt(16.0);
     double power = pow(2.0, 10.0);
-    double piValue = pi();
+    double piValue = pi;
     print("math ok");
 
     // 线程

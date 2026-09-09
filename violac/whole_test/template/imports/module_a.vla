@@ -1,3 +1,4 @@
+from viola.io import *;
 // Module A - ${MODULE_DESC_A}
 // Provides utility functions for the imports test
 

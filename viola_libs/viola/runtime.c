@@ -3,6 +3,17 @@
  */
 #include "runtime.h"
 
+/* ================= 内置释放函数 ================= */
+
+/* viola.lang.del的内置实现。
+   仅有意义的用法是del(super);（wrapper类__del__中释放普通成员），
+   该形式由编译器直接生成当前类的$__del__super$_0调用；
+   其余形式的del调用到达本函数时为原生空操作。 */
+void viola$lang$del(viola$lang$object *_this, viola$threads$Listener *listener) {
+    (void)_this;
+    (void)listener;
+}
+
 /* ================= 动态类型转换 ================= */
 
 int viola$lang$convertibleTo(void *obj_vtable, void *target_vtable) {

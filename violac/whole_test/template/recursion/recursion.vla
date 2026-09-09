@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Recursion Test Template
 // Tests: recursive functions as loop replacement
 

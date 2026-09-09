@@ -662,6 +662,47 @@ bool var13 = var0.startsWith("Hello"); // var13 = true
 bool var14 = var0.endsWith("Hello"); // var14 = false
 ```
 
+### 字符串的常用方法（0.1新增）
+
+`string`类（命名空间`viola.lang`）还提供以下方法（未找到子串时
+`find`/`rfind`/`index`/`rindex`返回`UINT32_MAX`；Viola 0.1尚无异常机制）：
+
+```viola
+uint32 var15 = var0.count("o");      // 统计子串非重叠出现的次数
+uint32 var16 = var0.find("World");   // 子串首次出现的索引
+uint32 var17 = var0.rfind("o");      // 子串最后一次出现的索引
+uint32 var18 = var0.index("World");  // 与find一致
+uint32 var19 = var0.rindex("o");     // 与rfind一致
+double var20 = "3.14".float();       // 解析为浮点数（支持inf/nan与科学计数法）
+int64 var21 = "42".int();            // 解析为十进制整数
+int64 var22 = "ff".int(16);          // 按base（2~16）解析为整数
+string var23 = string.fromInt(-42);  // 整数转换为字符串（静态方法）
+string var24 = string.fromInt(255, 16); // 按base（2~16）转换（静态方法）
+string var25 = string.fromFloat(3.14);  // 浮点数转换为字符串（静态方法）
+bool var26 = "abc123".isalnum();     // 是否全部为字母或数字
+bool var27 = "abc".isalpha();        // 是否全部为字母
+bool var28 = "123".isdecimal();      // 是否全部为十进制数字
+bool var29 = "123".isdigit();        // 是否全部为数字
+bool var30 = "abc_1".isidentifier(); // 是否为合法标识符
+bool var31 = "abc".islower();        // 是否全部为小写
+bool var32 = "123".isnumeric();      // 是否全部为数字（含Unicode数字）
+bool var33 = "abc".isprintable();    // 是否全部为可打印字符
+bool var34 = " \t".isspace();        // 是否全部为空白字符
+bool var35 = "ABC".isupper();        // 是否全部为大写
+string var36 = "ab".ljust(4, "*");   // 左侧用fillChar填充到指定长度（"ab**"）
+string var37 = " ab ".lstrip();      // 去除左侧空白（默认" \t\n\r"）
+string var38 = "xyab".lstrip("xy");  // 去除左侧toRemove集合中的字符
+string var39 = "ab".rjust(4, "*");   // 右侧用fillChar填充到指定长度（"**ab"）
+string var40 = " ab ".rstrip();      // 去除右侧空白
+string var41 = " ab ".strip();       // 去除两侧空白
+string var42 = "AbC".swapcase();     // 大小写互换（"aBc"）
+string var43 = "42".zfill(5);        // 左侧补零（"00042"，符号保持在最前）
+string var44 = var0.replace("l", "L", 1); // 替换子串（count为0时替换全部）
+```
+
+字符串与数字互转的方法`int`/`float`/`fromInt`/`fromFloat`位于`viola.lang`
+命名空间（使用前需`import viola.lang;`或`from viola.lang import *;`）。
+
 ## 输入与输出
 
 Viola提供了一些用于输入与输出的函数。这些函数位于`viola.io`命名空间，
@@ -721,6 +762,197 @@ sq writeBytes(file f, uint8[] content) -> ();
 
 **当有多个线程访问同一个文件时，如果文件正在被写入，那么后续访问的线程将会被阻塞，直到写入操作完成。**
 
+## 数学函数（viola.math）
+
+`viola.math`提供数学常量与函数（使用前需`from viola.math import *;`或`import viola.math as math;`）。
+
+常量：`pi`、`e`、`tau`（2π）、`inf`（正无穷）、`nan`（非数值）。
+
+math.h基本函数：`sqrt`、`sin`、`cos`、`tan`、`asin`、`acos`、`atan`、
+`sinh`、`cosh`、`tanh`、`asinh`、`acosh`、`atanh`、`exp`、`log`、
+`log10`、`log2`、`log1p`、`fabs`、`floor`、`ceil`、`round`、`trunc`、
+`pow`、`atan2`、`fmod`、`fmin`、`fmax`。
+
+0.1新增函数：
+
+```viola
+fn radians(double x) -> (double result);        // 角度制转弧度制
+fn degrees(double x) -> (double result);        // 弧度制转角度制
+fn dist(double[] a, double[] b) -> (double result);   // 欧几里得距离（a与b长度需相同）
+fn hypot(double[] a) -> (double result);        // 欧几里得范数
+fn log(double x, double base) -> (double result);     // 任意底对数（重载）
+fn erf(double x) -> (double result);            // 误差函数
+fn erfc(double x) -> (double result);           // 补误差函数
+fn tgamma(double x) -> (double result);         // 伽马函数
+fn lgamma(double x) -> (double result);         // 伽马函数的自然对数
+fn factorial(double x) -> (double result);      // 阶乘
+fn frexp(double x) -> (double mantissa, int32 exp);    // 指数与尾数分离
+fn ldexp(double x, int32 exp) -> (double result);      // 指数与尾数组合
+fn gcd(int64 a, int64 b) -> (int64 result);     // 最大公约数
+fn lcm(int64 a, int64 b) -> (int64 result);     // 最小公倍数
+fn perm(int64 n, int64 k) -> (int64 result);    // 排列数
+fn comb(int64 n, int64 k) -> (int64 result);    // 组合数
+fn modf(double x) -> (double fractional, double integer); // 整数部分与小数部分分离
+fn remainder(double x, double y) -> (double result);      // IEEE 754风格的小数余数
+fn isnan(double x) -> (bool result);            // 是否为nan
+fn isinf(double x) -> (bool result);            // 是否为无穷
+fn isfinite(double x) -> (bool result);         // 是否为有限值
+```
+
+## 操作系统接口（viola.os）
+
+`viola.os`绑定Windows和POSIX的相关接口（使用条件编译，使用前需
+`import viola.os;`）。其中涉及到文件操作的函数由子线程发送请求、
+由主线程串行执行。**注意：Viola 0.1尚无异常机制，执行失败时
+`sq`函数静默忽略、`fn`函数返回约定值（-1、0或空字符串）。**
+
+常量与类型：
+
+```viola
+int32 STDIN_FILENO;   // 0
+int32 STDOUT_FILENO;  // 1
+int32 STDERR_FILENO;  // 2
+// open的flags常量（POSIX取值，Windows在运行库内转换）：
+uint32 O_RDONLY; uint32 O_WRONLY; uint32 O_RDWR;
+uint32 O_CREAT; uint32 O_EXCL; uint32 O_TRUNC; uint32 O_APPEND; uint32 O_BINARY;
+// 文件状态（字段与Python的stat_result一致）：
+class Stat { uint32 st_mode; uint64 st_ino; uint64 st_dev; uint64 st_nlink;
+             uint32 st_uid; uint32 st_gid; uint64 st_size;
+             uint64 st_atime; uint64 st_mtime; uint64 st_ctime; }
+// 文件系统信息（字段与Python的statvfs_result一致）：
+class StatVFS { uint64 f_bsize; uint64 f_frsize; uint64 f_blocks; uint64 f_bfree;
+                uint64 f_bavail; uint64 f_files; uint64 f_ffree; uint64 f_favail;
+                uint64 f_flag; uint64 f_namemax; }
+```
+
+常用函数（完整清单见`viola_libs/viola/os.vla`）：
+
+```viola
+fn access(string path, uint32 mode) -> (bool result);      // 判断路径是否可按mode访问
+sq chdir(string path) -> ();                               // 改变当前工作目录
+sq chmod(string path, uint32 mode) -> ();                  // 改变文件权限
+sq close(int32 fd) -> ();                                  // 关闭文件描述符
+fn dup(int32 fd) -> (int32 result);                        // 复制文件描述符
+fn dup2(int32 fd1, int32 fd2) -> (int32 result);           // 复制到指定编号
+fn fstat(int32 fd) -> (Stat result);                       // 文件描述符状态
+fn getcwd() -> (string result);                            // 当前工作目录
+fn getuid() -> (uint32 result);                            // 用户ID（Windows上恒为0）
+fn isatty(int32 fd) -> (bool result);                      // 是否为终端
+fn listdir(string path) -> (string[] result);              // 列出目录内容
+fn lstat(string path) -> (Stat result);                    // 路径状态（不跟随符号链接）
+sq lseek(int32 fd, int32 offset, int32 whence) -> (int32 result); // 移动读写位置
+sq makedirs(string path, uint32 mode = 0o777) -> ();       // 递归创建目录
+sq mkdir(string path, uint32 mode = 0o777) -> ();          // 创建目录
+sq open(string path, uint32 flags, uint32 mode = 0o666) -> (int32 fd); // 打开文件
+sq pipe() -> (int32 result);                               // 创建管道（返回读端fd）
+sq popen(string command, string mode) -> (file result);    // 执行命令（返回viola.io.file）
+sq read(int32 fd, uint32 nbyte) -> (string result);        // 读取（最多nbyte字节）
+sq remove(string path) -> ();                              // 删除文件
+sq rename(string oldPath, string newPath) -> ();           // 重命名
+sq rmdir(string path) -> ();                               // 删除空目录
+fn stat(string path) -> (Stat result);                     // 路径状态
+fn statvfs(string path) -> (StatVFS result);               // 文件系统信息
+sq unlink(string path) -> ();                              // 删除文件（同remove）
+sq utime(string path, uint32 atime, uint32 mtime) -> ();   // 设置访问与修改时间
+sq write(int32 fd, string data) -> (uint32 result);        // 写入（返回写入字节数）
+```
+
+其余函数（如`sleep`、`exit`、`getEnv`、`time`、`system`等）保持不变。
+
+## 路径处理（viola.os.path）
+
+`viola.os.path`提供路径处理功能（Windows使用反斜杠语义，POSIX使用
+正斜杠语义；使用前需`import viola.os.path;`）：
+
+```viola
+string pathsep;                                       // 路径分隔符（Windows为";"，POSIX为":"）
+fn abspath(string path) -> (string result);           // 绝对路径表示
+fn basename(string path) -> (string result);          // 最后一个组件
+fn commonpath(string[] paths) -> (string result);     // 最长公共目录前缀
+fn commonprefix(string[] paths) -> (string result);   // 最长公共字符前缀
+fn dirname(string path) -> (string result);           // 目录部分
+fn exists(string path) -> (bool result);              // 是否存在
+fn getatime(string path) -> (uint64 result);          // 最后访问时间（秒）
+fn getctime(string path) -> (uint64 result);          // 创建时间（秒）
+fn getmtime(string path) -> (uint64 result);          // 最后修改时间（秒）
+fn getsize(string path) -> (uint64 result);           // 文件大小（字节）
+fn isabs(string path) -> (bool result);               // 是否为绝对路径
+fn isdir(string path) -> (bool result);               // 是否为目录
+fn isfile(string path) -> (bool result);              // 是否为普通文件
+fn islink(string path) -> (bool result);              // 是否为符号链接（Windows上恒为false）
+fn ismount(string path) -> (bool result);             // 是否为挂载点
+fn join(string[] paths) -> (string result);           // 用分隔符连接
+fn normpath(string path) -> (string result);          // 规范化（折叠".."、"."与重复分隔符）
+fn realpath(string path) -> (string result);          // 规范绝对路径（解析符号链接）
+fn samefile(string path1, string path2) -> (bool result);     // 是否指向同一文件
+fn sameopenfile(int32 fd1, int32 fd2) -> (bool result);       // 文件描述符是否指向同一文件
+fn split(string path) -> (string[] result);           // 拆分为(head, tail)
+fn splitext(string path) -> (string[] result);        // 拆分为(root, ext)
+```
+
+## 文件状态（viola.stat）
+
+`viola.stat`提供文件类型与权限位的常量及判断函数（使用前需
+`import viola.stat;`）。Windows上组/其他权限位与用户权限位取相同值，
+`S_ISBLK`/`S_ISLNK`/`S_ISSOCK`在Windows上恒为false。
+
+```viola
+uint32 S_IFDIR; uint32 S_IFREG;   // 文件类型位
+uint32 S_IRUSR; uint32 S_IWUSR; uint32 S_IXUSR;   // 用户权限位
+uint32 S_IRGRP; uint32 S_IWGRP; uint32 S_IXGRP;   // 组权限位
+uint32 S_IROTH; uint32 S_IWOTH; uint32 S_IXOTH;   // 其他权限位
+fn S_ISBLK(uint32 mode) -> (bool result);   // 块设备
+fn S_ISCHR(uint32 mode) -> (bool result);   // 字符设备
+fn S_ISDIR(uint32 mode) -> (bool result);   // 目录
+fn S_ISFIFO(uint32 mode) -> (bool result);  // 命名管道
+fn S_ISLNK(uint32 mode) -> (bool result);   // 符号链接
+fn S_ISREG(uint32 mode) -> (bool result);   // 普通文件
+fn S_ISSOCK(uint32 mode) -> (bool result);  // 套接字
+fn filemode(uint32 mode) -> (string result); // 转换为"-rwxr-xr-x"形式
+```
+
+## 线程调度（viola.threads）
+
+`viola.threads`提供线程调度系统（使用前需`from viola.threads import *;`）：
+
+```viola
+sq addThread(uint32 number) -> ();       // 添加线程
+sq delThread(uint32 number) -> ();       // 删除线程（等待当前任务完成后移除）
+fn getThreadsNum() -> (uint32 number);   // 获取线程数量
+sq setThreadsNum(uint32 number) -> ();   // 设置线程数量
+```
+
+## 函数值（viola.lang.function）
+
+0.1起，所有函数（无论静态还是动态）作为值使用时都被封装为
+`viola.lang.function.Function`结构体（原`Closure`类，是`object`的子类），
+但**调用静态函数时仍然直接传递函数指针**。`Function`类包含以下成员：
+
+- `Pointer::<viola.lang.function.AsyncPtr> asyncPtr`：异步函数指针。
+- `Pointer::<viola.lang.function.SyncPtr> syncPtr`：同步函数指针。
+- `Pointer::<Tuple> $capture`：捕获的环境（元组类型）。
+- `string[] argNames`：参数名称（不包括捕获的环境参数）。
+
+调用函数值（闭包）时支持**按参数名传参**（`name = value`形式），
+未按位置传入的参数按`argNames`在运行时匹配。
+
+## 数组类（viola.util.array）
+
+`viola.util.array`定义泛型数组类`Array::<T>`（`import viola.util.array;`），
+提供`__getitem__`（索引与切片）、`length`、`concat`、`append`、
+`insert`、`__setitem__`等方法，用于需要对象化数组的场景。
+
+## 全局资源管理器（viola.lang.global_resource_manager）
+
+`viola.lang.global_resource_manager`提供基于请求的全局资源管理器：
+子线程通过请求队列发起请求，主线程在空闲期间串行执行请求并返回数据
+（文件读写等资源操作即基于此机制）。0.1新增以下接口：
+
+```viola
+// 以Viola函数注册请求处理器
+sq register_request_handler(uint32 request_id, (_Request) -> () handler) -> ();
+```
+
 ## 类与对象
 
 在Viola中，每个类都是一个数据类型，包含若干**属性**（存储的数据）和**方法**（类中定义或声明的函数）。
@@ -741,7 +973,7 @@ class 类名(父类列表) {
 
 ```viola
 class Image {
-    uint channels; // 属性，默认为protected，但也支持public和private，也可以显式写出protected
+    uint channels; // 属性，默认为public，但也支持public和private，也可以显式写出protected
     uint height;
     uint width;
     uint8[] pixels;
@@ -797,15 +1029,20 @@ sq toBytes(Image img) -> (uint8[] result) {...}
 
 ### 访问修饰符
 
-对于访问修饰符`public`、`protected`和`private`，和其他大多数语言一样，有这样的访问类型（其中“+”表示可以访问，“-”表示不可以访问）：
+对于访问修饰符`public`、`protected`和`private`，Viola 0.1起按**模块**解释（其中“+”表示可以访问，“-”表示不可以访问）：
 
 | 访问者 | public | protected | private |
 |-----|--------|-----------|---------|
-| 自身  | +      | +         | +       |
-| 子类  | +      | +         | -       |
-| 其他类 | +      | -         | -       |
+| 自身（类成员为类自身，模块成员为模块自身） | + | + | + |
+| 同一模块内的其他成员 | + | + | - |
+| 其他模块 | + | - | - |
 
-如果试图访问不应被访问的成员，编译器会报出编译时错误。类成员（属性与方法）的默认访问级别是`protected`。
+- `public`：公共访问修饰符，表示该成员可以被任何其他模块访问。
+- `protected`：受保护访问修饰符，表示该成员只能被同一模块中的其他成员访问。
+- `private`：私有访问修饰符，表示该成员只能被自身访问。
+- 无访问修饰符的**默认情况为`public`**（0.1起；早期版本曾为`protected`）。
+
+如果试图访问不应被访问的成员，编译器会报出编译时错误。
 
 ## 类继承
 

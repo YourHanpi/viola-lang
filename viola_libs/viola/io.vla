@@ -18,7 +18,9 @@ sq input() -> (string result);
 // ================= 文件读写 =================
 
 // 打开文件（mode如"r"/"w"，encoding如"utf-8"）
-sq open(string path, string mode, string encoding) -> (file f);
+// 默认参数值（mode="r"、encoding="utf-8"）由运行库的
+// viola$io$open$$default$mode / viola$io$open$$default$encoding 全局变量提供
+sq open(string path, string mode = "r", string encoding = "utf-8") -> (file f);
 // 读取文件全部内容
 fn read(file f) -> (string result);
 // 读取文件全部内容为字节数组
@@ -32,6 +34,8 @@ sq writeBytes(file f, uint8[] content) -> ();
 
 // 文件对象（编译器内置类型，此处以wrapper类提供其原生方法的Viola声明）
 wrapper class file {
+    // 构造函数：打开文件（与open函数等效）
+    public sq __new__(string path, string mode, string encoding) -> (this);
     // 关闭文件并释放资源
     public sq __del__() -> ();
 }

@@ -8,6 +8,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <float.h>
+#include <errno.h>
 
 /* ================= UTF-8 <-> UTF-16 ================= */
 
@@ -249,6 +251,11 @@ static int stringEquals(const viola$lang$string *a, const viola$lang$string *b) 
         }
     }
     return 1;
+}
+
+/* 对外相等比较（供编译器生成的按参数名传参代码使用） */
+int viola$lang$string$equals(const viola$lang$string *a, const viola$lang$string *b) {
+    return stringEquals(a, b);
 }
 
 void viola$lang$string$__eq__$_0(viola$lang$string *_this, viola$lang$string *s,
@@ -638,4 +645,597 @@ void viola$lang$string$unicode$_0(viola$lang$string *_this, viola$lang$uint16$$a
         memcpy(arr->data, _this->data, sizeof(viola$lang$uint16) * _this->length);
     }
     *result = arr;
+}
+
+/* ================= 0.1新增：查找与统计 ================= */
+
+/* 从from位置起查找子串（from可超出长度）。返回索引，未找到返回-1。 */
+static int64_t stringFindFrom(const viola$lang$string *a, const viola$lang$string *needle,
+                              uint64_t from) {
+    if (needle->length == 0) {
+        return from <= a->length ? (int64_t)from : -1;
+    }
+    if (needle->length > a->length) {
+        return -1;
+    }
+    for (uint64_t i = from; i + needle->length <= a->length; i++) {
+        int match = 1;
+        for (uint64_t j = 0; j < needle->length; j++) {
+            if (a->data[i + j] != needle->data[j]) {
+                match = 0;
+                break;
+            }
+        }
+        if (match) {
+            return (int64_t)i;
+        }
+    }
+    return -1;
+}
+
+static uint32_t findResult(int64_t pos) {
+    /* 未找到时返回UINT32_MAX（对应Python的-1，uint32无法表示负数） */
+    return pos < 0 ? UINT32_MAX : (uint32_t)pos;
+}
+
+/* count(sub) -> uint32：统计sub非重叠出现的次数 */
+void viola$lang$string$count$_0(viola$lang$string *_this, viola$lang$string *sub,
+                                viola$lang$uint32 *result, viola$threads$Listener *listener) {
+    (void)listener;
+    uint32_t count = 0;
+    if (sub->length == 0) {
+        /* 空子串：长度为length+1 */
+        *result = (viola$lang$uint32)_this->length + 1;
+        return;
+    }
+    uint64_t pos = 0;
+    while (pos + sub->length <= _this->length) {
+        if (stringFindFrom(_this, sub, pos) == (int64_t)pos) {
+            count++;
+            pos += sub->length;
+        } else {
+            pos++;
+        }
+    }
+    *result = count;
+}
+
+/* find(sub) -> uint32：返回sub首次出现的索引，未找到返回UINT32_MAX */
+void viola$lang$string$find$_0(viola$lang$string *_this, viola$lang$string *sub,
+                               viola$lang$uint32 *result, viola$threads$Listener *listener) {
+    (void)listener;
+    *result = findResult(stringFindFrom(_this, sub, 0));
+}
+
+/* rfind(sub) -> uint32：返回sub最后一次出现的索引，未找到返回UINT32_MAX */
+void viola$lang$string$rfind$_0(viola$lang$string *_this, viola$lang$string *sub,
+                                viola$lang$uint32 *result, viola$threads$Listener *listener) {
+    (void)listener;
+    int64_t found = -1;
+    uint64_t pos = 0;
+    while (pos + sub->length <= _this->length || (sub->length == 0 && pos <= _this->length)) {
+        int64_t hit = stringFindFrom(_this, sub, pos);
+        if (hit < 0) {
+            break;
+        }
+        found = hit;
+        pos = (uint64_t)hit + (sub->length > 0 ? sub->length : 1);
+    }
+    if (sub->length == 0) {
+        *result = (viola$lang$uint32)_this->length;
+        return;
+    }
+    *result = findResult(found);
+}
+
+/* index(sub) -> uint32：与find一致（0.1未实现异常，未找到返回UINT32_MAX） */
+void viola$lang$string$index$_0(viola$lang$string *_this, viola$lang$string *sub,
+                                viola$lang$uint32 *result, viola$threads$Listener *listener) {
+    viola$lang$string$find$_0(_this, sub, result, listener);
+}
+
+/* rindex(sub) -> uint32：与rfind一致 */
+void viola$lang$string$rindex$_0(viola$lang$string *_this, viola$lang$string *sub,
+                                 viola$lang$uint32 *result, viola$threads$Listener *listener) {
+    viola$lang$string$rfind$_0(_this, sub, result, listener);
+}
+
+/* ================= 0.1新增：数值转换 ================= */
+
+/* float() -> float64：解析为浮点数（支持inf/nan与科学计数法） */
+void viola$lang$string$float$_0(viola$lang$string *_this, viola$lang$float64 *result,
+                                viola$threads$Listener *listener) {
+    (void)listener;
+    char *text = viola$lang$string$toCharString(_this);
+    char *end = NULL;
+    errno = 0;
+    double value = strtod(text, &end);
+    if (end == text) {
+        value = 0.0;
+    }
+    free(text);
+    *result = value;
+}
+
+/* int(base = 10) -> int64：解析为整数（支持2~16进制） */
+void viola$lang$string$int$_0(viola$lang$string *_this, viola$lang$int64 *result,
+                              viola$threads$Listener *listener) {
+    char *text = viola$lang$string$toCharString(_this);
+    char *end = NULL;
+    errno = 0;
+    long long value = strtoll(text, &end, 10);
+    if (end == text) {
+        value = 0;
+    }
+    free(text);
+    *result = value;
+}
+
+void viola$lang$string$int$_1(viola$lang$string *_this, viola$lang$uint8 base,
+                              viola$lang$int64 *result, viola$threads$Listener *listener) {
+    (void)listener;
+    if (base < 2 || base > 16) {
+        *result = 0;
+        return;
+    }
+    char *text = viola$lang$string$toCharString(_this);
+    char *end = NULL;
+    errno = 0;
+    long long value = strtoll(text, &end, (int)base);
+    if (end == text) {
+        value = 0;
+    }
+    free(text);
+    *result = value;
+}
+
+/* 整数按base（2~16）转换为字符串（含负号），写入UTF-16缓冲区 */
+static viola$lang$string *intToString(int64_t value, uint8_t base) {
+    char buf[72];
+    char *p = buf + sizeof(buf) - 1;
+    *p = '\0';
+    uint64_t u = value < 0 ? (uint64_t)(-(value + 1)) + 1 : (uint64_t)value;
+    static const char digits[] = "0123456789abcdef";
+    if (u == 0) {
+        *--p = '0';
+    }
+    while (u > 0) {
+        *--p = digits[u % base];
+        u /= base;
+    }
+    if (value < 0) {
+        *--p = '-';
+    }
+    return viola$lang$string$fromCharString(p);
+}
+
+/* fromInt(value, base = 10) -> string：整数转换为字符串（支持2~16进制） */
+void viola$lang$string$fromInt$_0(viola$lang$int64 value, viola$lang$string **result,
+                                  viola$threads$Listener *listener) {
+    (void)listener;
+    *result = intToString(value, 10);
+}
+
+void viola$lang$string$fromInt$_1(viola$lang$int64 value, viola$lang$uint8 base,
+                                  viola$lang$string **result, viola$threads$Listener *listener) {
+    (void)listener;
+    if (base < 2 || base > 16) {
+        *result = intToString(value, 10);
+        return;
+    }
+    *result = intToString(value, base);
+}
+
+/* fromFloat(value) -> string：浮点数转换为字符串（类似%.15g，去除多余尾零） */
+void viola$lang$string$fromFloat$_0(viola$lang$float64 value, viola$lang$string **result,
+                                    viola$threads$Listener *listener) {
+    (void)listener;
+    char buf[64];
+    if (value != value) {
+        *result = viola$lang$string$fromCharString("nan");
+        return;
+    }
+    if (value > DBL_MAX || value < -DBL_MAX) {
+        *result = viola$lang$string$fromCharString(value > 0 ? "inf" : "-inf");
+        return;
+    }
+    snprintf(buf, sizeof(buf), "%.15g", value);
+    /* 去除指数表示外的多余尾零：保留至少一位小数 */
+    if (strchr(buf, 'e') == NULL && strchr(buf, '.') != NULL) {
+        size_t len = strlen(buf);
+        while (len > 1 && buf[len - 1] == '0') {
+            len--;
+        }
+        if (len > 0 && buf[len - 1] == '.') {
+            len--;
+        }
+        buf[len] = '\0';
+    }
+    *result = viola$lang$string$fromCharString(buf);
+}
+
+/* ================= 0.1新增：字符类别判断 ================= */
+
+static int isAsciiAlpha(uint16_t c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+static int isAsciiDigit(uint16_t c) {
+    return c >= '0' && c <= '9';
+}
+
+static int isUnicodeDigit(uint16_t c) {
+    if (isAsciiDigit(c)) {
+        return 1;
+    }
+    /* 常见Unicode十进制数字区段 */
+    if (c >= 0x0660 && c <= 0x0669) {
+        return 1; /* 阿拉伯-印度数字 */
+    }
+    if (c >= 0x06F0 && c <= 0x06F9) {
+        return 1; /* 扩展阿拉伯-印度数字 */
+    }
+    if (c >= 0x0966 && c <= 0x096F) {
+        return 1; /* 天城文数字 */
+    }
+    if (c >= 0xFF10 && c <= 0xFF19) {
+        return 1; /* 全角数字 */
+    }
+    return 0;
+}
+
+static int stringAll(const viola$lang$string *s, int (*pred)(uint16_t), int emptyValue) {
+    if (s->length == 0) {
+        return emptyValue;
+    }
+    for (uint64_t i = 0; i < s->length; i++) {
+        if (!pred(s->data[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void viola$lang$string$isalnum$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener) {
+    (void)listener;
+    *result = 1;
+    for (uint64_t i = 0; i < _this->length; i++) {
+        uint16_t c = _this->data[i];
+        if (!isAsciiAlpha(c) && !isUnicodeDigit(c)) {
+            *result = 0;
+            break;
+        }
+    }
+    if (_this->length == 0) {
+        *result = 0;
+    }
+}
+
+void viola$lang$string$isalpha$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener) {
+    (void)listener;
+    *result = 1;
+    for (uint64_t i = 0; i < _this->length; i++) {
+        if (!isAsciiAlpha(_this->data[i])) {
+            *result = 0;
+            break;
+        }
+    }
+    if (_this->length == 0) {
+        *result = 0;
+    }
+}
+
+void viola$lang$string$isdecimal$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                    viola$threads$Listener *listener) {
+    (void)listener;
+    *result = stringAll(_this, isUnicodeDigit, 0);
+}
+
+void viola$lang$string$isdigit$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener) {
+    (void)listener;
+    *result = stringAll(_this, isUnicodeDigit, 0);
+}
+
+void viola$lang$string$isidentifier$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                       viola$threads$Listener *listener) {
+    (void)listener;
+    *result = 0;
+    if (_this->length == 0) {
+        return;
+    }
+    uint16_t first = _this->data[0];
+    if (!isAsciiAlpha(first) && first != '_') {
+        return;
+    }
+    *result = 1;
+    for (uint64_t i = 1; i < _this->length; i++) {
+        uint16_t c = _this->data[i];
+        if (!isAsciiAlpha(c) && !isAsciiDigit(c) && c != '_') {
+            *result = 0;
+            break;
+        }
+    }
+}
+
+void viola$lang$string$islower$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener) {
+    (void)listener;
+    int hasCased = 0;
+    *result = 1;
+    for (uint64_t i = 0; i < _this->length; i++) {
+        uint16_t c = _this->data[i];
+        if (c >= 'A' && c <= 'Z') {
+            *result = 0;
+            break;
+        }
+        if (c >= 'a' && c <= 'z') {
+            hasCased = 1;
+        }
+    }
+    if (!hasCased) {
+        *result = 0;
+    }
+}
+
+void viola$lang$string$isupper$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener) {
+    (void)listener;
+    int hasCased = 0;
+    *result = 1;
+    for (uint64_t i = 0; i < _this->length; i++) {
+        uint16_t c = _this->data[i];
+        if (c >= 'a' && c <= 'z') {
+            *result = 0;
+            break;
+        }
+        if (c >= 'A' && c <= 'Z') {
+            hasCased = 1;
+        }
+    }
+    if (!hasCased) {
+        *result = 0;
+    }
+}
+
+void viola$lang$string$isnumeric$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                    viola$threads$Listener *listener) {
+    (void)listener;
+    *result = stringAll(_this, isUnicodeDigit, 0);
+}
+
+void viola$lang$string$isprintable$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                      viola$threads$Listener *listener) {
+    (void)listener;
+    *result = 1;
+    for (uint64_t i = 0; i < _this->length; i++) {
+        uint16_t c = _this->data[i];
+        if (c < 0x20 || c == 0x7F) {
+            *result = 0;
+            break;
+        }
+    }
+}
+
+void viola$lang$string$isspace$_0(viola$lang$string *_this, viola$lang$bool *result,
+                                  viola$threads$Listener *listener) {
+    (void)listener;
+    *result = 1;
+    for (uint64_t i = 0; i < _this->length; i++) {
+        uint16_t c = _this->data[i];
+        if (c != ' ' && c != '\t' && c != '\n' && c != '\r' && c != '\v' && c != '\f') {
+            *result = 0;
+            break;
+        }
+    }
+    if (_this->length == 0) {
+        *result = 0;
+    }
+}
+
+/* ================= 0.1新增：填充与修剪 ================= */
+
+static uint16_t fillCharOf(const viola$lang$string *fill) {
+    if (fill != NULL && fill->length > 0) {
+        return fill->data[0];
+    }
+    return ' ';
+}
+
+/* 用fill字符在左侧填充到length长度 */
+void viola$lang$string$ljust$_0(viola$lang$string *_this, viola$lang$uint32 length,
+                                viola$lang$string *fillChar, viola$lang$string **result,
+                                viola$threads$Listener *listener) {
+    (void)listener;
+    uint16_t fill = fillCharOf(fillChar);
+    uint64_t total = (uint64_t)length > _this->length ? length : _this->length;
+    uint16_t *buf = total > 0 ? (uint16_t *)malloc(sizeof(uint16_t) * total) : NULL;
+    if (_this->length > 0) {
+        memcpy(buf, _this->data, sizeof(uint16_t) * _this->length);
+    }
+    for (uint64_t i = _this->length; i < total; i++) {
+        buf[i] = fill;
+    }
+    *result = newString(buf, total);
+    free(buf);
+}
+
+/* 用fill字符在右侧填充到length长度 */
+void viola$lang$string$rjust$_0(viola$lang$string *_this, viola$lang$uint32 length,
+                                viola$lang$string *fillChar, viola$lang$string **result,
+                                viola$threads$Listener *listener) {
+    (void)listener;
+    uint16_t fill = fillCharOf(fillChar);
+    uint64_t total = (uint64_t)length > _this->length ? length : _this->length;
+    uint16_t *buf = total > 0 ? (uint16_t *)malloc(sizeof(uint16_t) * total) : NULL;
+    for (uint64_t i = 0; i + _this->length < total; i++) {
+        buf[i] = fill;
+    }
+    if (_this->length > 0) {
+        memcpy(buf + total - _this->length, _this->data, sizeof(uint16_t) * _this->length);
+    }
+    *result = newString(buf, total);
+    free(buf);
+}
+
+/* 字符是否在修剪集合中 */
+static int inStripSet(uint16_t c, const viola$lang$string *set) {
+    for (uint64_t i = 0; i < set->length; i++) {
+        if (set->data[i] == c) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void viola$lang$string$lstrip$_0(viola$lang$string *_this, viola$lang$string **result,
+                                 viola$threads$Listener *listener) {
+    viola$lang$string *def = viola$lang$string$fromCharString(" \t\n\r");
+    viola$lang$string$lstrip$_1(_this, def, result, listener);
+    free(def);
+}
+
+/* 去除左侧的修剪集合字符 */
+void viola$lang$string$lstrip$_1(viola$lang$string *_this, viola$lang$string *toRemove,
+                                 viola$lang$string **result, viola$threads$Listener *listener) {
+    (void)listener;
+    uint64_t start = 0;
+    while (start < _this->length && inStripSet(_this->data[start], toRemove)) {
+        start++;
+    }
+    *result = newString(_this->data + start, _this->length - start);
+}
+
+void viola$lang$string$rstrip$_0(viola$lang$string *_this, viola$lang$string **result,
+                                 viola$threads$Listener *listener) {
+    viola$lang$string *def = viola$lang$string$fromCharString(" \t\n\r");
+    viola$lang$string$rstrip$_1(_this, def, result, listener);
+    free(def);
+}
+
+/* 去除右侧的修剪集合字符 */
+void viola$lang$string$rstrip$_1(viola$lang$string *_this, viola$lang$string *toRemove,
+                                 viola$lang$string **result, viola$threads$Listener *listener) {
+    (void)listener;
+    uint64_t end = _this->length;
+    while (end > 0 && inStripSet(_this->data[end - 1], toRemove)) {
+        end--;
+    }
+    *result = newString(_this->data, end);
+}
+
+void viola$lang$string$strip$_0(viola$lang$string *_this, viola$lang$string **result,
+                                viola$threads$Listener *listener) {
+    viola$lang$string *def = viola$lang$string$fromCharString(" \t\n\r");
+    viola$lang$string$strip$_1(_this, def, result, listener);
+    free(def);
+}
+
+/* 去除两侧的修剪集合字符 */
+void viola$lang$string$strip$_1(viola$lang$string *_this, viola$lang$string *toRemove,
+                                viola$lang$string **result, viola$threads$Listener *listener) {
+    (void)listener;
+    uint64_t start = 0;
+    uint64_t end = _this->length;
+    while (start < end && inStripSet(_this->data[start], toRemove)) {
+        start++;
+    }
+    while (end > start && inStripSet(_this->data[end - 1], toRemove)) {
+        end--;
+    }
+    *result = newString(_this->data + start, end - start);
+}
+
+/* 大小写互换 */
+void viola$lang$string$swapcase$_0(viola$lang$string *_this, viola$lang$string **result,
+                                   viola$threads$Listener *listener) {
+    (void)listener;
+    uint16_t *buf = _this->length > 0 ? (uint16_t *)malloc(sizeof(uint16_t) * _this->length) : NULL;
+    for (uint64_t i = 0; i < _this->length; i++) {
+        uint16_t c = _this->data[i];
+        if (c >= 'a' && c <= 'z') {
+            buf[i] = (uint16_t)(c - 32);
+        } else if (c >= 'A' && c <= 'Z') {
+            buf[i] = (uint16_t)(c + 32);
+        } else {
+            buf[i] = c;
+        }
+    }
+    *result = newString(buf, _this->length);
+    free(buf);
+}
+
+/* 左侧补零到length长度（符号保持在最前） */
+void viola$lang$string$zfill$_0(viola$lang$string *_this, viola$lang$uint32 length,
+                                viola$lang$string **result, viola$threads$Listener *listener) {
+    (void)listener;
+    uint64_t total = (uint64_t)length > _this->length ? length : _this->length;
+    uint64_t signLen = 0;
+    if (_this->length > 0 && (_this->data[0] == '+' || _this->data[0] == '-')) {
+        signLen = 1;
+    }
+    uint16_t *buf = total > 0 ? (uint16_t *)malloc(sizeof(uint16_t) * total) : NULL;
+    for (uint64_t i = 0; i + _this->length < total; i++) {
+        buf[i] = '0';
+    }
+    if (signLen > 0 && total > 0) {
+        buf[0] = _this->data[0];
+        if (_this->length > 0) {
+            memcpy(buf + total - _this->length + 1, _this->data + 1,
+                   sizeof(uint16_t) * (_this->length - 1));
+        }
+    } else if (_this->length > 0) {
+        memcpy(buf + total - _this->length, _this->data, sizeof(uint16_t) * _this->length);
+    }
+    *result = newString(buf, total);
+    free(buf);
+}
+
+/* replace(oldSub, newSub, count)：count为0时替换全部 */
+void viola$lang$string$replace$_1(viola$lang$string *_this, viola$lang$string *old,
+                                  viola$lang$string *new, viola$lang$uint32 count,
+                                  viola$lang$string **result, viola$threads$Listener *listener) {
+    (void)listener;
+    if (old->length == 0 || old->length > _this->length) {
+        *result = newString(_this->data, _this->length);
+        return;
+    }
+    /* 收集所有匹配位置 */
+    uint64_t total = 0;
+    uint64_t *posList = (uint64_t *)malloc(sizeof(uint64_t) * (_this->length + 1));
+    uint64_t pos = 0;
+    while (pos + old->length <= _this->length) {
+        if (stringFindFrom(_this, old, pos) == (int64_t)pos) {
+            posList[total++] = pos;
+            pos += old->length;
+        } else {
+            pos++;
+        }
+    }
+    uint64_t replaceCount = count == 0 ? total : (total < count ? total : count);
+    uint64_t outLen = _this->length + replaceCount * (new->length - old->length);
+    uint16_t *buf = outLen > 0 ? (uint16_t *)malloc(sizeof(uint16_t) * outLen) : NULL;
+    uint64_t src = 0;
+    uint64_t dst = 0;
+    for (uint64_t i = 0; i < replaceCount; i++) {
+        uint64_t matchPos = posList[i];
+        if (matchPos > src) {
+            memcpy(buf + dst, _this->data + src, sizeof(uint16_t) * (matchPos - src));
+            dst += matchPos - src;
+        }
+        if (new->length > 0) {
+            memcpy(buf + dst, new->data, sizeof(uint16_t) * new->length);
+            dst += new->length;
+        }
+        src = matchPos + old->length;
+    }
+    if (src < _this->length) {
+        memcpy(buf + dst, _this->data + src, sizeof(uint16_t) * (_this->length - src));
+        dst += _this->length - src;
+    }
+    free(posList);
+    *result = newString(buf, dst);
+    free(buf);
 }

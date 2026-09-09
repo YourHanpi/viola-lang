@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Classes Test Template
 // Tests: class declaration, constructors, static methods, instance methods, object creation
 

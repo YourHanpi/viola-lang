@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Variables Test Template
 // Tests variable declaration, definition, and assignment (single assignment only)
 

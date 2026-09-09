@@ -91,23 +91,23 @@ def get_prefix(path: str, identifier: str) -> str:
 - 编译器内置
     - 添加指针（`unsafe Pointer::<T>`）。
     - 添加`void`类型（等效于`()`类型）。
-    - **（新增）** 将“无访问修饰符”的默认情况从`protected`改为`public`。
-    - **（新增）** 添加对模块的访问修饰符语义。其中：
+    -  将“无访问修饰符”的默认情况从`protected`改为`public`。
+    -  添加对模块的访问修饰符语义。其中：
         - `public`：公共访问修饰符，表示该成员可以被任何其他模块访问。
         - `protected`：受保护访问修饰符，表示该成员只能被同一模块中的其他成员访问。
         - `private`：私有访问修饰符，表示该成员只能被自身访问。
         - 默认情况为`public`。
-    - **（新增）** 将所有函数（无论静态还是动态）封装为结构体（`viola.lang.function.Function`类，原`Closure`类，视为`object`的子类），但调用静态函数时仍然传递函数指针。其中，`Function`类应至少包含以下成员：
+    -  将所有函数（无论静态还是动态）封装为结构体（`viola.lang.function.Function`类，原`Closure`类，视为`object`的子类），但调用静态函数时仍然传递函数指针。其中，`Function`类应至少包含以下成员：
         - `viola$lang$function$A$ *asyncPtr`（C声明）或`Pointer::<viola.lang.function.AsyncPtr> asyncPtr`（Viola声明）：异步函数指针。
         - `viola$lang$function$S$ *syncPtr`（C声明）或`Pointer::<viola.lang.function.SyncPtr> syncPtr`（Viola声明）：同步函数指针。
         - `void *capture`（C声明）或`Pointer::<Tuple> capture`（Viola声明）：捕获的环境，为元组类型。
         - `string[] argNames`（Viola声明）：参数名称（不包括捕获的环境参数）。
-    - **（新增）** 将所有元组封装为`object`类的子类。
-    - **（新增）** 支持闭包按参数名进行传参的功能。如果依赖于哈希表的实现，请推迟至0.2版本。
+    -  将所有元组封装为`object`类的子类。
+    -  支持闭包按参数名进行传参的功能。如果依赖于哈希表的实现，请推迟至0.2版本。
 - `viola.io.files`
     - 添加对外部文件的串行读写系统：由子线程发起请求，主线程执行请求并返回相关数据。
     - 添加标准输入输出功能
-- `viola.lang`**（新增）**
+- `viola.lang`
     - 为`string`类追加方法：
         - `fn count(string sub) -> (uint32 result);`
         - `fn find(string sub) -> (uint32 result);`
@@ -136,7 +136,7 @@ def get_prefix(path: str, identifier: str) -> str:
         - `fn strip(string toRemove = " \t\n\r") -> (string result);`
         - `fn swapcase() -> (string result);`
         - `fn zfill(uint32 length) -> (string result);`
-- `viola.lang.global_resource_manager`**（新增）**
+- `viola.lang.global_resource_manager`
     - 添加`_Request`类型的声明（在相应C头文件的`viola$lang$global_resource_manager$Request`中定义，需要添加引用计数）。
     - 添加请求向量表的注册函数`sq register_request_handler(uint32 request_id, (_Request) -> () handler) -> ();`。
 - `viola/lang/global_resource_manager.c`
@@ -145,7 +145,7 @@ def get_prefix(path: str, identifier: str) -> str:
     - 添加线程调度系统（见`viola_lib_dev_plan_zh.md`）。
 - `viola.math`
     - 直接包含`math.h`并生成相关绑定函数。
-    - **新增如下内容：**
+    - 新增如下内容：
         - 常量：`nan`, `inf`, `tau`；
         - 双曲函数及反双曲函数；
         - 弧度制与角度制的互相转换函数；
@@ -161,7 +161,7 @@ def get_prefix(path: str, identifier: str) -> str:
         - 各类无效值（包括无穷）的判断函数。
 - `viola.os`
     - 绑定Windows和POSIX的相关接口，使用条件编译分别处理。
-    - **新增如下内容（其中涉及到文件操作的，应当由子线程发送请求、由主线程串行执行）：**
+    - 新增如下内容（其中涉及到文件操作的，应当由子线程发送请求、由主线程串行执行）：
         - `int32 STDERR_FILENO;`
         - `int32 STDIN_FILENO;`
         - `int32 STDOUT_FILENO;`
@@ -224,7 +224,7 @@ def get_prefix(path: str, identifier: str) -> str:
         - `sq unlink(string path) -> ();`
         - `sq utime(string path, uint32 atime, uint32 mtime) -> ();`
         - `sq write(int32 fd, string data) -> (uint32 result);`
-- `viola.os.path`**（新增）**
+- `viola.os.path`
     - 添加路径处理功能，例如：
         - `string pathsep;`
         - `fn abspath(string path) -> (string result);`
@@ -249,7 +249,7 @@ def get_prefix(path: str, identifier: str) -> str:
         - `fn sameopenfile(int32 fd1, int32 fd2) -> (bool result);`
         - `fn split(string path) -> (string[] result);`
         - `fn splitext(string path) -> (string[] result);`
-- `viola.stat`**（新增）**
+- `viola.stat`
     - 添加文件状态功能，例如：
         - `uint32 S_IFDIR;`
         - `uint32 S_IFREG;`
@@ -288,7 +288,7 @@ def get_prefix(path: str, identifier: str) -> str:
 
 - 修复函数类型在C语言层上的表示，使之符合语法。
 - 修复元组类型在C语言层上的表示，使之成为包含`c_calling_type`所示类型成员的结构体。
-- 修复尾递归优化 **（新增）**。当前尾递归优化算法为：
+- 修复尾递归优化。当前尾递归优化算法为：
 
 ```c
 int recursive(T1 x, T2 y) {

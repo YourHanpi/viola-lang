@@ -1,0 +1,5 @@
+class C2 {
+    unsafe uint32 bad;
+}
+sq main() -> () {
+}

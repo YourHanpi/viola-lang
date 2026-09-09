@@ -4,8 +4,10 @@ from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp, Cla
 from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, ReturnStmt, \
     STACK_B_POP_FUNC, CleanupBlock
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
-    ClassName, MethodName, CLOSURE_T, TypeName, EXCEPTION_T_NAME, EnumName, GlobalVariableName, GenericArgument, \
-    StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable, FunctionTypeName, Object, LISTENER_T
+    ClassName, MethodName, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, TypeName, EXCEPTION_T_NAME, \
+    EnumName, GlobalVariableName, GenericArgument, \
+    StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable, FunctionTypeName, Object, LISTENER_T, \
+    VIOLA_IO, VOID_PTR
 from utils import CompilerException, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
@@ -162,7 +164,8 @@ class SqDef(Definition):
     """函数定义，表示一个可执行的函数（含参数和函数体）。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
-                 namespace: list[NamespaceName], name: str, arg_types: list[str]) -> None:
+                 namespace: list[NamespaceName], name: str, arg_types: list[str],
+                 decl: Optional[FunctionName] = None) -> None:
         """
         初始化函数定义。
         :param src_info: 源代码信息。
@@ -171,27 +174,30 @@ class SqDef(Definition):
         :param namespace: 命名空间路径。
         :param name: 函数名。
         :param arg_types: 参数类型列表。
+        :param decl: 可选的函数声明。匿名函数（闭包）没有符号表条目，
+            由调用方直接提供声明，跳过符号表查找。
         """
         super().__init__(src_info, symbol_table)
         arg_types_decl: list[TypeName] = []
         # 泛型函数/泛型类方法的泛型参数：在解析参数类型前注册（如T[]需要T可用）
         generic_names: list[str] = []
         name_decl = None
-        try:
-            name_decl = symbol_table[name, None]
-        except CompilerException:
-            name_decl = None
-        if name_decl is None:
-            # 重载函数没有按名称的查找键：从类型键中取第一个同名声明
-            for (k_name, _), v in symbol_table.symbols.items():
-                if k_name == name and isinstance(v, (FunctionName, MethodName)) and \
-                        v.type.generic_args_str is not None:
-                    name_decl = v
-                    break
+        if decl is None:
+            try:
+                name_decl = symbol_table[name, None]
+            except CompilerException:
+                name_decl = None
+            if name_decl is None:
+                # 重载函数没有按名称的查找键：从类型键中取第一个同名声明
+                for (k_name, _), v in symbol_table.symbols.items():
+                    if k_name == name and isinstance(v, (FunctionName, MethodName)) and \
+                            v.type.generic_args_str is not None:
+                        name_decl = v
+                        break
         if name_decl is not None and isinstance(name_decl, (FunctionName, MethodName)) and \
                 name_decl.type.generic_args_str is not None:
             generic_names = list(filter(lambda x: x != "", name_decl.type.generic_args_str))
-        elif "." in name:
+        elif decl is None and "." in name:
             try:
                 cls_decl = symbol_table[name.split(".")[0], None]
                 if isinstance(cls_decl, ClassName) and cls_decl.is_generic:
@@ -216,7 +222,8 @@ class SqDef(Definition):
         finally:
             for arg_obj in registered_args:
                 symbol_table.remove(arg_obj.name)
-        decl = self._symbol_table[name, tuple(arg_types_decl)]
+        if decl is None:
+            decl = self._symbol_table[name, tuple(arg_types_decl)]
         self._method_decl: Optional[MethodName] = decl if isinstance(decl, MethodName) else None
         if not isinstance(decl, FunctionName | MethodName):
             raise CompilerException(f"Name {name} is not a function.", src_info)
@@ -230,11 +237,17 @@ class SqDef(Definition):
         )
         for arg in self._args:
             symbol_table.add(arg, arg.name, None)
+            # 参数与返回值注册到变量状态表，使函数体语句块的外层变量快照
+            # 包含它们（fn的依赖排序与块内释放逻辑依赖该快照）
+            var_states[arg] = VariableState.ASSIGNED
         self._rets: list[LocalVariableName] = list(
             map(lambda n, t: LocalVariableName(src_info, n, t), self._decl.ret_names, self._decl.ret_types)
         )
         for ret in self._rets:
+            # 返回值槽位在C层为指针形参，赋值与读取时解引用
+            ret.is_return = True
             symbol_table.add(ret, ret.name, None)
+            var_states[ret] = VariableState.DECLARED
         self._outer_variables.update(dict(map(lambda x: (x, VariableState.ASSIGNED), self._args)))
         self._body: BlockStmt = BlockStmt(src_info, self._symbol_table, var_states)
         self._namespace: list[NamespaceName] = namespace
@@ -277,16 +290,30 @@ class SqDef(Definition):
             # 泛型类的方法：泛型参数未实例化，异步包装体推迟到实例化时构建
             self._async_body = None
         else:
-            self._async_body = self.__get_async_body()
+            self._async_body = self._get_async_body()
         self._var_states.pop_scope()
+        if not self._is_native and not isinstance(self._body, FnBlockStmt) and len(self._rets) <= 1 and \
+                len(getattr(self._body, "_stmt", [])) > 0:
+            # 尾递归优化（0.1起）：顺序执行体中的尾递归调用转换为goto循环
+            # （fn的按需执行体经依赖排序后无固定顺序，不适用）
+            self._body = self._body.check_tail_recursive(self._decl.name)
         self._body.indent()
         self._body.finish()
         self._is_finished = True
 
     def _check_return_stmts(self) -> None:
-        """检查每个return语句处所有返回值变量是否均已赋值（0.1要求）。"""
+        """检查每个return语句处所有返回值变量是否均已赋值（0.1要求），
+        并检查返回值不得为unsafe变量。"""
         if len(self._rets) == 0:
             return
+        # unsafe变量不得被返回（0.1要求）：unsafe成员、unsafe类实例
+        # 与指针（Pointer类型天然unsafe）均不可作为返回值
+        for ret in self._rets:
+            is_unsafe_var: bool = getattr(ret, "is_unsafe", False) or \
+                getattr(ret.type, "is_unsafe", False)
+            if is_unsafe_var:
+                raise CompilerException(
+                    f"unsafe variable {ret.name} can not be returned.", self._src_info)
         states: dict[VariableName, VariableState] = {}
 
         def walk(stmt: Statement) -> None:
@@ -298,7 +325,7 @@ class SqDef(Definition):
                             f"Return value {ret.name} is not assigned when returning.", stmt.src_info)
                 return
             states.update(stmt.variables_states)
-            for attr_name in ("_stmt", "_try_stmt", "_except_stmt", "_finally_stmt"):
+            for attr_name in ("_stmt", "_try_stmt", "_except_stmt", "_finally_stmt", "_branches"):
                 children = getattr(stmt, attr_name, None)
                 if children is None:
                     continue
@@ -378,7 +405,7 @@ class SqDef(Definition):
         )
         new_sq._body = new_sq._body.instantiation(type_args_with_cls)
         # 异步包装体在finish时以原泛型参数类型构建，实例化后需用具体类型重建
-        new_sq._async_body = new_sq._SqDef__get_async_body()
+        new_sq._async_body = new_sq._get_async_body()
         return new_sq
 
     def instantiation_full(self, type_args: tuple[TypeName, ...]) -> "SqDef":
@@ -399,11 +426,18 @@ class SqDef(Definition):
             raise CompilerException("Function is not generic.", self._src_info)
         new_sq = deepcopy(self)
         new_sq._decl = new_sq._decl.instantiation(
-            self._symbol_table.get_generic_func_instance(new_sq._decl, tuple(type_args)).self_name, type_args
+            self._symbol_table.get_generic_func_instance(new_sq._decl, tuple(type_args.values())).self_name,
+            type_args
         )
+        # 参数与返回值变量的类型同样需要实例化（供清理代码等使用）
+        new_sq._args = [a.instantiation(a.name, type_args) for a in new_sq._args]
+        new_sq._rets = [r.instantiation(r.name, type_args) for r in new_sq._rets]
         new_sq._body = new_sq._body.instantiation(type_args)
+        # 语句块的新变量列表同样需要实例化（供清理代码使用）
+        new_sq._body._new_variables = [v.instantiation(v.name, type_args)
+                                       for v in new_sq._body._new_variables]
         # 异步包装体在finish时以原泛型参数类型构建，实例化后需用具体类型重建
-        new_sq._async_body = new_sq._SqDef__get_async_body()
+        new_sq._async_body = new_sq._get_async_body()
         return new_sq
 
     @property
@@ -454,6 +488,10 @@ class SqDef(Definition):
         """将函数设置为闭包，绑定捕获结构体。"""
         self._is_closure = True
         self._body.set_as_closure(name, self._args)
+        if self._async_body is not None:
+            # 异步包装体在finish时先于闭包标记生成，需要按闭包约定
+            # （捕获环境作为参数元组末尾元素）重建
+            self._async_body = self._get_async_body()
 
     def set_default_param(self, param_name: str, default_value: Expression) -> None:
         if param_name not in self._decl.default_params:
@@ -513,12 +551,18 @@ class SqDef(Definition):
             define_name: str = self._decl.as_define_name_raw()
         async_define_name: str = self._decl.as_async().as_define_name()
         if self._is_closure:
-            # 闭包函数额外接收捕获结构体指针形参
+            # 闭包函数额外接收捕获结构体指针形参；
+            # 异步包装函数的捕获环境作为参数元组的末尾元素传入
+            # （与Function结构体的asyncPtr调用约定一致）
             define_name = define_name[:-1] + ", void *$$capture)"
-            async_define_name = async_define_name[:-1] + ", void *$$capture)"
+            closure_args_tuple: TupleTypeName = TupleTypeName(self._src_info, self._decl.arg_types + [VOID_PTR])
+            closure_rets_tuple: TupleTypeName = TupleTypeName(self._src_info, self._decl.ret_types)
+            async_define_name = f"void {self._decl.name}$async({closure_args_tuple.c_calling_name} params, " \
+                                f"{closure_rets_tuple.c_calling_name} returns, {LISTENER_T} *listener)"
         sync_text: list[str] = [
             define_name + " {",
-            self._body.head_text + ("\n\r" + self._body.tail_recursive_mark) if self._body.tail_recursive_mark is not None else "",
+            (self._body.head_text or "") + ("\n\r" + self._body.tail_recursive_mark)
+            if self._body.tail_recursive_mark is not None else self._body.head_text or "",
             f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
             self._body.text,
             CleanupBlock(self._src_info, self._symbol_table, self._var_states, list(self._body.new_variables)).text,
@@ -534,9 +578,19 @@ class SqDef(Definition):
         text = [*sync_text, "", *async_text]
         return "\n".join(text)
 
-    def __get_async_body(self) -> TryStmt:
-        """生成异步函数体，包含参数解包、同步函数调用和异常处理。"""
-        arg_tuple_name: TupleTypeName = TupleTypeName(self._src_info, self._decl.arg_types)
+    def _get_async_body(self) -> TryStmt:
+        """生成异步函数体，包含参数解包、同步函数调用和异常处理。
+
+        闭包的异步包装函数按Function结构体的asyncPtr调用约定生成：
+        捕获环境作为参数元组的末尾元素传入。
+        """
+        if self._is_closure:
+            async_arg_types: list[TypeName] = self._decl.arg_types + [VOID_PTR]
+            async_arg_names: list[str] = self._decl.arg_names + ["$$capture"]
+        else:
+            async_arg_types = self._decl.arg_types
+            async_arg_names = self._decl.arg_names
+        arg_tuple_name: TupleTypeName = TupleTypeName(self._src_info, async_arg_types)
         ret_tuple_name: TupleTypeName = TupleTypeName(self._src_info, self._decl.ret_types)
         arg_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, self._symbol_table,
                                                  VariableRef(self._src_info, self._symbol_table, LocalVariableName(
@@ -544,8 +598,8 @@ class SqDef(Definition):
                                                  )))
         arg_unpack_stmt: DeclStmt = DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)
         arg_unpack_stmt.set_var_value(arg_unpack_expr)
-        arg_unpack_stmt.set_vars_with_known_type(self._decl.arg_names, self._decl.arg_types,
-                                                 [False] * len(self._decl.arg_names))
+        arg_unpack_stmt.set_vars_with_known_type(async_arg_names, async_arg_types,
+                                                 [False] * len(async_arg_names))
         arg_unpack_stmt.finish()
         arg_unpack_stmt.indent()
         ret_unpack_expr: UnpackExpr = UnpackExpr(self._src_info, self._symbol_table,
@@ -603,9 +657,17 @@ class SqDef(Definition):
         catch_inner_what_call.set_func(catch_inner_what_attr)
         catch_inner_print_call.add_arg(catch_inner_what_call, None)
         # noinspection PyTypeChecker
-        catch_inner_print_func: VariableRef = VariableRef(self._src_info, self._symbol_table, self._symbol_table[
-            PERROR_FUNC_NAME, (StringTypeName,)
-        ])
+        try:
+            catch_inner_print_func: VariableRef = VariableRef(self._src_info, self._symbol_table, self._symbol_table[
+                PERROR_FUNC_NAME, (StringTypeName,)
+            ])
+        except CompilerException:
+            # viola.io的内置绑定已移除（开发疑问记录第40条），此处直接构造
+            # perror的原生函数符号（实现位于viola_libs/viola/io/print.c）
+            perror_func = FunctionName(self._src_info, VIOLA_IO, "perror",
+                                       FunctionTypeName(self._src_info, [StringTypeName], []),
+                                       ["text"], [], True, False, True)
+            catch_inner_print_func = VariableRef(self._src_info, self._symbol_table, perror_func)
         catch_inner_print_call.set_func(catch_inner_print_func)
         catch_inner_print.set_expr(catch_inner_print_call)
         catch_inner.add_stmt(catch_inner_print)
@@ -644,23 +706,27 @@ class ConstructorDef(SqDef):
         this_name: str = "_thisObj"
         this_type: ClassName = cls
         self._this_var: LocalVariableName = LocalVariableName(self._src_info, this_name, this_type)
-        this_alloc_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
-        this_alloc_stmt.set_text(
-            f"{cls.c_calling_name} {self._this_var.name} = ({cls.c_calling_name})malloc(sizeof({cls.c_alloc_name}));")
-        self.add_stmt(this_alloc_stmt)
-        # 初始化实例的TypeInfo指针，供异常捕获与动态类型转换使用
-        this_vtable_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
-        this_vtable_stmt.set_text(
-            f"{self._this_var.name}->$refCount = 1;\n"
-            f"{self._this_var.name}->$parent = NULL;\n"
-            f"{self._this_var.name}->$$vtable = (void *)&{cls.name}$$vtable;")
-        self.add_stmt(this_vtable_stmt)
+        if not self._is_native:
+            # 原生构造函数（声明文件中声明的内置类构造）由运行库实现，
+            # 不生成分配与vtable初始化代码
+            this_alloc_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
+            this_alloc_stmt.set_text(
+                f"{cls.c_calling_name} {self._this_var.name} = ({cls.c_calling_name})malloc(sizeof({cls.c_alloc_name}));")
+            self.add_stmt(this_alloc_stmt)
+            # 初始化实例的TypeInfo指针，供异常捕获与动态类型转换使用
+            this_vtable_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
+            this_vtable_stmt.set_text(
+                f"{self._this_var.name}->$refCount = 1;\n"
+                f"{self._this_var.name}->$parent = NULL;\n"
+                f"{self._this_var.name}->$$vtable = (void *)&{cls.name}$$vtable;")
+            self.add_stmt(this_vtable_stmt)
 
     def finish(self) -> None:
         """完成构造函数，将局部this写回输出参数。"""
-        write_back_stmt: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
-        write_back_stmt.set_text(f"*_this = {self._this_var.name};")
-        self.add_stmt(write_back_stmt)
+        if not self._is_native:
+            write_back_stmt: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
+            write_back_stmt.set_text(f"*_this = {self._this_var.name};")
+            self.add_stmt(write_back_stmt)
         super().finish()
 
     def add_stmt(self, stmt: Statement) -> None:
@@ -760,7 +826,8 @@ class FnDef(SqDef):
     """函数定义（fn），使用 FnBlockStmt 作为函数体支持声明排序。"""
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
-                 namespace: list[NamespaceName], name: str, arg_types: list[str]) -> None:
+                 namespace: list[NamespaceName], name: str, arg_types: list[str],
+                 decl: Optional[FunctionName] = None) -> None:
         """
         初始化函数定义。
         :param src_info: 源代码信息。
@@ -769,8 +836,9 @@ class FnDef(SqDef):
         :param namespace: 命名空间路径。
         :param name: 函数名。
         :param arg_types: 参数类型列表。
+        :param decl: 可选的函数声明（匿名闭包）。
         """
-        super().__init__(src_info, symbol_table, var_states, namespace, name, arg_types)
+        super().__init__(src_info, symbol_table, var_states, namespace, name, arg_types, decl)
         self._body: FnBlockStmt = FnBlockStmt(self._src_info, self._symbol_table, var_states)
 
 
@@ -1263,8 +1331,16 @@ class FromImportDef(Definition):
         if len(def_name) == 1 and def_name[0] == "*":
             def_name = ["__all__"]
         self._def_name: list[str] = def_name
+        self._module_abs: Optional[str] = None
         self._get_include_path()
         self._namespace = self._get_namespace()
+
+    @property
+    def imported_src_path(self) -> Optional[str]:
+        """获取被导入模块的源文件路径（无扩展名部分的绝对路径+.vla）。"""
+        if self._module_abs is None:
+            return None
+        return self._module_abs + ".vla"
 
     @property
     def global_init_text(self) -> Optional[str]:
@@ -1325,6 +1401,7 @@ class FromImportDef(Definition):
                     break
         if module_abs is None:
             raise CompilerException(f"{self._module_path} is not a valid module path.", self._src_info)
+        self._module_abs = os.path.abspath(module_abs)
         if module_root is not None and os.path.abspath(module_root) != os.path.abspath(self._root_path):
             # 运行库模块：输出到输出目录下相对VIOLA_HOME的路径，include使用该相对路径
             self._module_path = os.path.relpath(module_abs, module_root)
@@ -1371,15 +1448,33 @@ class Closure(Expression):
 
     @property
     def front_text(self) -> Optional[str]:
-        """获取闭包的前置代码（分配闭包结构体）。"""
+        """获取闭包的前置代码（分配Function结构体）。
+
+        0.1起闭包结构体更名为viola.lang.function.Function（原Closure），
+        包含asyncPtr/syncPtr/capture/argNames四个成员。
+        """
+        arg_names: list[str] = self._sq_def._decl.arg_names
+        arg_names_setting: list[str] = [
+            f"{self._var_name}->argNames = "
+            f"(viola$lang$string$$array *)malloc(sizeof(viola$lang$string$$array));",
+            f"{self._var_name}->argNames->$refCount = 1;",
+            f"{self._var_name}->argNames->$parent = NULL;",
+            f"{self._var_name}->argNames->size = {len(arg_names)};",
+            f"{self._var_name}->argNames->data = (viola$lang$string **)malloc("
+            f"sizeof(viola$lang$string *) * {len(arg_names) if len(arg_names) > 0 else 1});",
+        ]
+        for i, n in enumerate(arg_names):
+            arg_names_setting.append(
+                f"{self._var_name}->argNames->data[{i}] = viola$lang$string$fromCharString(\"{n}\");")
         result: list[str] = [
             self._sq_def.closure_struct_setting_code,
-            f"{self._var_name} = ({CLOSURE_T} *)malloc(sizeof({CLOSURE_T}));",
+            f"{self._var_name} = ({FUNCTION_T} *)malloc(sizeof({FUNCTION_T}));",
             f"{self._var_name}->$refCount = 1;",
             f"{self._var_name}->$parent = NULL;",
-            f"{self._var_name}->$sync = {self._sq_def.name};",
-            f"{self._var_name}->$async = {self._sq_def.name}$async;",
-            f"{self._var_name}->$capture = {self._var_name}$$capture;"
+            f"{self._var_name}->asyncPtr = ({FUNCTION_ASYNC_PTR_T} *){self._sq_def.name}$async;",
+            f"{self._var_name}->syncPtr = ({FUNCTION_SYNC_PTR_T} *){self._sq_def.name};",
+            f"{self._var_name}->$capture = {self._var_name}$$capture;",
+            *arg_names_setting
         ]
         return "\n".join(result)
 
@@ -1390,8 +1485,8 @@ class Closure(Expression):
 
     @property
     def head_text(self) -> Optional[str]:
-        """获取闭包的头代码（声明闭包变量）。"""
-        return f"{CLOSURE_T} *{self._var_name};"
+        """获取闭包的头代码（声明Function结构体变量）。"""
+        return f"{FUNCTION_T} *{self._var_name};"
 
     @property
     def inline_mapping(self) -> dict[str, str]:
@@ -1411,8 +1506,12 @@ class Closure(Expression):
 
     @property
     def outer_text(self) -> str:
-        """获取闭包的外层代码（函数定义的源代码）。"""
-        return self._sq_def.source
+        """获取闭包的外层代码（函数定义的源代码与外层代码）。"""
+        outer: Optional[str] = self._sq_def.outer_text
+        source: str = self._sq_def.source
+        if outer is not None and outer.strip() != "":
+            return outer + "\n\n" + source
+        return source
 
     @property
     def release_text(self) -> Optional[str]:
@@ -1502,12 +1601,13 @@ class GenericCall(CompilingItem):
                           len(v.type.generic_args_str) == len(self._type_args)]
             if len(candidates) == 1:
                 func = candidates[0]
+            base_func: FunctionName = func
             func = self._symbol_table.get_generic_func_instance(func, tuple(self._type_args))
             inst_ref = VariableRef(self._src_info, self._symbol_table, func)
             if any(isinstance(t, GenericArgument) for t in self._type_args):
                 # 泛型函数体内的递归调用（如forEachEach::<T>）：类型参数仍是泛型参数，
-                # 记录原函数与类型参数，实例化时按具体类型重新解析
-                inst_ref.generic_call_info = (func, tuple(self._type_args))
+                # 记录原泛型函数与类型参数，实例化时按具体类型重新解析
+                inst_ref.generic_call_info = (base_func, tuple(self._type_args))
             self._instance = inst_ref
         elif isinstance(self._generic_symbol, AttrOp):
             method = self._generic_symbol.as_method()

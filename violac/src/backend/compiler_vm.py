@@ -5,6 +5,7 @@ import backend.expression as expression
 import backend.project as project
 import backend.statement as statement
 import backend.symbol as symbol
+from backend.symbol import TypeName
 from utils import SourceInfo, InternalCompilerException, VIOLA_INIT, COMPILER_PARAMS, CompilerException
 from utils.file_marks import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
 from utils.logger import Logger
@@ -269,7 +270,15 @@ class CompilerVM:
                 raise e
             self._project.add_source_file(src_file)
             self._logger.info(f"Successfully compiled: {src_path}")
-            return TaskResult(TaskResultState.SUCCESS, [["violac", "add-make", output_path]])
+            # 被导入的模块同样需要编译：模块解析命中缓存时不会安排其
+            # 自身的parse→run-vm任务链，由本模块的导入定义补充安排
+            # （输出已是最新时会被_check_skip跳过）
+            data: list[list[str]] = [["violac", "add-make", output_path]]
+            for d in src_file.definitions:
+                import_src: Optional[str] = getattr(d, "imported_src_path", None)
+                if import_src is not None and os.path.exists(import_src):
+                    data.append(["violac", "run-vm", import_src])
+            return TaskResult(TaskResultState.SUCCESS, data)
         finally:
             remove_file_lock(cache_path)
 
@@ -526,7 +535,7 @@ class CompilerVM:
         self.__check_type(self._stack[-1], [definition.SqDef])
         self.__check_type(self._stack[-2], [definition.Closure])
         # noinspection PyUnresolvedReferences
-        self._stack[-2].set_def(self._stack[-1])
+        self._stack[-2].set_definition(self._stack[-1])
         self.__pop()
 
     def __call_set_default_param(self, cmd: list[str]) -> None:
@@ -751,9 +760,16 @@ class CompilerVM:
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
         self._var_state_table.add_scope()
+        func_name: str = cmd[0]
+        arg_types: list[str] = cmd[1].split("%") if len(cmd) > 1 else []
+        decl: Optional[symbol.FunctionName] = None
+        if func_name == "!ANONYMOUS":
+            # 闭包为匿名函数，无符号表条目：由命令中的类型信息直接构造函数声明
+            decl, arg_types = self.__make_anonymous_decl(cmd)
+            func_name = decl.name
         fn_def: definition.FnDef = definition.FnDef(
-            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0],
-            cmd[1].split("%") if len(cmd) > 1 else []
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, func_name,
+            arg_types, decl
         )
         return fn_def
 
@@ -763,11 +779,39 @@ class CompilerVM:
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
         self._var_state_table.add_scope()
+        func_name: str = cmd[0]
+        arg_types: list[str] = cmd[1].split("%") if len(cmd) > 1 else []
+        decl: Optional[symbol.FunctionName] = None
+        if func_name == "!ANONYMOUS":
+            # 闭包为匿名函数，无符号表条目：由命令中的类型信息直接构造函数声明
+            decl, arg_types = self.__make_anonymous_decl(cmd)
+            func_name = decl.name
         sq_def: definition.SqDef = definition.SqDef(
-            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, cmd[0],
-            cmd[1].split("%") if len(cmd) > 1 else []
+            self._src_info, self._symbol_table, self._var_state_table, self._symbol_table.namespace, func_name,
+            arg_types, decl
         )
         return sq_def
+
+    def __make_anonymous_decl(self, cmd: list[str]) -> tuple[symbol.FunctionName, list[str]]:
+        """为匿名函数（闭包）直接构造函数声明。
+
+        命令格式：MAKE DEF SQ/FN !ANONYMOUS <参数类型%参数名%...>!<返回类型%返回名%...>
+        """
+        body: str = cmd[1] if len(cmd) > 1 else ""
+        arg_part, _, ret_part = body.partition("!")
+        arg_items: list[str] = arg_part.split("%") if arg_part else []
+        arg_types: list[str] = arg_items[::2]
+        arg_names: list[str] = arg_items[1::2]
+        ret_items: list[str] = ret_part.split("%") if ret_part else []
+        ret_types: list[TypeName] = [self._symbol_table[t, None] for t in ret_items[::2]]
+        ret_names: list[str] = ret_items[1::2]
+        decl = symbol.FunctionName(
+            self._src_info, self._symbol_table.namespace, self._symbol_table.get_counter(),
+            symbol.FunctionTypeName(self._src_info,
+                                    [self._symbol_table[t, None] for t in arg_types], ret_types),
+            arg_names, ret_names, False
+        )
+        return decl, arg_types
 
     def __make_stmt_block(self) -> statement.BlockStmt:
         """创建语句块（普通块或函数块）并添加新的作用域。"""
@@ -788,6 +832,7 @@ class CompilerVM:
         # noinspection PyUnresolvedReferences
         if var_type_name != "auto":
             var_type = self._symbol_table[var_type_name, None]
+            self._symbol_table.check_module_access(var_type)
         else:
             try:
                 var_type = self._symbol_table[var_name, None]
@@ -827,9 +872,22 @@ class CompilerVM:
                     if overloaded_func is None:
                         raise
                 else:
-                    raise
+                    # 函数作为值使用（如 f = twice）：按名称查找唯一重载
+                    funcs = self._symbol_table.find_functions(var_name, [], {})
+                    if len(funcs) == 1:
+                        overloaded_func = funcs[0]
+                        var_type = overloaded_func
+                    else:
+                        raise
         if overloaded_func is not None:
+            self._symbol_table.check_module_access(overloaded_func)
             expr: expression.VariableRef = expression.VariableRef(self._src_info, self._symbol_table, overloaded_func)
+            self.__make(expr)
+            return expr
+        if isinstance(var_type, symbol.FunctionName):
+            # 函数引用（如import导入的原生函数按限定名注册）：直接引用函数符号
+            self._symbol_table.check_module_access(var_type)
+            expr = expression.VariableRef(self._src_info, self._symbol_table, var_type)
             self.__make(expr)
             return expr
         if var_name == "_":
@@ -844,6 +902,7 @@ class CompilerVM:
                     return expr
         if (var_name, None) in self._symbol_table:
             var = self._symbol_table[var_name, None]
+            self._symbol_table.check_module_access(var)
             # noinspection PyTypeChecker
             if isinstance(var, symbol.VariableName):
                 expr = expression.VariableRef(self._src_info, self._symbol_table, var)

@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Inheritance Test Template
 // Tests: class inheritance and method overriding
 

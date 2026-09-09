@@ -1,3 +1,4 @@
+from viola.io import *;
 // Module B - ${MODULE_DESC_B}
 // Provides additional utility functions
 

@@ -16,7 +16,18 @@ Viola是一个以内存安全、高并发简化和高性能为设计目标的编
 
 # 开发进度
 
-目前，第一个版本尚未成型。
+目前，0.1版本已经完成开发与测试。0.1版本的开发计划见
+[versions_dev_plan_zh.md](versions_dev_plan_zh.md)，包含：
+`export`、`final`、`impl`/`interface`、`public`/`protected`/`private`、
+`return`、`static`、`unsafe`、`wrapper`、丢弃变量`_`等关键字，
+以及`viola.io`、`viola.lang`、`viola.math`、`viola.os`、
+`viola.os.path`、`viola.stat`、`viola.threads`、
+`viola.util.control_flow`、`viola.util.functools`、
+`viola.util.array`等运行库模块（详见[参考手册](manual_zh.md)）。
+测试方式见`violac/whole_test/run_full_test.py`
+（编译全部模板工程、用gcc链接运行库并运行，检查退出码）
+与`violac/unit_test`（编译器单元测试）。
+
 本项目欢迎任何人提出善意的建议和意见，并允许贡献代码。
 
 **请注意：为了未来能够自举，请不要使用第三方库，以及C语言没有原生实现的标准库功能（包括但不限于正则表达式等）。**
@@ -49,85 +60,51 @@ Viola是一个以内存安全、高并发简化和高性能为设计目标的编
 
 # 标准库
 
-这一部分尚未开始编写，预计将会使用C语言和Viola语言混合编写。目前考虑至少加入以下内容：
+标准库位于`viola_libs`目录下，使用C语言和Viola语言混合编写。
+0.1版本已完成以下模块（详细接口见[参考手册](manual_zh.md)与各模块的
+Viola声明文件`viola_libs/viola/*.vla`）：
 
-## viola.lang
+- `viola.io`：标准输入输出（print/perror/input）与文件读写
+  （open/read/readBytes/write/writeBytes，经全局资源管理器串行执行）。
+- `viola.lang`：`string`类（连接、比较、切片、分割、大小写转换、
+  数字互转、空白与字符类别判断等）、`exception`（Exception类）、
+  `function`（函数值Function结构体）、`slice`、`object`。
+- `viola.lang.global_resource_manager`：基于请求的全局资源管理器
+  （子线程发起请求、主线程串行执行），支持以Viola函数注册请求处理器。
+- `viola.threads`：线程调度系统（addThread/delThread/getThreadsNum/
+  setThreadsNum，以及任务队列、监听器、traceback双栈等内部实现）。
+- `viola.math`：数学常量（pi/e/tau/inf/nan）与math.h绑定函数，
+  以及双曲/反双曲函数、弧度角度互转、距离与范数、误差/伽马/阶乘、
+  指数尾数分离、gcd/lcm、排列组合、modf/remainder、无效值判断等。
+- `viola.os`：Windows/POSIX系统接口（条件编译），包括标准文件
+  描述符、O_*常量、文件与目录操作、Stat/StatVFS文件状态等。
+- `viola.os.path`：路径处理（basename/dirname/join/normpath/
+  abspath/realpath/exists/isdir/isfile/split/splitext等）。
+- `viola.stat`：文件类型与权限位常量（S_IF*/S_IRWX*）、
+  文件类型判断（S_IS*）与filemode。
+- `viola.util.control_flow`：循环函数（forEach/while/doWhile）。
+- `viola.util.functools`：函数式编程原语（map/filter/reduce/
+  expand/expandWithCut）。
+- `viola.util.array`：泛型数组类Array::&lt;T&gt;。
 
-- `array::<T>`类。
-- `expand`函数，声明为`sq expand::<T>(T[] inputs, (T[]) -> (T) predicate, size_t size) -> (T[] results);`，运行时将调用predicate函数对最后input.length个元素进行迭代，并返回迭代至长度为size的数组。
-- `filter`函数，声明为`fn filter::<T>(T[] inputs, (T) -> (bool) predicate, bool useAsync) -> (T[] results);`。
-- `map`函数，声明为`fn map::<T, U>(T[] inputs, (T) -> (U) mapper, bool useAsync) -> (U[] results);`。
-- `reduce`函数，声明为`fn reduce::<T>(T[] inputs, (T, T) -> (T) reducer, T initialValue, bool useAsync) -> (T result);`。
-- `string`类。
+运行库与编译器生成的C代码一起由gcc编译链接（构建脚本
+`viola_libs/build.py`，测试入口`violac/whole_test/run_full_test.py`）。
 
-### viola.lang.thread
+## 线程调度的内部实现（viola.threads）
 
-接口：
-
-- `addThread`Viola函数，声明为`sq addThread(uint32 number) -> ();`。
-- `delThread`Viola函数，声明为`sq delThread(uint32 number) -> ();`。此函数执行的任务是：如果有空闲线程则直接移除；如果空闲线程不足，则等待直到一个线程完成当前任务，然后移除该线程，并且将线程的所有未执行任务移入任务队列。
-- `getThreadsNum`Viola函数，声明为`fn getThreadsNum() -> (uint32 number);`。
-- `setThreadsNum`Viola函数，声明为`sq setThreadsNum(uint32 number) -> ();`。
-
-内部实现内容：
-
-- `enqueue`C函数，声明为`void viola$lang$thread$enqueue(FuncCall *call);`。
-- `FuncCall`C结构体。实际暴露接口为`viola$lang$thread$FuncCall`。
-- `initListener`C函数，声明为`void viola$lang$thread$initListener(Listener *listener, uint32_t executerThreadId);`。
-- `Listener`C结构体。实际暴露接口为`viola$lang$thread$Listener`。
-- `popStackA`和`popStackB`C函数，声明为`void viola$lang$thread$popStackA(uint32_t threadId);`和`void viola$lang$thread$popStackB(uint32_t threadId);`。
-- `pushStackA`和`pushStackB`C函数，声明为`void viola$lang$thread$pushStackA(uint32_t threadId, viola$lang$string *string);`和`void viola$lang$thread$pushStackB(uint32_t threadId, viola$lang$thread$ThreadInfo threadInfo);`。
-- `StackA`和`StackB`C结构体。关于这两个结构体的解释见traceback的实现。实际暴露接口为`viola$lang$thread$StackA`和`viola$lang$thread$StackB`。
-- `waitListener`C函数，声明为`void viola$lang$thread$waitListener(Listener *listener);`。此函数会销毁传入的Listener。
-
-### traceback的实现
-
-- 每个线程设置两个栈A和B，其中A栈存放`traceback`标记，B栈存放结构体`viola$lang$thread$ThreadInfo`。
-- `viola$lang$thread$ThreadInfo`结构体定义如下： 
-
-```c
-typedef struct {
-    uint32_t targetStackASize; // 切换线程时，目标线程栈A的大小
-    uint32_t targetThreadId; // 目标线程ID
-    uint64_t stackASize; // 当前线程栈A的大小
-} viola$lang$thread$ThreadInfo;
-```
-
-- A栈每当调用函数时就压栈，函数返回时退栈；B栈调用异步函数时压栈，异步函数返回时退栈。
-- B栈的压栈操作在从任务队列获取任务时完成，退栈操作在异步包装函数中完成。stackASize从委托方线程传入的listener中获取。
-- traceback打印代码（草稿，未测试）：
-
-```c
-viola$lang$string *viola_getTraceback(uint32_t threadId) {
-    viola$lang$string *traceback = viola$lang$string$fromCharString("");
-    viola$thread$Thread *thread;
-    uint64_t to;
-    uint32_t targetThreadId;
-    uint32_t targetStackASize;
-    uint32_t stackBIndex = thread->stackB->size;
-    viola$thread$StackB *stackB;
-    viola$lang$string *stackAStrings;
-    viola$lang$thread$ThreadInfo threadData;
-    viola$lang$string *newTraceback;
-    uint64_t from;
-    while (to > 0) {
-        thread = viola$thread$threads[threadId];
-        from = thread->stackA->size;
-        stackB = thread->stackB;
-        do {
-            threadData = stackB->stack[stackBIndex];
-            to = threadData.stackASize;
-        } while(to >= from);
-        targetThreadId = threadData.targetThreadId;
-        targetStackASize = threadData.targetThreadASize;
-        stackAStrings = thread->stackA->stack;
-        for (uint32_t i = from; i >= to; i--) {
-            viola$lang$string$concat(traceback, stackAStrings[i], &newTraceback);
-            free(traceback);
-            traceback = newTraceback;
-        }
-        threadId = targetThreadId;
-    }
-    return traceback;
-}
-```
+- 接口：`addThread`（`sq addThread(uint32 number) -> ();`）、
+  `delThread`（`sq delThread(uint32 number) -> ();`，有空闲线程则直接
+  移除；空闲线程不足则等待直到一个线程完成当前任务，然后移除该线程，
+  并将其所有未执行任务移入任务队列）、`getThreadsNum`
+  （`fn getThreadsNum() -> (uint32 number);`）、`setThreadsNum`
+  （`sq setThreadsNum(uint32 number) -> ();`）。
+- 内部C接口（前缀`viola$threads$`）：`enqueue(FuncCall *call)`、
+  `initListener(Listener *listener, uint32_t executerThreadId)`、
+  `pushStackA/popStackA`、`pushStackB/popStackB`、`waitListener`
+  （结束前销毁监听器）；结构体`FuncCall`、`Listener`、
+  `ThreadInfo`、`StackA`（traceback标记栈）、`StackB`（线程信息栈）、
+  `TaskQueue`。
+- traceback实现：每个线程设置两个栈A和B，A栈存放traceback标记，
+  B栈存放`ThreadInfo`（切换线程时的目标栈大小与目标线程ID）。
+  调用函数时A栈压栈、返回时退栈；异步函数在任务队列中取出任务时
+  B栈压栈、异步包装函数返回时退栈。

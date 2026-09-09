@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Branches Test Template
 // Tests: if, elif, else conditional branching
 

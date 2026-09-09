@@ -1,0 +1,6 @@
+interface I1 {
+    fn f() -> (int r);
+}
+sq main() -> () {
+    I1 bad();
+}

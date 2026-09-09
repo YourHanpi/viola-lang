@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola I/O Test Template
 // Tests: print, perror, input, file open/read/write
 

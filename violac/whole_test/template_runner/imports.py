@@ -102,11 +102,22 @@ def generate(project_id: str) -> None:
     with open(os.path.join(output_dir, f"{mod4}.vla"), "w", encoding="utf-8") as f:
         f.write(mod_b_content)
 
-    # ====== Also create modules for mod2 and mod3 (module_a copies with renamed functions) ======
-    # mod3 needs to export imported_func2 and imported_func1
-    mod3_content = mod_a_content.replace(f"print_msg_{pid}", imported_func1)
-    mod3_content = mod3_content.replace(f"calc_{pid}", imported_func2)
-    mod3_content = mod3_content.replace(f"[MOD_A:{pid}]", f"[MOD_C:{pid}]")
+    # ====== Also create modules for mod2 and mod3 ======
+    # mod3（from...import 模块）需导出imported_func1与imported_func2。
+    # 注意：main中以int实参调用（imported_func1接收int，imported_func2为
+    # int -> int），需直接生成与main调用一致的签名。
+    mod3_content = (
+        "from viola.io import *;\n"
+        "// Module C - Module C for test #{}\n"
+        "\n"
+        "sq {}(int x) -> () {{\n"
+        "    print(\"[MOD_C:{}]\");\n"
+        "}}\n"
+        "\n"
+        "fn {}(int x) -> (int result) {{\n"
+        "    result = x * x + {};\n"
+        "}}\n"
+    ).format(pid, imported_func1, pid, imported_func2, random.randint(1, 50))
     with open(os.path.join(output_dir, f"{mod3}.vla"), "w", encoding="utf-8") as f:
         f.write(mod3_content)
 

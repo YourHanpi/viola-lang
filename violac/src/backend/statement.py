@@ -409,6 +409,12 @@ class DeclStmt(Statement):
             var.rename("$_discard$" + str(self._symbol_table.get_counter()))
 
     def as_async(self) -> "Statement":
+        for var in self._var:
+            if getattr(var, "is_unsafe", False) or \
+                    (isinstance(var.type, ClassName) and var.type.is_unsafe):
+                # 对unsafe变量的写操作强制串行化（0.1要求）：
+                # 该语句退化为同步执行，不做异步转换
+                return self
         new_stmt = super().as_async()
         if self._var_value is not None:
             new_stmt._var_value = self._var_value.as_async()
@@ -491,7 +497,8 @@ class DeclStmt(Statement):
         else:
             if len(self._var) > 1:
                 raise CompilerException("Too many variables for unpacking.", self._src_info)
-            if not expr_type.convertible_to(self._var[0].type, self._symbol_table.symbols):
+            if self._var[0].type.name != "auto" and \
+                    not expr_type.convertible_to(self._var[0].type, self._symbol_table.symbols):
                 raise CompilerException(f"{expr_type.raw_name} cannot be assigned to {self._var[0].type.raw_name}.",
                                         self._src_info)
 
@@ -507,7 +514,15 @@ class DeclStmt(Statement):
             self._var
         ))
         results = "\n".join(filter(lambda x: x.strip() != "", results.split("\n")))
-        results += "\n" + self._var_value.head_text if self._var_value is not None and self._var_value.head_text is not None else ""
+        if self._var_value is not None and self._var_value.head_text is not None:
+            results += "\n" + self._var_value.head_text
+        if isinstance(self._var_value, UnpackExpr):
+            # 元组解包：解包链的head_text不包含被解包元组的临时变量声明，补上
+            to_unpack = getattr(self._var_value, "_to_unpack", None)
+            while isinstance(to_unpack, UnpackExpr):
+                to_unpack = getattr(to_unpack, "_to_unpack", None)
+            if isinstance(to_unpack, TupleRef) and to_unpack.head_text is not None:
+                results += "\n" + to_unpack.head_text
         return self._indent_text(results)
 
     @property
@@ -664,7 +679,8 @@ class DeclStmt(Statement):
                 else:
                     front_text = ""
                 if not isinstance(self._var_value, (CallOp, UnpackExpr)):
-                    front_text += f"{self._var[0].name} = {self._var_value.text};\n"
+                    deref: str = "*" if self._var[0].is_return else ""
+                    front_text += f"{deref}{self._var[0].name} = {self._var_value.text};\n"
             else:
                 self._var_value.set_returns(self._var)
                 # 头声明统一由语句块（或异步包装）的head_text输出，避免重复声明
@@ -718,6 +734,12 @@ class AssignStmt(Statement):
         self._var_states.set_assigned([symbol])
 
     def as_async(self) -> "Statement":
+        for var in self._var:
+            if getattr(var, "is_unsafe", False) or \
+                    (isinstance(var.type, ClassName) and var.type.is_unsafe):
+                # 对unsafe变量的写操作强制串行化（0.1要求）：
+                # 该语句退化为同步执行，不做异步转换
+                return self
         new_stmt = super().as_async()
         new_stmt._var_value = self._var_value.as_async()
         new_stmt._is_async = True
@@ -778,7 +800,17 @@ class AssignStmt(Statement):
             # 与_inner_text一致：先设置返回值目标，
             # 使head_text包含调用/解包产生的临时变量声明
             self._var_value.set_returns(self._var)
-        return self._indent_text(self._var_value.head_text)
+        result: Optional[str] = self._var_value.head_text if self._var_value is not None else None
+        if isinstance(self._var_value, UnpackExpr):
+            # 元组解包：解包链的head_text不包含被解包元组的临时变量声明，补上
+            to_unpack = getattr(self._var_value, "_to_unpack", None)
+            while isinstance(to_unpack, UnpackExpr):
+                to_unpack = getattr(to_unpack, "_to_unpack", None)
+            if isinstance(to_unpack, TupleRef) and to_unpack.head_text is not None:
+                result = (result + "\n" + to_unpack.head_text) if result is not None else to_unpack.head_text
+        if result is None:
+            return None
+        return self._indent_text(result)
 
     @property
     def input_variables(self) -> set[VariableName]:
@@ -902,8 +934,26 @@ class AssignStmt(Statement):
             if args != "":
                 args += ", "
             return f"{parent_new_name}({args}&_this, listener);"
+        if self._var_value is None:
+            return ""
+        if len(self._var) == 1:
+            # 单变量赋值：构造值表达式后直接赋值
+            # （函数调用已通过返回指针形参直接写入）
+            if isinstance(self._var_value, (CallOp, UnpackExpr)):
+                self._var_value.set_returns(self._var)
+            if self._var_value.front_text is not None:
+                front_text: str = self._var_value.front_text + "\n"
+            else:
+                front_text = ""
+            if not isinstance(self._var_value, (CallOp, UnpackExpr)):
+                deref: str = "*" if self._var[0].is_return else ""
+                front_text += f"{deref}{self._var[0].name} = {self._var_value.text};\n"
+            return front_text
+        # 多变量赋值（元组解包）
         self._var_value.set_returns(self._var)
-        return self._var_value.front_text if self._var_value.front_text is not None else ""
+        if self._var_value.front_text is not None:
+            return self._var_value.front_text + "\n"
+        return ""
 
 
 class OpStmt(Statement):
@@ -933,8 +983,8 @@ class OpStmt(Statement):
     def check_tail_recursive(self, func_name: str) -> "Statement":
         if isinstance(self._expr, CallOp):
             new_stmt = copy(self)
-            new_stmt._var_value = self._expr.check_tail_recursive(func_name)
-            new_stmt._tail_recursive_mark = new_stmt._var_value.tail_recursive_mark
+            new_stmt._expr = self._expr.check_tail_recursive(func_name)
+            new_stmt._tail_recursive_mark = new_stmt._expr.tail_recursive_mark
             return new_stmt
         return self
 
@@ -1259,7 +1309,9 @@ class ThrowStmt(Statement):
             finally_text += "\n"
         result: list[str] = list(filter(lambda x: x is not None, [
             self._to_throw_expr.front_text,
-            f"listener->exc = {self._to_throw_expr.text};"
+            f"listener->exc = {self._to_throw_expr.text};",
+            # 同步更新本函数的异常缓存，使后续语句的异常检查生效
+            "$$exc = listener->exc;"
         ]))
         return finally_text + "\n".join(result)
 
@@ -1399,11 +1451,20 @@ class CondStmt(Statement):
 
     @property
     def global_init_text(self) -> str:
-        result = "\n".join(filter(lambda x: x is not None, [super().global_init_text, self._cond_expr.global_init_text, self._stmt.global_init_text]))
+        # else分支无条件表达式；防御_stmt未设置的情况
+        parts: list[Optional[str]] = [super().global_init_text]
+        if self._cond_expr is not None:
+            parts.append(self._cond_expr.global_init_text)
+        if self._stmt is not None:
+            parts.append(self._stmt.global_init_text)
+        result = "\n".join(filter(lambda x: x is not None, parts))
         return result
 
     @property
     def head_text(self) -> Optional[str]:
+        # else分支无条件表达式
+        if self._cond_expr is None:
+            return None
         return self._indent_text(self._cond_expr.head_text)
 
     @property
@@ -1434,16 +1495,20 @@ class CondStmt(Statement):
         return self._stmt.new_variables
 
     def optimize(self) -> "Statement":
-        self._cond_expr = self._cond_expr.optimize()
-        self._stmt = self._stmt.optimize()
+        if self._cond_expr is not None:
+            self._cond_expr = self._cond_expr.optimize()
+        if self._stmt is not None:
+            self._stmt = self._stmt.optimize()
         return self
 
     @property
     def outer_text(self) -> Optional[str]:
+        # else分支无条件表达式
         if self._cond_expr is None:
-            raise CompilerException("CondStmt is not finished.", self._src_info)
-        result = "\n".join(filter(lambda x: x is not None, [super().outer_text, self._cond_expr.outer_text]))
-        if result == "":
+            result = super().outer_text
+        else:
+            result = "\n".join(filter(lambda x: x is not None, [super().outer_text, self._cond_expr.outer_text]))
+        if result is None or result == "":
             return None
         return result
 
@@ -1474,10 +1539,11 @@ class CondStmt(Statement):
             head_text += "\n"
         else:
             head_text = ""
-        front_text: str = self._cond_expr.front_text + "\n" if self._cond_expr.front_text is not None else ""
         if self._cond_kw == _CondKw.ELSE:
+            front_text: str = ""
             stmt_begin = "else"
         else:
+            front_text = self._cond_expr.front_text + "\n" if self._cond_expr.front_text is not None else ""
             stmt_begin = f"{self._cond_kw.value} ({self._cond_expr.text})"
         return front_text + stmt_begin + "{\n" + head_text + self._stmt.text + "\n}"
 
@@ -1529,6 +1595,16 @@ class IfStmt(CondStmt):
         """添加 elif 或 else 分支。"""
         self._branches.append(branch)
 
+    def as_async(self) -> "Statement":
+        new_stmt = super().as_async()
+        new_stmt._branches = list(map(lambda b: b.as_async(), self._branches))
+        return new_stmt
+
+    def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
+        new_stmt = super().as_inline(inline_mapping)
+        new_stmt._branches = list(map(lambda b: b.as_inline(new_stmt.inline_mapping), self._branches))
+        return new_stmt
+
     def check_tail_recursive(self, func_name: str) -> "Statement":
         new_stmt = copy(self)
         new_stmt._stmt = self._stmt.check_tail_recursive(func_name)
@@ -1540,6 +1616,56 @@ class IfStmt(CondStmt):
         new_stmt._tail_recursive_mark = mark[0] if len(mark) > 0 else None
         return new_stmt
 
+    @property
+    def global_init_text(self) -> str:
+        return "\n".join(filter(lambda x: x is not None and x.strip() != "", [
+            super().global_init_text,
+            *map(lambda b: b.global_init_text, self._branches)
+        ]))
+
+    @property
+    def head_text(self) -> Optional[str]:
+        result = "\n".join(filter(lambda x: x is not None and x.strip() != "", [
+            super().head_text,
+            *map(lambda b: b.head_text, self._branches)
+        ]))
+        return result if result.strip() != "" else None
+
+    def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
+        super().insert_finally_stmt(finally_stmt)
+        for branch in self._branches:
+            branch.insert_finally_stmt(finally_stmt)
+
+    def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
+        new_stmt = super().instantiation(type_args)
+        new_stmt._branches = list(map(lambda b: b.instantiation(type_args), self._branches))
+        return new_stmt
+
+    @property
+    def new_listeners(self) -> dict[VariableName, str]:
+        result: dict[VariableName, str] = dict(self._stmt.new_listeners)
+        for branch in self._branches:
+            result.update(branch.new_listeners)
+        return result
+
+    @property
+    def new_variables(self) -> set[VariableName]:
+        return self._stmt.new_variables | set().union(*map(lambda b: b.new_variables, self._branches))
+
+    def optimize(self) -> "Statement":
+        super().optimize()
+        for i, branch in enumerate(self._branches):
+            self._branches[i] = branch.optimize()
+        return self
+
+    @property
+    def outer_text(self) -> Optional[str]:
+        result = "\n".join(filter(lambda x: x is not None and x.strip() != "", [
+            super().outer_text,
+            *map(lambda b: b.outer_text, self._branches)
+        ]))
+        return result if result.strip() != "" else None
+
     def substitute(self, const_vars: dict[VariableName, Expression]) -> "Statement":
         super().substitute(const_vars)
         for i, branch in enumerate(self._branches):
@@ -1547,8 +1673,23 @@ class IfStmt(CondStmt):
         return self
 
     @property
+    def variables_states(self) -> dict[VariableName, VariableState]:
+        result: dict[VariableName, VariableState] = dict(self._stmt.variables_states)
+        for branch in self._branches:
+            result.update(branch.variables_states)
+        return result
+
+    @property
     def input_variables(self) -> set[VariableName]:
         return self._cond_expr.used_variables | self._stmt.input_variables | set().union(*map(lambda x: x.input_variables, self._branches))
+
+    @property
+    def _inner_text(self) -> str:
+        """渲染if及其全部elif/else分支。"""
+        result: str = super()._inner_text
+        for branch in self._branches:
+            result += "\n" + branch._inner_text
+        return result
 
 
 class CatchStmt(Statement):
@@ -2057,6 +2198,7 @@ class BlockStmt(Statement):
         self._used_outer_variables: list[VariableName] = []
         self._is_closure: bool = False
         self._closure_struct_setting_code: str = ""
+        self._closure_struct_def: str = ""
         self._processing_mode: _ProcessingMode = _ProcessingMode.NORMAL
         self._drops_out: bool = False
         self._cleanup_mark_name: str = self._symbol_table.get_counter()
@@ -2128,7 +2270,13 @@ class BlockStmt(Statement):
         self._listeners.update(stmt.new_listeners)
         self._stmt.append(stmt)
         self._input_variables |= stmt.input_variables
-        self._input_variables -= self._inner_variables.keys() | self._outer_variables.keys()
+        # 仅减去块内已产生（inner）与外部已赋值（ASSIGNED）的变量；
+        # 外部已声明但尚未赋值的变量保留在输入集合中，使fn函数体的
+        # 依赖排序（_sort_stmt）能找到其在本块兄弟语句中的生产者，
+        # 否则声明语句会被当作无用语句丢弃
+        self._input_variables -= self._inner_variables.keys()
+        self._input_variables -= set(
+            k for k, v in self._outer_variables.items() if v == VariableState.ASSIGNED)
 
     def as_async(self) -> "Statement":
         new_stmt = super().as_async()
@@ -2145,7 +2293,13 @@ class BlockStmt(Statement):
 
     def check_tail_recursive(self, func_name: str) -> "Statement":
         new_stmt = copy(self)
-        new_stmt._stmt[-1] = self._stmt[-1].check_tail_recursive(func_name)
+        # 标记/跳转标签C语句属于结构性代码，从后向前找最后一条实质语句
+        for i in range(len(self._stmt) - 1, -1, -1):
+            if isinstance(self._stmt[i], CStmt):
+                continue
+            new_stmt._stmt[i] = self._stmt[i].check_tail_recursive(func_name)
+            new_stmt._tail_recursive_mark = new_stmt._stmt[i].tail_recursive_mark
+            break
         return new_stmt
 
     @property
@@ -2162,6 +2316,9 @@ class BlockStmt(Statement):
         new_stmt_list: list[Statement] = []
         for stmt in self._stmt:
             stmt_used_variables: set[VariableName] = stmt.input_variables
+            if isinstance(stmt, BlockStmt):
+                # 嵌套语句块使用的外层变量同样属于本块（供闭包捕获等使用）
+                stmt_used_variables = stmt_used_variables | set(stmt._used_outer_variables)
             for var in stmt_used_variables:
                 if var not in used_variables and var not in self._outer_variables and not var.is_global:
                     used_variables.add(var)
@@ -2270,6 +2427,9 @@ class BlockStmt(Statement):
     @property
     def outer_text(self) -> Optional[str]:
         result: str = "\n\n".join(list(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._stmt))))
+        if self._is_closure and self._closure_struct_def != "":
+            # 捕获结构体定义输出到模块级，供外层函数与闭包体共同使用
+            result = self._closure_struct_def + "\n\n" + result if result != "" else self._closure_struct_def
         return result if result != "" else None
 
     def remove_mark(self) -> None:
@@ -2280,7 +2440,7 @@ class BlockStmt(Statement):
     def set_as_closure(self, closure_name: str, args: list[VariableName]) -> None:
         """将当前语句块设置为闭包，生成捕获结构体代码。"""
         self._is_closure = True
-        self._used_outer_variables -= args
+        self._used_outer_variables = [v for v in self._used_outer_variables if v not in args]
         struct_name: str = f"struct {closure_name}$Capture"
         used_outer_variables_decl: list[str] = list(
             map(lambda x: f"\t{x.type_name_pair_calling};", self._used_outer_variables))
@@ -2289,10 +2449,12 @@ class BlockStmt(Statement):
             "\n".join(used_outer_variables_decl),
             "};"
         ]
+        # 捕获结构体的定义输出到模块级（外层函数分配捕获结构体时同样需要它），
+        # 闭包体内仅做成员转换
+        self._closure_struct_def = "\n".join(struct_def)
         used_outer_variables_convert: list[str] = list(
             map(lambda x: f"{x.type_name_pair_calling} = $$captureStructPtr->{x.name};", self._used_outer_variables))
         ptr_convert_def: list[str] = [
-            "\n".join(struct_def) + "\n",
             f"{struct_name} *$$captureStructPtr = ({struct_name} *)$$capture;",
             "\n".join(used_outer_variables_convert)
         ]
@@ -2408,6 +2570,7 @@ class FnBlockStmt(BlockStmt):
                     new_stmt = BlockStmt(stmt.src_info, self._symbol_table, self._var_states)
                     for buffer_stmt in self._cond_stmt_buffer:
                         new_stmt.add_stmt(buffer_stmt)
+                    new_stmt.finish()
                     self._cond_stmt_buffer.clear()
                     self.add_stmt(new_stmt)
                 self._cond_stmt_buffer.append(stmt)
@@ -2416,6 +2579,7 @@ class FnBlockStmt(BlockStmt):
             new_stmt = BlockStmt(stmt.src_info, self._symbol_table, self._var_states)
             for buffer_stmt in self._cond_stmt_buffer:
                 new_stmt.add_stmt(buffer_stmt)
+            new_stmt.finish()
             self._cond_stmt_buffer.clear()
             self.add_stmt(new_stmt)
         if isinstance(stmt, OpStmt | ReturnStmt | ThrowStmt | CStmt):
@@ -2433,6 +2597,7 @@ class FnBlockStmt(BlockStmt):
             new_stmt = BlockStmt(self._cond_stmt_buffer[0].src_info, self._symbol_table, self._var_states)
             for buffer_stmt in self._cond_stmt_buffer:
                 new_stmt.add_stmt(buffer_stmt)
+            new_stmt.finish()
             self._cond_stmt_buffer.clear()
             self.add_stmt(new_stmt)
         new_stmt_list: list[Statement] = self._sort_stmt()
@@ -2441,32 +2606,36 @@ class FnBlockStmt(BlockStmt):
         super().finish()
 
     def _sort_stmt(self) -> list[Statement]:
-        to_resolve: list[Statement] = []
-        to_resolve_vars: set[VariableName] = set()
+        """按依赖顺序排列语句（fn按需执行：仅保留返回值计算所需的语句）。
+
+        根语句为给返回值（外层变量表中状态为DECLARED的变量）赋值的语句；
+        每个根语句的输入变量定义语句递归地排在其前面。
+        """
+        roots: list[Statement] = []
         for stmt in self._stmt_set:
             to_return_vars = list(filter(
                 lambda v: v in self._outer_variables and self._outer_variables[v] == VariableState.DECLARED,
                 stmt.new_variables))
-            to_resolve_vars.update(to_return_vars)
             if len(to_return_vars) > 0:
-                to_resolve.append(stmt)
-        for stmt in to_resolve:
-            self._sort_stmt_recursive(stmt, to_resolve, to_resolve_vars)
-        to_resolve.reverse()
-        return to_resolve
+                roots.append(stmt)
+        # 按源代码位置排序，保证输出确定
+        roots.sort(key=lambda s: s.src_info.location_tuple)
+        result: list[Statement] = []
+        visited: set[Statement] = set()
 
-    def _sort_stmt_recursive(self, stmt: Statement, to_resolve: list[Statement],
-                             to_resolve_vars: set[VariableName]) -> None:
-        if all(map(lambda v: v in to_resolve_vars, stmt.new_variables)):
-            return
-        is_needed_to_resolve = True
-        for var in stmt.input_variables:
-            if var not in to_resolve_vars and var not in self._outer_variables:
-                to_resolve_vars.add(var)
-                if is_needed_to_resolve:
-                    to_resolve.append(stmt)
-                    is_needed_to_resolve = False
-                self._sort_stmt_recursive(self._variable_dependencies[var], to_resolve, to_resolve_vars)
+        def walk(stmt: Statement) -> None:
+            if stmt in visited:
+                return
+            visited.add(stmt)
+            for var in sorted(stmt.input_variables, key=lambda v: v.name):
+                dep: Optional[Statement] = self._variable_dependencies.get(var)
+                if dep is not None and var not in self._outer_variables:
+                    walk(dep)
+            result.append(stmt)
+
+        for stmt in roots:
+            walk(stmt)
+        return result
 
 
 class CastOp(Expression):

@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Literals Test Template
 // Tests: integer literals (decimal, hex, octal, binary, with suffixes),
 //        float literals (decimal, scientific, with suffixes),

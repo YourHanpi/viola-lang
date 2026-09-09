@@ -1,0 +1,17 @@
+// Viola全局资源管理器声明（0.1起）。
+//
+// 命名空间：viola.lang.global_resource_manager
+// 实现位于viola_libs/viola/lang/global_resource_manager.c。
+// 模型：子线程发起请求，主线程在waitListener的空闲期间执行请求并返回相关数据。
+
+import cpart "runtime.h";
+
+// 请求类型（C结构体viola$lang$global_resource_manager$Request，
+// 第一个成员为请求类型编码，含引用计数）
+wrapper class _Request {
+    // 释放请求（引用计数减一，归零时释放）
+    public sq __del__() -> ();
+}
+
+// 注册请求处理器：request_id对应的请求到达后，由主线程调用handler。
+sq register_request_handler(uint32 request_id, (_Request) -> () handler) -> ();

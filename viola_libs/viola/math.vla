@@ -66,3 +66,86 @@ fn fmax(float64 x, float64 y) -> (float64 result);
 float64 pi = 3.14159265358979323846;
 // 自然常数e
 float64 e = 2.71828182845904523536;
+// 0.1新增：圆周率的两倍（τ = 2π）
+float64 tau = 6.28318530717958647692;
+// 0.1新增：非数（NaN）
+float64 nan = sqrt(-1.0);
+// 0.1新增：正无穷
+float64 inf = exp(1000.0);
+
+// ================= 0.1新增：反双曲函数 =================
+
+// 反双曲正弦
+fn asinh(float64 x) -> (float64 result);
+// 反双曲余弦
+fn acosh(float64 x) -> (float64 result);
+// 反双曲正切
+fn atanh(float64 x) -> (float64 result);
+
+// ================= 0.1新增：弧度与角度转换 =================
+
+// 角度制转弧度制
+fn radians(float64 degrees) -> (float64 result);
+// 弧度制转角度制
+fn degrees(float64 radians) -> (float64 result);
+
+// ================= 0.1新增：对数 =================
+
+// 自然对数的增量（log(1+x)，x接近0时更精确）
+fn log1p(float64 x) -> (float64 result);
+// 以base为底的对数（重载）
+fn log(float64 x, float64 base) -> (float64 result);
+
+// ================= 0.1新增：误差函数与伽马函数 =================
+
+// 误差函数
+fn erf(float64 x) -> (float64 result);
+// 补误差函数
+fn erfc(float64 x) -> (float64 result);
+// 伽马函数
+fn tgamma(float64 x) -> (float64 result);
+// 伽马函数的自然对数
+fn lgamma(float64 x) -> (float64 result);
+// 阶乘函数
+fn factorial(uint32 n) -> (uint64 result);
+
+// ================= 0.1新增：指数与尾数 =================
+
+// 分离浮点数为尾数与指数（x = mantissa * 2^exp）
+fn frexp(float64 x) -> (float64 mantissa, int32 exp);
+// 由尾数与指数组合浮点数
+fn ldexp(float64 x, int32 exp) -> (float64 result);
+
+// ================= 0.1新增：整数函数 =================
+
+// 最大公约数
+fn gcd(int64 a, int64 b) -> (int64 result);
+// 最小公倍数
+fn lcm(int64 a, int64 b) -> (int64 result);
+// 排列数
+fn perm(uint32 n, uint32 k) -> (uint64 result);
+// 组合数
+fn comb(uint32 n, uint32 k) -> (uint64 result);
+
+// ================= 0.1新增：数组范数与距离 =================
+
+// 欧几里得范数
+fn hypot(float64[] a) -> (float64 result);
+// 欧几里得距离（要求a与b的长度相同）
+fn dist(float64[] a, float64[] b) -> (float64 result);
+
+// ================= 0.1新增：小数部分 =================
+
+// 分离整数部分与小数部分
+fn modf(float64 x) -> (float64 fractional, float64 integer);
+// IEEE 754风格的小数余数
+fn remainder(float64 x, float64 y) -> (float64 result);
+
+// ================= 0.1新增：无效值判断 =================
+
+// 判断是否为有限值
+fn isfinite(float64 x) -> (bool result);
+// 判断是否为正负无穷
+fn isinf(float64 x) -> (bool result);
+// 判断是否为NaN
+fn isnan(float64 x) -> (bool result);

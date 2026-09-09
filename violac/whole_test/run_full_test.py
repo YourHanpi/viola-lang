@@ -29,8 +29,13 @@ RUNTIME_SOURCES = [
     os.path.join("viola", "io", "file.c"),
     os.path.join("viola", "math.c"),
     os.path.join("viola", "os.c"),
+    os.path.join("viola", "os", "path.c"),
+    os.path.join("viola", "stat.c"),
 ]
-GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2"]
+GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2",
+             # 注意：生成的异常处理代码与gcc的-O2内联存在未定义行为交互
+             # （内联后throw路径被错误优化，见开发疑问记录），暂用-fno-inline规避
+             "-fno-inline"]
 
 
 def get_c_sources(output_dir: str) -> list[str]:
@@ -64,6 +69,16 @@ def test_one(project: str) -> bool:
                         os.remove(os.path.join(root, f))
                     except OSError:
                         pass
+    # 清除工程目录内的缓存（编译器修改后源文件mtime不变，缓存可能过期，
+    # 导致解析命令与符号表与编译器版本不一致）
+    for cache_root in [PROJECTS_DIR, os.path.join(BASE_DIR, "runtime_test_project")]:
+        for root, _, files in os.walk(cache_root):
+            for f in files:
+                if f.endswith((".vlatoken", ".vlacmd", ".vlacmd0", ".vlaexpr", ".vlasymtab", ".vlasymt")):
+                    try:
+                        os.remove(os.path.join(root, f))
+                    except OSError:
+                        pass
     # 编译器也可能把工作区外模块的缓存写到与源文件相邻的位置
     # （路径中的..段会把缓存解析到violac/viola_libs等目录），一并清除
     for extra in [os.path.join(COMPILER, "..", "..", "viola_libs")]:
@@ -80,7 +95,8 @@ def test_one(project: str) -> bool:
     r = subprocess.run(
         [sys.executable, COMPILER, "compile", project_dir, f"-i={main_file}", f"-o={output_dir}",
          "-j=4", "--clear-cache", "--clear-output", "--clear-log"],
-        capture_output=True, text=True, timeout=120, env=env
+        # 泛型实例化较多的工程（如runtime_test_project）编译耗时较长
+        capture_output=True, text=True, timeout=900, env=env
     )
     if r.returncode != 0 or "Critical error" in r.stderr:
         print(f"FAIL(compile) {project}")
@@ -91,6 +107,9 @@ def test_one(project: str) -> bool:
     exe = os.path.join(output_dir, "main.exe" if os.name == "nt" else "main")
     r = subprocess.run(
         ["gcc", *GCC_FLAGS, f"-I{os.path.join(VIOLA_LIBS, 'viola')}",
+         # 嵌套模块（如viola/os.vla.h）以"viola/io.vla.h"形式包含其他模块头文件，
+         # 需将输出目录加入头文件搜索路径
+         f"-I{output_dir}",
          f"-include{os.path.join(VIOLA_LIBS, 'viola', 'runtime.h')}",
          "-o", exe, *sources, "-lpthread"],
         capture_output=True, text=True, timeout=120

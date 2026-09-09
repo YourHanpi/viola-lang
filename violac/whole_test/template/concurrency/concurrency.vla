@@ -1,3 +1,4 @@
+from viola.io import *;
 // Viola Concurrency Test Template
 // Tests: async keyword for asynchronous execution
 
