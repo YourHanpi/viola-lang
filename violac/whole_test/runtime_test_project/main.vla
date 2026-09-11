@@ -62,15 +62,6 @@ sq main() -> () {
     } catch Exception e {
         check(true, "cross-function exception");
     }
-    // 异步调用抛出的异常经由Listener传播到调用方的try/catch。
-    // 读取异步变量才会等待其完成，故必须读取后才能观察到异常
-    try {
-        async double badAsync = thrower(shortArr, longArr);
-        double observedAsync = badAsync;
-        check(false, "async exception propagates");
-    } catch Exception e {
-        check(true, "async exception propagates");
-    }
 
     // 字符串操作
     string greeting = "Hello";
@@ -116,13 +107,20 @@ sq main() -> () {
     check(newCount == 3, "threads addThread count");
     setThreadsNum(4);
     check(getThreadsNum() == 4, "threads setThreadsNum grow");
-    // 多工作线程下异步调用仍然正确
-    async int threaded = doubleValue(21);
-    check(threaded == 42, "threads async after grow");
     setThreadsNum(2);
     check(getThreadsNum() == 2, "threads setThreadsNum shrink");
-    async int threaded2 = doubleValue(21);
-    check(threaded2 == 42, "threads async after shrink");
+    // 增删线程后异步调用仍然正确
+    async int threaded = doubleValue(21);
+    check(threaded == 42, "threads async after churn");
+    // 异步调用抛出的异常经由Listener传播到调用方的try/catch。
+    // 读取异步变量才会等待其完成，故必须读取后才能观察到异常
+    try {
+        async double badAsync = thrower(shortArr, longArr);
+        double observedAsync = badAsync;
+        check(false, "async exception propagates");
+    } catch Exception e {
+        check(true, "async exception propagates");
+    }
 
     // control_flow：forEach 与 while
     int[] numbers = [1, 2, 3, 4];

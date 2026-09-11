@@ -40,6 +40,37 @@ typedef struct WorkerSlot {
 static WorkerSlot **s_workers = NULL;
 static viola$lang$uint32 s_workerNum = 0;
 
+/* 线程数组的容量与退役块。
+   viola$threads$threads会被运行中的工作线程经pushStackA/popStackA等并发读取，
+   因此增删线程时不释放旧数组块（realloc/收缩会让并发读者访问已释放内存），
+   改为按容量增长并在容量足够时复用；退役块留存至进程结束。
+   见开发疑问记录86。 */
+static viola$lang$uint32 s_threadsCapacity = 0;
+static viola$threads$Thread **s_retiredThreads[64];
+static viola$lang$uint32 s_retiredThreadsNum = 0;
+
+/* 确保线程数组容量足够容纳newSize个线程槽（不释放旧块） */
+static void reserveThreadSlots(viola$lang$uint32 newSize) {
+    if (newSize <= s_threadsCapacity) {
+        return;
+    }
+    viola$lang$uint32 newCapacity = s_threadsCapacity == 0 ? 4 : s_threadsCapacity;
+    while (newCapacity < newSize) {
+        newCapacity *= 2;
+    }
+    viola$threads$Thread **newArray = (viola$threads$Thread **)malloc(
+        sizeof(viola$threads$Thread *) * newCapacity);
+    for (viola$lang$uint32 i = 0; i < s_threadsCapacity; i++) {
+        newArray[i] = viola$threads$threads[i];
+    }
+    if (viola$threads$threads != NULL && s_retiredThreadsNum < 64) {
+        /* 旧块暂不释放：可能有工作线程仍持有其指针 */
+        s_retiredThreads[s_retiredThreadsNum++] = viola$threads$threads;
+    }
+    viola$threads$threads = newArray;
+    s_threadsCapacity = newCapacity;
+}
+
 /* ================= 内部工具 ================= */
 
 static viola$threads$TaskQueue *createQueue(void) {
@@ -136,8 +167,7 @@ static void *workerMain(void *arg) {
 /* 新增一个工作线程（真实创建pthread），并扩展线程槽数组 */
 static void addWorker(void) {
     /* 1. 扩展viola$threads$threads（线程号即下标） */
-    viola$threads$threads = (viola$threads$Thread **)realloc(
-        viola$threads$threads, sizeof(viola$threads$Thread *) * (viola$threads$threadsNum + 1));
+    reserveThreadSlots(viola$threads$threadsNum + 1);
     viola$threads$threads[viola$threads$threadsNum] = createThread();
     viola$threads$threadsNum++;
     /* 2. 槽位单独分配，指针数组扩容不会移动已分配槽位 */
@@ -165,14 +195,14 @@ static void removeWorker(void) {
     pthread_join(slot->thread, NULL);
     s_workerNum--;
     free(slot);
-    /* 销毁对应的线程槽并收缩数组 */
+    /* 销毁对应的线程槽。
+       不收缩数组（容量保留）：运行中的其他线程可能正在读取该数组，
+       收缩/realloc会让它们访问已释放的块。 */
     if (viola$threads$threadsNum > 1) {
         viola$lang$uint32 last = viola$threads$threadsNum - 1;
         destroyThread(viola$threads$threads[last]);
         viola$threads$threads[last] = NULL;
         viola$threads$threadsNum--;
-        viola$threads$threads = (viola$threads$Thread **)realloc(
-            viola$threads$threads, sizeof(viola$threads$Thread *) * viola$threads$threadsNum);
     }
 }
 
@@ -185,7 +215,7 @@ static void ensureRuntime(void) {
     viola$threads$queue = createQueue();
     /* 主线程（线程0） */
     viola$threads$threadsNum = 1;
-    viola$threads$threads = (viola$threads$Thread **)malloc(sizeof(viola$threads$Thread *));
+    reserveThreadSlots(1);
     viola$threads$threads[0] = createThread();
     /* 默认1个工作线程（主线程 + 1个工作线程，共2个） */
     addWorker();
