@@ -18,6 +18,12 @@ viola$lang$global_resource_manager$RequestQueue
 
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* 初始化状态机：0=未初始化，1=初始化中，2=已初始化。
+   init()会经initListener()回调到threads.ensureRuntime()，后者又会
+   回调init()，形成相互递归；以状态机保证幂等，递归重入时直接返回，
+   避免重复分配与泄漏（见开发疑问记录#100）。 */
+static int s_initState = 0;
+
 /* 0.1新增：以Viola函数注册的请求处理器表（按request_id索引） */
 static viola$lang$function$Function **s_violaHandlers = NULL;
 static uint32_t s_violaHandlerCapacity = 0;
@@ -38,9 +44,11 @@ static void violaHandlerDispatch(viola$lang$global_resource_manager$Request *req
 }
 
 void viola$lang$global_resource_manager$init(void) {
-    if (viola$lang$global_resource_manager$handlerVector != NULL) {
+    /* 幂等：已初始化或正在初始化（递归重入）时直接返回 */
+    if (s_initState != 0) {
         return;
     }
+    s_initState = 1;
     viola$lang$global_resource_manager$handlerVector =
         (viola$lang$global_resource_manager$RequestHandlerVector *)malloc(
             sizeof(viola$lang$global_resource_manager$RequestHandlerVector));
@@ -59,17 +67,34 @@ void viola$lang$global_resource_manager$init(void) {
     viola$lang$global_resource_manager$queue->head = 0;
     viola$lang$global_resource_manager$queue->tail = 0;
     viola$lang$global_resource_manager$queue->size = 0;
-    /* 请求处理器分发监听器（请求在主线程执行） */
+    /* 请求处理器分发监听器（请求在主线程执行）。
+       此处会回调threads.ensureRuntime()，进而递归调用本函数；
+       s_initState已为1，递归调用直接返回，不会重复分配。 */
     viola$threads$initListener(&s_handlerListener, 0);
     /* 注册各资源模块的请求处理器 */
     viola$io$registerFileHandlers();
     viola$os$registerOsHandlers();
     viola$os$path$registerPathHandlers();
+    s_initState = 2;
 }
 
 void viola$lang$global_resource_manager$handleRequest(
         viola$lang$global_resource_manager$Request *request) {
-    viola$lang$global_resource_manager$handlerVector->handler[request->type](request);
+    /* 未初始化、未注册处理器或类型越界时静默丢弃。
+       handlerVector->handler的realloc新增区间未清零，size以外的槽位
+       是垃圾值；注册表未初始化（未调用init）时handlerVector为NULL
+       （见开发疑问记录#100）。 */
+    if (request == NULL ||
+        viola$lang$global_resource_manager$handlerVector == NULL ||
+        request->type >= viola$lang$global_resource_manager$handlerVector->size) {
+        return;
+    }
+    void (*handler)(viola$lang$global_resource_manager$Request *) =
+        viola$lang$global_resource_manager$handlerVector->handler[request->type];
+    if (handler == NULL) {
+        return;
+    }
+    handler(request);
 }
 
 void viola$lang$global_resource_manager$registerHandler(

@@ -2,7 +2,7 @@
 from .global_parser import GlobalParser
 from .utils import ParsingResult
 from utils import Token, SourceInfo
-from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, CACHE_DIR
+from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, CACHE_DIR, get_cache_path
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -169,8 +169,7 @@ class ExprParser(GlobalParser):
         self._logger.info(f"Start parsing expressions from {file_path}")
         self._src_info = SourceInfo(file_path)
         file_abs_path = os.path.abspath(file_path)
-        file_relpath = os.path.relpath(file_abs_path, self._workspace)
-        cache_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
+        cache_path = get_cache_path(self._workspace, file_abs_path)
         cache_file_path = cache_path + COMMAND_POSTFIX
         global_command_path = cache_path + GLOBAL_COMMAND_POSTFIX
         if not self._set_file_lock(cache_path):

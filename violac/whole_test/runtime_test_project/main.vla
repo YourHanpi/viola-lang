@@ -6,6 +6,7 @@ from viola.io import *;
 import viola.util.control_flow as control_flow;
 import viola.util.functools as functools;
 from viola.math import *;
+from viola.os import exit;
 from viola.threads import *;
 
 fn doubleValue(int x) -> (int result) {
@@ -28,7 +29,28 @@ fn lessThanFive(int x) -> (bool c) {
     c = x < 5;
 }
 
+// 断言：条件不成立时打印并以致非零退出码结束（供测试脚本判定）
+sq check(bool condition, string label) -> () {
+    if (condition) {
+        print("ok " + label + "\n");
+    } else {
+        print("FAILED " + label + "\n");
+        exit(1);
+    }
+}
+
 sq main() -> () {
+    // 异常传播：dist长度不等应抛出异常（数据不可变，故判定放在各自分支内）
+    double[] shortArr = [1.0, 2.0];
+    double[] longArr = [1.0, 2.0, 3.0];
+    try {
+        double badDist = dist(shortArr, longArr);
+        check(false, "dist length mismatch raises");
+    } catch Exception e {
+        check(true, "dist length mismatch raises");
+    }
+    double goodDist = dist(shortArr, shortArr);
+
     // 字符串操作
     string greeting = "Hello";
     string world = "World";
@@ -40,9 +62,13 @@ sq main() -> () {
     print(lower);
     string[] parts = combined.split(", ");
     size_t partCount = parts.length();
+    check(combined == "Hello, World!", "string concat");
+    check(upper == "HELLO, WORLD!", "string upper");
+    check(lower == "hello, world!", "string lower");
+    check(partCount == 2, "string split count");
     bool starts = combined.startsWith("Hello");
-    string repeated = greeting.repeat(2);
-    print(repeated);
+    check(starts, "string startsWith");
+    check(greeting.repeat(2) == "HelloHello", "string repeat");
 
     // 文件读写
     file f = open("test_output.txt", "w", "utf-8");
@@ -50,29 +76,48 @@ sq main() -> () {
     write(f, "line2\n");
     file fr = open("test_output.txt", "r", "utf-8");
     string content = read(fr);
-    print(content);
+    check(content == "line1\nline2\n", "file write/read roundtrip");
 
     // 数学
     double root = sqrt(16.0);
     double power = pow(2.0, 10.0);
     double piValue = pi;
-    print("math ok");
+    check(root == 4.0, "math sqrt");
+    check(power == 1024.0, "math pow");
+    check(piValue > 3.14, "math pi lower bound");
+    check(piValue < 3.15, "math pi upper bound");
 
     // 线程
     uint32 threadCount = getThreadsNum();
+    check(threadCount == 2, "threads initial count");
     addThread(1);
     uint32 newCount = getThreadsNum();
-    print("threads ok");
+    check(newCount == 3, "threads addThread count");
+    delThread(1);
+    check(getThreadsNum() == 2, "threads delThread count");
 
     // control_flow：forEach 与 while
     int[] numbers = [1, 2, 3, 4];
     int[] doubled = control_flow.forEach::<int, int>(numbers, doubleValue);
+    check(doubled[0] == 2 && doubled[1] == 4 && doubled[2] == 6 && doubled[3] == 8, "control_flow.forEach");
     int loopResult = control_flow.while::<int>(1, increment, lessThanFive);
+    check(loopResult == 5, "control_flow.while");
 
-    // functools：map/filter/reduce
+    // functools：map/filter/reduce（同步）
     int[] mapped = functools.map::<int, int>(numbers, doubleValue, false);
+    check(mapped[0] == 2 && mapped[1] == 4 && mapped[2] == 6 && mapped[3] == 8, "functools.map sync order");
     int[] filtered = functools.filter::<int>(numbers, isEven, false);
-    int reduced = functools.reduce::<int>([1, 2, 3, 4, 5, 6], sumChunk, 2, false);
+    check(filtered.length() == 2 && filtered[0] == 2 && filtered[1] == 4, "functools.filter sync order");
+    int reduced = functools.reduce::<int>([1, 2, 3, 4, 5, 6], sumChunk, 2);
+    check(reduced == 21, "functools.reduce");
 
-    print("0.1 runtime library test completed");
+    // functools：map/filter（异步：每个元素的调用放入任务队列；map不保证顺序）
+    int[] mappedAsync = functools.map::<int, int>(numbers, doubleValue, true);
+    int asyncMapSum = mappedAsync[0] + mappedAsync[1] + mappedAsync[2] + mappedAsync[3];
+    check(asyncMapSum == 20, "functools.map async values");
+    int[] filteredAsync = functools.filter::<int>(numbers, isEven, true);
+    check(filteredAsync.length() == 2 && filteredAsync[0] == 2 && filteredAsync[1] == 4,
+          "functools.filter async order");
+
+    print("0.1 runtime library test completed\n");
 }

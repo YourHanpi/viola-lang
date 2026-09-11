@@ -2562,7 +2562,14 @@ class CallOp(Expression):
         if self._args_tuple is not None and self._args_tuple.head_text is not None and not self._call_struct:
             # 异步调用时实参打包进参数元组的临时变量（结构体调用使用_closure_args）
             results.append(self._args_tuple.head_text)
-        if self._closure_args is not None and self._closure_args.head_text is not None:
+        # 结构体调用的实参元组由_ensure_closure_args在front_text中按需创建，
+        # 但变量声明必须先出现在head_text中；此处先确保其存在，只取声明
+        # （实参自身的头代码已由_arg_list/_kwarg_dict收集，避免重复）。
+        if self._is_async and self._call_struct:
+            results.append(self._ensure_closure_args(True).head_decl)
+        elif self._call_struct and len(self._kwarg_dict) > 0:
+            results.append(self._ensure_closure_args(False).head_decl)
+        elif self._closure_args is not None and self._closure_args.head_text is not None:
             results.append(self._closure_args.head_text)
         if self._is_async:
             results.append(f"{LISTENER_T} *{self._listener_name};")
@@ -2861,12 +2868,16 @@ class ClosureCallArgs(Expression):
         return None
 
     @property
+    def head_decl(self) -> str:
+        """仅获取实参元组临时变量的声明（实参自身的头代码由调用方收集）。"""
+        return f"{self._temp_var.type_name_pair_calling};"
+
+    @property
     def head_text(self) -> Optional[str]:
         heads: list[Optional[str]] = [e.head_text for e in self._positional] + \
                                      [v.head_text for _, v in self._kwargs]
         heads_text: str = "\n".join(filter(lambda x: x is not None, heads))
-        decl: str = f"{self._temp_var.type_name_pair_calling};"
-        return heads_text + "\n" + decl if heads_text != "" else decl
+        return heads_text + "\n" + self.head_decl if heads_text != "" else self.head_decl
 
     @property
     def front_text(self) -> Optional[str]:

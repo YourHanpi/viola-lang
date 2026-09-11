@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .utils import ParserGenericTable, ParsingResult, TokenStreamIO
 from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS
-from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, IMPORTS_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
+from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, IMPORTS_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock, get_cache_path
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -153,8 +153,7 @@ class GlobalParser:
         """
         self._logger: Logger = Logger(f"Parser[{thread_index}]")
         file_abs_path = os.path.abspath(file_path)
-        file_relpath = os.path.relpath(file_abs_path, self._workspace)
-        cache_file_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
+        cache_file_path = get_cache_path(self._workspace, file_abs_path)
         self._src_info: SourceInfo = SourceInfo(file_abs_path)
         self._logger.info(f"Start parsing {file_path}")
         # 解析器实例在线程池中复用，防止上一次解析的记录残留
@@ -353,7 +352,7 @@ class GlobalParser:
             if os.path.exists(path):
                 # 缓存路径与lexer/parser的写入位置一致：
                 # 工作区缓存目录 + 相对工作区的路径（库文件会解析到工作区之外）
-                cache_path = os.path.join(self._workspace, CACHE_DIR, os.path.relpath(path, self._workspace))
+                cache_path = get_cache_path(self._workspace, path)
                 return cache_path + SYMBOL_TABLE_POSTFIX, cache_path + SYMBOL_TYPE_POSTFIX, \
                     cache_path + PARSING_LOCK_POSTFIX, path
         self._raise(f"Cannot find module {namespace}")

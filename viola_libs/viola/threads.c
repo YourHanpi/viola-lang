@@ -88,12 +88,18 @@ static void yieldCPU(void) {
 #endif
 }
 
+/* 运行时初始化状态：0=未初始化，1=初始化中，2=已初始化。
+   global_resource_manager.init()经initListener()回调到本函数，本函数
+   又回调init()，形成相互递归；以状态机保证幂等，递归重入时直接返回，
+   避免一次性重复分配/泄漏（见开发疑问记录#100）。 */
+static int s_runtimeState = 0;
+
 /* 确保运行时已初始化（线程数组、任务队列、资源管理器） */
 static void ensureRuntime(void) {
-    if (viola$threads$threads != NULL) {
+    if (s_runtimeState != 0) {
         return;
     }
-    viola$lang$global_resource_manager$init();
+    s_runtimeState = 1;
     viola$threads$queue = createQueue();
     viola$threads$threadsNum = 2; /* 主线程 + 1个工作线程 */
     viola$threads$threads = (viola$threads$Thread **)malloc(
@@ -102,6 +108,10 @@ static void ensureRuntime(void) {
         viola$threads$threads[i] = createThread();
     }
     s_running = 1;
+    s_runtimeState = 2;
+    /* 资源管理器的初始化会回调initListener->ensureRuntime，
+       此时s_runtimeState已为2，递归调用直接返回 */
+    viola$lang$global_resource_manager$init();
 }
 
 /* 工作线程入口 */
