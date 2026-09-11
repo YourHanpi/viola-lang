@@ -2180,9 +2180,19 @@ class AsyncFuncName(FunctionName):
         """
         从同步函数名创建。
         """
-        # 注意：FunctionName.name已是含命名空间的全名，此处必须用self_name
-        # （裸名），否则命名空间会被重复拼接（viola$math$viola$math$dist$async）
-        return cls(function_name._src_info, function_name._namespace, function_name.self_name + "$async",
+        # 注意：FunctionName.name已是含命名空间的全名，若直接当裸名传入会
+        # 导致命名空间被重复拼接（viola$math$viola$math$dist$async）。
+        # 此处按命名空间前缀剥离出裸名；self_name不能使用：方法经
+        # MethodName.as_function()重命名后，self_name仍是重命名前的短名。
+        namespace_prefix: str = "$".join(map(lambda n: n.name, function_name._namespace))
+        full_name: str = function_name.name
+        if namespace_prefix == "":
+            local_name: str = full_name
+        elif full_name.startswith(namespace_prefix + "$"):
+            local_name = full_name[len(namespace_prefix) + 1:]
+        else:
+            local_name = full_name
+        return cls(function_name._src_info, function_name._namespace, local_name + "$async",
                    AsyncFuncTypeName.from_function_type_name(function_name.type), function_name._arg_names,
                    function_name._ret_names, function_name._export, function_name._is_method,
                    function_name._is_native)
