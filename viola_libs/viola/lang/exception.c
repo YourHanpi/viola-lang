@@ -21,11 +21,17 @@ void viola$lang$exception$Exception$__new__$_0(viola$lang$string *message,
     *this = exc;
 }
 
-/* 获取异常消息：what() -> string */
+/* 获取异常消息：what() -> string。
+   message未被设置（子类__new__未调用基类构造）时返回空串，
+   避免把未初始化/空指针交给打印路径（见开发疑问记录84）。 */
 void viola$lang$exception$Exception$what$_0(viola$lang$exception$Exception *_this,
                                             viola$lang$string **result,
                                             viola$threads$Listener *listener) {
     (void)listener;
+    if (_this == NULL || _this->message == NULL) {
+        *result = viola$lang$string$fromCharString("");
+        return;
+    }
     *result = _this->message;
 }
 

@@ -238,7 +238,7 @@ void viola$math$dist(viola$lang$float64$$array *a, viola$lang$float64$$array *b,
             "viola.math.dist: a与b长度不同");
         viola$lang$exception$Exception$__new__$_0(message, &exc, listener);
         if (listener != NULL) {
-            listener->exc = exc;
+            listener->exception = exc;
         }
         return;
     }

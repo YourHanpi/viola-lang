@@ -560,6 +560,18 @@ class VariableName(NamedSymbol):
         return new_variable
 
     @property
+    def declaration_text(self) -> str:
+        """获取将该变量作为局部变量声明的代码文本。
+
+        对象类型的局部变量初始化为NULL：块的清理代码以`if (var)`判断变量
+        是否持有对象，若声明处不给初值，异常路径上尚未赋值的变量会保留栈上
+        的垃圾值，清理时被误判为有效对象而崩溃（见开发疑问记录84）。
+        """
+        if self.is_object:
+            return f"{self.type_name_pair_calling} = NULL;"
+        return f"{self.type_name_pair_calling};"
+
+    @property
     def is_global(self) -> bool:
         """
         获取这一变量是否为全局变量。
@@ -2168,7 +2180,9 @@ class AsyncFuncName(FunctionName):
         """
         从同步函数名创建。
         """
-        return cls(function_name._src_info, function_name._namespace, function_name.name + "$async",
+        # 注意：FunctionName.name已是含命名空间的全名，此处必须用self_name
+        # （裸名），否则命名空间会被重复拼接（viola$math$viola$math$dist$async）
+        return cls(function_name._src_info, function_name._namespace, function_name.self_name + "$async",
                    AsyncFuncTypeName.from_function_type_name(function_name.type), function_name._arg_names,
                    function_name._ret_names, function_name._export, function_name._is_method,
                    function_name._is_native)

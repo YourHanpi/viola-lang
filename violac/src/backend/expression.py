@@ -410,9 +410,9 @@ class UnpackExpr(Expression):
             return self._to_unpack.head_text
         # 已设置解包目标：只声明解包临时变量与尾部元组变量
         # （被解包表达式的临时变量已由外层语句的head声明）
-        result: str = f"{self._var.type_name_pair_calling};"
+        result: str = self._var.declaration_text
         if self._tail_var is not None:
-            result += f"\n{self._tail_var.type_name_pair_calling};"
+            result += "\n" + self._tail_var.declaration_text
         return result
 
     @property
@@ -977,7 +977,7 @@ class StringLiteral(Literal):
 
     @property
     def head_text(self) -> Optional[str]:
-        return f"{LocalVariableName(self._src_info, self._var_name, self._type).type_name_pair_calling};"
+        return LocalVariableName(self._src_info, self._var_name, self._type).declaration_text
 
     @property
     def is_const(self) -> bool:
@@ -1422,7 +1422,7 @@ class ArrayRef(ValueRef):
         if not self._is_finished:
             raise CompilerException("ArrayRef is not finished", self._src_info)
         values_heads: str = chr(10).join(filter(lambda x: x is not None, map(lambda x: x.head_text, self._values)))
-        result: str = f"{self._temp_var.type_name_pair_calling};"
+        result: str = self._temp_var.declaration_text
         return values_heads + chr(10) + result if values_heads != "" else result
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
@@ -1605,7 +1605,7 @@ class TupleRef(ValueRef):
         if not self._is_finished:
             raise CompilerException("TupleRef is not finished", self._src_info)
         values_heads: str = chr(10).join(filter(lambda x: x is not None, map(lambda x: x.head_text, self._values)))
-        result: str = f"{self._temp_var.type_name_pair_calling};"
+        result: str = self._temp_var.declaration_text
         return values_heads + chr(10) + result if values_heads != "" else result
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "TupleRef":
@@ -2459,8 +2459,10 @@ class CallOp(Expression):
             capture_arg: str = f", {self._func_expr.text}->$capture" if self._call_struct else ""
             call = self._get_func_text(False) + f"({args_str}{rets_str}listener{capture_arg});"
             # 同步调用后刷新本函数的异常缓存：被调函数抛出且未捕获的异常
-            # 记录在其listener中，调用方需要通过$$exc感知（见开发疑问记录）
-            call += "\n$$exc = listener->exc;"
+            # 记录在其listener中，调用方需要通过$$exc感知（见开发疑问记录）。
+            # 仅在$$exc为空时刷新：清理路径中$$exc可能已持有异常
+            # （如异步调用经waitListener取回的异常），无条件赋值会将其丢弃
+            call += "\nif ($$exc == NULL) { $$exc = listener->exception; }"
         result.append(call)
         if len(self._returns_list) > 1:
             if self._is_async:
@@ -2528,7 +2530,7 @@ class CallOp(Expression):
             temp: LocalVariableName = LocalVariableName(
                 self._src_info, self._symbol_table.get_counter(), ret_type)
             self.set_returns([temp])
-            self._lazy_ret_decl = f"{temp.type_name_pair_calling};"
+            self._lazy_ret_decl = temp.declaration_text
             return
         if self._call_struct:
             # 函数值（Function结构体）调用同样需要返回值目标
@@ -2542,7 +2544,7 @@ class CallOp(Expression):
                 temp = LocalVariableName(
                     self._src_info, self._symbol_table.get_counter(), ret_type)
                 self.set_returns([temp])
-                self._lazy_ret_decl = f"{temp.type_name_pair_calling};"
+                self._lazy_ret_decl = temp.declaration_text
 
     @property
     def head_text(self) -> Optional[str]:
@@ -2884,7 +2886,7 @@ class ClosureCallArgs(Expression):
     @property
     def head_decl(self) -> str:
         """仅获取实参元组临时变量的声明（实参自身的头代码由调用方收集）。"""
-        return f"{self._temp_var.type_name_pair_calling};"
+        return self._temp_var.declaration_text
 
     @property
     def head_text(self) -> Optional[str]:
@@ -4142,7 +4144,7 @@ class UpdateExpr(Expression):
     @property
     def head_text(self) -> Optional[str]:
         results: list[str] = [
-            f"{LocalVariableName(self._src_info, self._temp_name, self._src_expr.return_type).type_name_pair_calling};",
+            LocalVariableName(self._src_info, self._temp_name, self._src_expr.return_type).declaration_text,
             *list(filter(lambda x: x is not None,
                          map(lambda x: x[0].head_text if x[0] is not None else None, self._expr_list))),
             *list(filter(lambda x: x is not None, map(lambda x: x[1].head_text, self._expr_list)))

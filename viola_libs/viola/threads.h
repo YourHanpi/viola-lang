@@ -25,7 +25,7 @@ struct viola$threads$FuncCall {
 /* 任务监听器 */
 typedef struct viola$threads$Listener viola$threads$Listener;
 struct viola$threads$Listener {
-    viola$lang$exception$Exception *exc;     /* 当前异常 */
+    viola$lang$exception$Exception *exception; /* 当前异常；无异常时为NULL */
     viola$lang$uint32 currentThreadId;       /* 当前执行线程 */
     volatile uint8_t done;                   /* 任务是否已完成 */
 };
@@ -97,7 +97,9 @@ void viola$threads$pushStackA(viola$lang$uint32 threadId, viola$threads$Mark *ma
 void viola$threads$pushStackB(viola$lang$uint32 threadId);
 /* 设置线程数量。此函数提供Viola接口。 */
 void viola$threads$setThreadsNum(viola$lang$uint32 num, viola$threads$Listener *listener);
-/* 等待监听器。此操作应当在结束前销毁监听器。 */
-void viola$threads$waitListener(viola$threads$Listener *listener);
+/* 等待监听器，返回该任务未捕获的异常（无异常时为NULL），并销毁监听器。
+   调用方用返回值把异步调用抛出的异常传播到自己的try/catch
+   （见开发疑问记录84）。 */
+viola$lang$exception$Exception *viola$threads$waitListener(viola$threads$Listener *listener);
 
 #endif /* VIOLA_THREADS_H */

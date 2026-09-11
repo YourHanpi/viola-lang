@@ -29,6 +29,11 @@ fn lessThanFive(int x) -> (bool c) {
     c = x < 5;
 }
 
+// 调用长度不等的dist（dist会抛出异常，本函数不捕获，用于验证跨函数传播）
+fn thrower(double[] a, double[] b) -> (double result) {
+    result = dist(a, b);
+}
+
 // 断言：条件不成立时打印并以致非零退出码结束（供测试脚本判定）
 sq check(bool condition, string label) -> () {
     if (condition) {
@@ -50,6 +55,22 @@ sq main() -> () {
         check(true, "dist length mismatch raises");
     }
     double goodDist = dist(shortArr, shortArr);
+    // 异常传播：被调函数内未捕获的异常跨函数传播到调用方的try/catch
+    try {
+        thrower(shortArr, longArr);
+        check(false, "cross-function exception");
+    } catch Exception e {
+        check(true, "cross-function exception");
+    }
+    // 异步调用抛出的异常经由Listener传播到调用方的try/catch。
+    // 读取异步变量才会等待其完成，故必须读取后才能观察到异常
+    try {
+        async double badAsync = thrower(shortArr, longArr);
+        double observedAsync = badAsync;
+        check(false, "async exception propagates");
+    } catch Exception e {
+        check(true, "async exception propagates");
+    }
 
     // 字符串操作
     string greeting = "Hello";

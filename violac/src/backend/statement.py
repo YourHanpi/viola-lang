@@ -48,37 +48,52 @@ class _Mark:
         :param src_info: 源代码信息。
         :param symbol_table: 符号表。
         """
-        self._text: StringLiteral = StringLiteral(src_info, symbol_table, src_info.traceback_no_location + "\tat ")
+        self._text_text: str = src_info.traceback_no_location + "\tat "
         self._lineno: int = src_info.lineno
         self._mark_name: str = f"$$_MARK_{_Mark._mark_counter}"
         self._is_const_def: bool = False
         _Mark._mark_counter += 1
 
+    @classmethod
+    def _utf16_units(cls, text: str) -> list[int]:
+        """将Python字符串转换为UTF-16码元序列（含代理对）。"""
+        encoded: bytes = text.encode("utf-16-le")
+        return [int.from_bytes(encoded[i:i + 2], "little") for i in range(0, len(encoded), 2)]
+
+    @property
+    def text_var_name(self) -> str:
+        """获取标记文本的静态字符串变量名。"""
+        return f"{self._mark_name}$text"
+
     @property
     def mark_declare(self) -> str:
-        """获取标记变量的声明代码。
+        """获取标记的声明代码（静态结构体与静态文本字符串）。
 
-        标记声明为静态结构体（path与line为编译期常量），无需运行时分配，
-        也不需要模块级变量：语句文本与全局初始化文本可以各自独立引用。
+        path/line为编译期常量，文本以UTF-16码元的静态数组内联展开：
+        不分配堆内存、不占用编译器的临时变量计数器，也不参与变量的
+        引用计数清理（见开发疑问记录87）。
         """
-        return f"static {MARK_T} {self._mark_name} = {{$$_PATH, {self._lineno}, NULL}};"
+        units: list[int] = self._utf16_units(self._text_text)
+        units_text: str = ", ".join(map(str, units)) if units else "0"
+        data_name: str = f"{self._mark_name}$data"
+        # 块作用域的静态初始化式必须是常量：码元数组单独声明为静态数组，
+        # 其地址才是常量（复合字面量在块作用域为自动存储，不能这样用）
+        return "\n".join([
+            f"static viola$lang$uint16 {data_name}[] = {{{units_text}}};",
+            f"static viola$lang$string {self.text_var_name} = "
+            f"{{1, NULL, {len(units)}, {data_name}}};",
+            f"static {MARK_T} {self._mark_name} = {{$$_PATH, {self._lineno}, &{self.text_var_name}}};",
+        ])
 
     @property
     def mark_init(self) -> str:
-        """获取标记文本的惰性初始化代码（幂等）。"""
-        result = [
-            self._text.head_text,
-            f"if ({self._mark_name}.text == NULL) {{",
-            self._text.front_text,
-            f"{self._mark_name}.text = {self._text.text};",
-            "}"
-        ]
-        return "\n".join(result)
+        """标记无需运行时初始化（声明处已完整初始化）。"""
+        return ""
 
     @property
     def mark_init_head(self) -> str:
-        """获取标记初始化的头代码。"""
-        return self._text.head_text
+        """标记无需头代码。"""
+        return ""
 
     @property
     def mark_insert(self) -> str:
@@ -525,7 +540,7 @@ class DeclStmt(Statement):
             # 使head_text包含调用/解包产生的临时变量声明
             self._var_value.set_returns(self._var)
         results = "\n".join(map(
-            lambda var: f"{var.type_name_pair_calling};" if not isinstance(var.type, GenericArgument) else "",
+            lambda var: var.declaration_text if not isinstance(var.type, GenericArgument) else "",
             self._var
         ))
         results = "\n".join(filter(lambda x: x.strip() != "", results.split("\n")))
@@ -863,7 +878,7 @@ class AssignStmt(Statement):
             # 使head_text包含调用/解包产生的临时变量声明
             self._var_value.set_returns(self._var)
         prefix: str = "\n".join(
-            f"{var.type_name_pair_calling};" for var in self._var if var in self._discard_vars
+            var.declaration_text for var in self._var if var in self._discard_vars
         )
         result: Optional[str] = self._var_value.head_text if self._var_value is not None else None
         if prefix != "":
@@ -1392,9 +1407,9 @@ class ThrowStmt(Statement):
             finally_text += "\n"
         result: list[str] = list(filter(lambda x: x is not None, [
             self._to_throw_expr.front_text,
-            f"listener->exc = {self._to_throw_expr.text};",
+            f"listener->exception = {self._to_throw_expr.text};",
             # 同步更新本函数的异常缓存，使后续语句的异常检查生效
-            "$$exc = listener->exc;"
+            "$$exc = listener->exception;"
         ]))
         return finally_text + "\n".join(result)
 
@@ -1893,7 +1908,7 @@ class CatchStmt(Statement):
             # 捕获成功后清除待处理异常：否则catch块内后续语句的异常检查会
             # 立即跳转到清理标签，catch块无法继续执行
             "\t$$exc = NULL;",
-            "\tlistener->exc = NULL;",
+            "\tlistener->exception = NULL;",
             self._stmt.text,
             f"\t{self._except_decl.type.name}$__del__$_0({self._except_decl.name}, listener);",
             f"\t{self._except_decl.name} = NULL;",
@@ -2350,7 +2365,8 @@ class BlockStmt(Statement):
                 wait_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
                 listener_name: str = self._listeners[var]
                 wait_text = "\n".join([
-                    f"{LISTENER_WAIT_FUNC}({listener_name});",
+                    # 等待异步任务完成并取回其未捕获的异常，供本函数感知
+                    f"$$exc = {LISTENER_WAIT_FUNC}({listener_name});",
                     f"free({listener_name}$$_call);"
                 ] + self._listener_restores.pop(listener_name, []))
                 wait_stmt.set_text(wait_text)
@@ -2458,8 +2474,12 @@ class BlockStmt(Statement):
         for listener in self._listeners.values():
             wait_stmt = CStmt(self.src_info, self._symbol_table, self._var_states)
             wait_text = "\n".join(
-                [f"{LISTENER_WAIT_FUNC}({listener});"] + self._listener_restores.pop(listener, []))
+                [f"$$exc = {LISTENER_WAIT_FUNC}({listener});"] + self._listener_restores.pop(listener, []))
             wait_stmt.set_text(wait_text)
+            # 等待语句在finish中追加，未经过上面统一设置跳转标记的循环；
+            # 若不设置，取回异常后会跳到函数级$$cleanup，绕过本块所属try的
+            # catch分发标签（见开发疑问记录84）
+            wait_stmt.set_jump_mark(self._cleanup_mark_name)
             self._stmt.append(wait_stmt)
         cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
         cleanup_mark.remove_jump_mark()

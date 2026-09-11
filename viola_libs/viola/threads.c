@@ -229,7 +229,7 @@ void viola$threads$enqueue(viola$threads$FuncCall *call) {
     pthread_mutex_unlock(&s_queueMutex);
 }
 
-void viola$threads$waitListener(viola$threads$Listener *listener) {
+viola$lang$exception$Exception *viola$threads$waitListener(viola$threads$Listener *listener) {
     while (!listener->done) {
         /* 主线程在等待期间处理全局资源请求（如文件读写） */
         if (listener->currentThreadId == 0) {
@@ -237,7 +237,12 @@ void viola$threads$waitListener(viola$threads$Listener *listener) {
         }
         yieldCPU();
     }
+    /* 取出任务未捕获的异常后再销毁监听器：调用方据此把异步调用
+       抛出的异常传播到自己的try/catch */
+    viola$lang$exception$Exception *exception = listener->exception;
+    listener->exception = NULL;
     free(listener);
+    return exception;
 }
 
 void viola$threads$pushStackA(viola$lang$uint32 threadId, viola$threads$Mark *mark) {
