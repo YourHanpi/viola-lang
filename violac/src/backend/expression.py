@@ -3028,10 +3028,12 @@ class TailRecursiveCall(CallOp):
         result = cls(call_op._src_info, call_op._symbol_table)
         if not isinstance(call_op._func_expr, VariableRef):
             raise InternalCompilerException("Tail recursive call is not allowed on this expression", call_op._src_info)
-        result.set_func(call_op._func_expr)
-        result.set_returns(call_op._returns_list)
+        # 先补齐实参再设置被调函数：set_func会按已有的实参个数校验形参
+        # （缺少无默认值的实参时报错），顺序颠倒会被误判为缺少全部实参
         for arg in call_op._arg_list:
             result.add_arg(arg, None)
+        result.set_func(call_op._func_expr)
+        result.set_returns(call_op._returns_list)
         for name, kwarg in call_op._kwarg_dict.items():
             result.add_arg(kwarg, name)
         return result
