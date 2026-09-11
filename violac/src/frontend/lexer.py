@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .utils import TokenStreamIO
 from utils import SourceInfo, CompilerException, COMPILER_PARAMS, VIOLA_INIT
-from utils.file_marks import TOKEN_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
+from utils.file_marks import TOKEN_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock, get_cache_path
 from utils.fsm import Token, StateNode, FSM
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
@@ -101,8 +101,7 @@ class Lexer(FSM):
         """
         self._logger = Logger(f"Lexer[{thread_index}]")
         file_path = os.path.abspath(file_path)
-        file_relpath = os.path.relpath(file_path, self._workspace)
-        cache_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
+        cache_path = get_cache_path(self._workspace, file_path)
         if not set_file_lock(cache_path):
             # 该文件正在被其他线程处理，重新入队等待
             return TaskResult(TaskResultState.DELAYED, [["violac", "lex", file_path]])

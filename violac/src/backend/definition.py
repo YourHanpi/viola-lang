@@ -2,7 +2,7 @@
 from .compiling_item import CompilingItem
 from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp, ClassRef, TypeRef
 from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, ReturnStmt, \
-    STACK_B_POP_FUNC, CleanupBlock
+    STACK_B_POP_FUNC, STACK_B_PUSH_FUNC, CleanupBlock
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
     ClassName, MethodName, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, TypeName, EXCEPTION_T_NAME, \
     EnumName, GlobalVariableName, GenericArgument, \
@@ -567,16 +567,21 @@ class SqDef(Definition):
             define_name + " {",
             (self._body.head_text or "") + ("\n\r" + self._body.tail_recursive_mark)
             if self._body.tail_recursive_mark is not None else self._body.head_text or "",
-            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
+            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exception;",
             self._body.text,
             CleanupBlock(self._src_info, self._symbol_table, self._var_states, list(self._body.new_variables)).text,
             "}"
         ]
         async_text: list[str] = [
             async_define_name + " {",
-            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
+            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exception;",
+            # 异步任务开始执行时压入B栈（记录发起线程与目标线程），
+            # 结束时退栈；退栈放在$$cleanup标签之后，使正常返回与异常
+            # 跳转两条路径都恰好退栈一次（见开发疑问记录87）
+            f"\t{STACK_B_PUSH_FUNC}(listener->currentThreadId);",
             self._async_body.text,
             "$$cleanup: ;",
+            f"\t{STACK_B_POP_FUNC}(listener->currentThreadId);",
             "}"
         ]
         text = [*sync_text, "", *async_text]
@@ -629,7 +634,11 @@ class SqDef(Definition):
         if self._is_closure:
             # 闭包函数需要传递捕获结构体指针
             sync_call_params_text += ", $$capture"
-        sync_call_text: str = f"\t{self._decl.name}({sync_call_params_text});"
+        # 同步调用后刷新本包装体的异常缓存：被调函数抛出且未捕获的异常
+        # 记录在其listener中，需要刷新才能被下方的catch感知，进而记入
+        # 本任务的listener供调用方取回（见开发疑问记录84）
+        sync_call_text: str = f"\t{self._decl.name}({sync_call_params_text});\n" \
+                             f"\tif ($$exc == NULL) {{ $$exc = listener->exception; }}"
         # 将返回值写回返回元组，供调用方在waitListener之后取回
         # （返回值元组的成员与_decl.ret_names一一对应）
         ret_write_back_text: list[str] = [
@@ -649,8 +658,7 @@ class SqDef(Definition):
             arg_unpack_text,
             ret_unpack_text,
             sync_call_text,
-            *ret_write_back_text,
-            f"{STACK_B_POP_FUNC}(listener->currentThreadId);"
+            *ret_write_back_text
         ]))))
         try_stmt.set_stmt(try_inner)
         catch_stmt: CatchStmt = CatchStmt(self._src_info, self._symbol_table, self._var_states)
@@ -683,7 +691,7 @@ class SqDef(Definition):
         catch_inner_print.set_expr(catch_inner_print_call)
         catch_inner.add_stmt(catch_inner_print)
         catch_inner_assign: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
-        catch_inner_assign.set_text("listener->exc = exc;")
+        catch_inner_assign.set_text("listener->exception = exc;")
         catch_inner.add_stmt(catch_inner_assign)
         catch_inner.finish()
         catch_stmt.set_stmt(catch_inner)
@@ -721,8 +729,12 @@ class ConstructorDef(SqDef):
             # 原生构造函数（声明文件中声明的内置类构造）由运行库实现，
             # 不生成分配与vtable初始化代码
             this_alloc_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
+            # 使用calloc清零：未被构造函数赋值的成员（尤其是继承自父类、
+            # 子类__new__未设置的成员，如Exception.message）保持NULL/0，
+            # 避免后续读取未初始化内存（见开发疑问记录84/91）
             this_alloc_stmt.set_text(
-                f"{cls.c_calling_name} {self._this_var.name} = ({cls.c_calling_name})malloc(sizeof({cls.c_alloc_name}));")
+                f"{cls.c_calling_name} {self._this_var.name} = "
+                f"({cls.c_calling_name})calloc(1, sizeof({cls.c_alloc_name}));")
             self.add_stmt(this_alloc_stmt)
             # 初始化实例的TypeInfo指针，供异常捕获与动态类型转换使用
             this_vtable_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
@@ -960,7 +972,7 @@ class GlobalDef(CPartSqDef):
         define_name: str = f"void {namespace_name}$__global__(viola$threads$Listener *listener)"
         sync_text: list[str] = [
             define_name + " {",
-            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
+            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exception;",
             self._body.text,
             "$$cleanup: ;",
             "}"
@@ -1253,7 +1265,7 @@ class ClassDef(Definition):
             helper: str = "\n".join([
                 f"void {self._decl.name}$__del__super$_0({self._decl.c_calling_name} _this, "
                 f"{LISTENER_T} *listener) {{",
-                f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
+                f"\t{EXCEPTION_T_NAME} *$$exc = listener->exception;",
                 self._del_super_body,
                 "$$cleanup: ;",
                 "}"

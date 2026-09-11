@@ -1,10 +1,32 @@
 # -*- coding: utf-8 -*-
+import os
+import shutil
+import time
+
 from .controller import Controller, EmptyController
 from .single_controllers import LexerController, GlobalParserController, ExprParserController, CompilerVMController
 from backend.project import Project
 from maker import TargetSourceRecorder
 from utils import CommandException
 from utils.file_marks import CACHE_DIR, LOG_DIR
+
+
+def _clear_dir(path: str) -> None:
+    """清空目录。
+
+    Windows上刚结束的进程（如上一次测试运行的可执行文件）可能仍短暂持有
+    目录句柄，导致rmtree抛出PermissionError；此处重试若干次，
+    仍失败时忽略（后续写入会覆盖文件），避免编译偶发失败
+    （见开发疑问记录71、94关于偶发失败的分析）。
+    """
+    for _ in range(10):
+        try:
+            if os.path.exists(path):
+                shutil.rmtree(path)
+            os.makedirs(path, exist_ok=True)
+            return
+        except (PermissionError, OSError):
+            time.sleep(0.1)
 from utils.logger import LOGGER_CONTROLLER, Logger
 from utils.task import TaskStack, TaskResultState
 
@@ -35,15 +57,12 @@ class MainController:
         self._maker: TargetSourceRecorder = TargetSourceRecorder(workspace, output_path)
         self._workspace: str = workspace
         self._entry_path: str = entry_path
-        if "clear-cache" in kwargs and kwargs["clear-cache"] == "true" and os.path.exists(os.path.join(workspace, CACHE_DIR)):
-            shutil.rmtree(os.path.join(workspace, CACHE_DIR))
-            os.mkdir(os.path.join(workspace, CACHE_DIR))
-        if "clear-output" in kwargs and kwargs["clear-output"] == "true" and os.path.exists(output_path):
-            shutil.rmtree(output_path)
-            os.mkdir(output_path)
-        if "clear-log" in kwargs and kwargs["clear-log"] == "true" and os.path.exists(os.path.join(workspace, LOG_DIR)):
-            shutil.rmtree(os.path.join(workspace, LOG_DIR))
-            os.mkdir(os.path.join(workspace, LOG_DIR))
+        if "clear-cache" in kwargs and kwargs["clear-cache"] == "true":
+            _clear_dir(os.path.join(workspace, CACHE_DIR))
+        if "clear-output" in kwargs and kwargs["clear-output"] == "true":
+            _clear_dir(output_path)
+        if "clear-log" in kwargs and kwargs["clear-log"] == "true":
+            _clear_dir(os.path.join(workspace, LOG_DIR))
 
     def run(self) -> None:
         """运行编译流程。"""

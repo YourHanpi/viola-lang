@@ -32,12 +32,7 @@ RUNTIME_SOURCES = [
     os.path.join("viola", "os", "path.c"),
     os.path.join("viola", "stat.c"),
 ]
-GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2",
-             # 历史规避项：此前观察到异常处理代码与gcc的-O2内联交互异常；
-             # 其根因为子类结构体字段布局与父类不一致（未定义行为，已修复，
-             # 见开发疑问记录），在无-fno-inline的-O2下异常测试亦通过，
-             # 是否移除该规避项待确认
-             "-fno-inline"]
+GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2"]
 
 
 def get_c_sources(output_dir: str) -> list[str]:
@@ -61,38 +56,8 @@ def test_one(project: str) -> bool:
         os.path.join(project_dir, next(e for e in entries if not e.startswith("__")))
     env = dict(os.environ)
     env["VIOLA_HOME"] = VIOLA_LIBS + (";" if os.name == "nt" else ":") + env.get("VIOLA_HOME", "")
-    # 清除运行库目录旁的缓存文件（viola_libs模块的缓存在工作区之外，
-    # --clear-cache无法覆盖，残留缓存会导致模块被错误跳过）
-    for lib_root in VIOLA_LIBS.split(";" if os.name == "nt" else ":"):
-        for root, _, files in os.walk(lib_root):
-            for f in files:
-                if f.endswith((".vlatoken", ".vlacmd", ".vlacmd0", ".vlaexpr", ".vlasymtab", ".vlasymt")):
-                    try:
-                        os.remove(os.path.join(root, f))
-                    except OSError:
-                        pass
-    # 清除工程目录内的缓存（编译器修改后源文件mtime不变，缓存可能过期，
-    # 导致解析命令与符号表与编译器版本不一致）
-    for cache_root in [PROJECTS_DIR, os.path.join(BASE_DIR, "runtime_test_project")]:
-        for root, _, files in os.walk(cache_root):
-            for f in files:
-                if f.endswith((".vlatoken", ".vlacmd", ".vlacmd0", ".vlaexpr", ".vlasymtab", ".vlasymt")):
-                    try:
-                        os.remove(os.path.join(root, f))
-                    except OSError:
-                        pass
-    # 编译器也可能把工作区外模块的缓存写到与源文件相邻的位置
-    # （路径中的..段会把缓存解析到violac/viola_libs等目录），一并清除
-    for extra in [os.path.join(COMPILER, "..", "..", "viola_libs")]:
-        extra = os.path.abspath(extra)
-        if os.path.isdir(extra):
-            for root, _, files in os.walk(extra):
-                for f in files:
-                    if f.endswith((".vlatoken", ".vlacmd", ".vlacmd0", ".vlaexpr", ".vlasymtab", ".vlasymt")):
-                        try:
-                            os.remove(os.path.join(root, f))
-                        except OSError:
-                            pass
+    # 所有缓存（含工作区外运行库模块的缓存）都位于工作区的__viola_cache__下，
+    # 由编译器的--clear-cache统一清除（见开发疑问记录94）
     # 1. viola -> C
     r = subprocess.run(
         [sys.executable, COMPILER, "compile", project_dir, f"-i={main_file}", f"-o={output_dir}",
@@ -123,9 +88,10 @@ def test_one(project: str) -> bool:
                 print("   ", line.strip()[:150])
                 break
         return False
-    # 3. 运行
+    # 3. 运行（以输出目录为工作目录，使测试产生的相对路径文件
+    #    落在输出目录内，不在仓库根目录留下test_output*.txt）
     try:
-        r = subprocess.run([exe], capture_output=True, text=True, timeout=60)
+        r = subprocess.run([exe], capture_output=True, text=True, timeout=60, cwd=output_dir)
     except subprocess.TimeoutExpired:
         print(f"FAIL(timeout) {project}")
         return False

@@ -33,11 +33,7 @@ RUNTIME_SOURCES = [
     os.path.join("viola", "os", "path.c"),
     os.path.join("viola", "stat.c"),
 ]
-GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2",
-             # 规避历史问题（见run_full_test.py中的说明）；
-             # 该问题的根因（子类结构体字段布局错位导致的未定义行为）已修复，
-             # 在无-fno-inline的-O2下异常测试亦通过，是否移除待确认
-             "-fno-inline"]
+GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2"]
 
 
 def get_c_sources(output_dir: str) -> list[str]:

@@ -2,7 +2,7 @@
 from .global_parser import GlobalParser
 from .utils import ParsingResult
 from utils import Token, SourceInfo
-from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, CACHE_DIR
+from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, CACHE_DIR, get_cache_path
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -169,8 +169,7 @@ class ExprParser(GlobalParser):
         self._logger.info(f"Start parsing expressions from {file_path}")
         self._src_info = SourceInfo(file_path)
         file_abs_path = os.path.abspath(file_path)
-        file_relpath = os.path.relpath(file_abs_path, self._workspace)
-        cache_path = os.path.join(self._workspace, CACHE_DIR, file_relpath)
+        cache_path = get_cache_path(self._workspace, file_abs_path)
         cache_file_path = cache_path + COMMAND_POSTFIX
         global_command_path = cache_path + GLOBAL_COMMAND_POSTFIX
         if not self._set_file_lock(cache_path):
@@ -1034,7 +1033,8 @@ class ExprParser(GlobalParser):
             elif self._match_type("GT"):
                 self._next()
                 return result, 0
-            elif self._match_type("R_SHIFT"):
+            elif self._match_type("RSHIFT"):
+                # >>一次闭合两层泛型参数（如Box::<Box::<int>>）
                 self._next()
                 return result, -1
             else:
@@ -1215,7 +1215,7 @@ class ExprParser(GlobalParser):
                 # 仅在泛型参数列表内部，>才作为闭合尖括号处理；
                 # 否则（如a > b）交由下面的运算符分支处理
                 angle_bracket_count -= 1
-            elif self._match_type("R_SHIFT") and angle_bracket_count >= 2:
+            elif self._match_type("RSHIFT") and angle_bracket_count >= 2:
                 # >>闭合两层泛型参数（如Array::<Array::<T>>）；
                 # 不在泛型列表中时作为右移运算符处理
                 angle_bracket_count -= 2

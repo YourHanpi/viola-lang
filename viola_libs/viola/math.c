@@ -225,18 +225,24 @@ void viola$math$hypot(viola$lang$float64$$array *a, viola$lang$float64 *result,
     *result = sqrt(sum);
 }
 
-/* dist(a, b)：欧几里得距离（要求a与b长度相同） */
+/* dist(a, b)：欧几里得距离。
+   要求a与b长度相同，长度不等时抛出异常（不再按较短者静默计算）。 */
 void viola$math$dist(viola$lang$float64$$array *a, viola$lang$float64$$array *b,
                      viola$lang$float64 *result, viola$threads$Listener *listener) {
-    (void)listener;
+    uint64_t n = a != NULL ? a->size : 0;
+    uint64_t m = b != NULL ? b->size : 0;
+    *result = 0.0;
+    if (n != m) {
+        viola$lang$exception$Exception *exc = NULL;
+        viola$lang$string *message = viola$lang$string$fromCharString(
+            "viola.math.dist: a与b长度不同");
+        viola$lang$exception$Exception$__new__$_0(message, &exc, listener);
+        if (listener != NULL) {
+            listener->exception = exc;
+        }
+        return;
+    }
     double sum = 0.0;
-    uint64_t n = 0;
-    if (a != NULL) {
-        n = a->size;
-    }
-    if (b != NULL && b->size < n) {
-        n = b->size;
-    }
     for (uint64_t i = 0; i < n; i++) {
         double d = a->data[i] - b->data[i];
         sum += d * d;

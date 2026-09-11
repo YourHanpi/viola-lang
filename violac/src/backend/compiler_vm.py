@@ -7,7 +7,8 @@ import backend.statement as statement
 import backend.symbol as symbol
 from backend.symbol import TypeName
 from utils import SourceInfo, InternalCompilerException, VIOLA_INIT, COMPILER_PARAMS, CompilerException
-from utils.file_marks import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock
+from utils.file_marks import SYMBOL_TABLE_POSTFIX, COMMAND_POSTFIX, CACHE_DIR, set_file_lock, \
+    remove_file_lock, get_cache_path
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
@@ -214,7 +215,7 @@ class CompilerVM:
         self._src_info = SourceInfo(src_path)
         src_path = os.path.abspath(src_path)
         src_relpath = os.path.relpath(src_path, self._workspace)
-        cache_path = os.path.join(self._workspace, CACHE_DIR, src_relpath)
+        cache_path = get_cache_path(self._workspace, src_path)
         if src_relpath.startswith(".."):
             # 工作区之外的模块（如运行库viola_libs）：输出到输出目录下
             # 相对VIOLA_HOME的路径（如viola/util/control_flow.vla.h）

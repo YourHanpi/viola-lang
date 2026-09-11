@@ -8,11 +8,12 @@ violac/whole_test/test_compiled
 violac/whole_test/template_projects
 .claude
 *.bin
+*.exe
 *.log
 *.vlacmd
 *.vlacmd0
 *.vlaexpr
-*.vlaimport
+*.vlaimports
 *.vlasymt
 *.vlasymtab
 *.vlatoken

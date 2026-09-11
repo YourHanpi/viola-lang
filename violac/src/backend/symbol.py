@@ -560,6 +560,18 @@ class VariableName(NamedSymbol):
         return new_variable
 
     @property
+    def declaration_text(self) -> str:
+        """获取将该变量作为局部变量声明的代码文本。
+
+        对象类型的局部变量初始化为NULL：块的清理代码以`if (var)`判断变量
+        是否持有对象，若声明处不给初值，异常路径上尚未赋值的变量会保留栈上
+        的垃圾值，清理时被误判为有效对象而崩溃（见开发疑问记录84）。
+        """
+        if self.is_object:
+            return f"{self.type_name_pair_calling} = NULL;"
+        return f"{self.type_name_pair_calling};"
+
+    @property
     def is_global(self) -> bool:
         """
         获取这一变量是否为全局变量。
@@ -2168,7 +2180,19 @@ class AsyncFuncName(FunctionName):
         """
         从同步函数名创建。
         """
-        return cls(function_name._src_info, function_name._namespace, function_name.name + "$async",
+        # 注意：FunctionName.name已是含命名空间的全名，若直接当裸名传入会
+        # 导致命名空间被重复拼接（viola$math$viola$math$dist$async）。
+        # 此处按命名空间前缀剥离出裸名；self_name不能使用：方法经
+        # MethodName.as_function()重命名后，self_name仍是重命名前的短名。
+        namespace_prefix: str = "$".join(map(lambda n: n.name, function_name._namespace))
+        full_name: str = function_name.name
+        if namespace_prefix == "":
+            local_name: str = full_name
+        elif full_name.startswith(namespace_prefix + "$"):
+            local_name = full_name[len(namespace_prefix) + 1:]
+        else:
+            local_name = full_name
+        return cls(function_name._src_info, function_name._namespace, local_name + "$async",
                    AsyncFuncTypeName.from_function_type_name(function_name.type), function_name._arg_names,
                    function_name._ret_names, function_name._export, function_name._is_method,
                    function_name._is_native)
@@ -2271,6 +2295,20 @@ class MethodName(PropertyVariableName):
         获取方法的默认参数。
         """
         return self._function_name.default_params
+
+    @property
+    def arg_names(self) -> list[str]:
+        """
+        获取方法的参数名称。
+        """
+        return self._function_name.arg_names
+
+    @property
+    def arg_types_dict(self) -> dict[str, TypeName]:
+        """
+        获取从参数名称到参数类型的字典。
+        """
+        return self._function_name.arg_types_dict
 
     @property
     def kw_type(self) -> SymbolType:
@@ -3676,6 +3714,15 @@ class SymbolTable:
                           for y in kwargs_declaration.keys()),
             matches.items()
         ))
+        # 实参个数校验：未被实参（位置或关键字）覆盖的形参必须带有默认值，
+        # 否则生成的C调用会因实参个数不足而由gcc报错（见开发疑问记录99）
+        matches = dict(filter(
+            lambda x: all(
+                name in kwargs or name in x[1].default_params
+                for i, name in enumerate(x[1].arg_names) if i >= args_length
+            ),
+            matches.items()
+        ))
         matches = dict(
             filter(
                 lambda x: x[1].kw_type == (SymbolType.METHOD if find_method else SymbolType.FUNCTION),
@@ -3770,6 +3817,15 @@ class SymbolTable:
         methods = dict(filter(lambda x: all(
             x[1].arg_types_dict[y].convertible_to(kwargs_types[y], self.symbols) for y in kwargs_types.keys()
         ), methods.items()))
+        # 实参个数校验：未被实参（位置或关键字）覆盖的形参必须带有默认值，
+        # 否则生成的C调用会因实参个数不足而由gcc报错（见开发疑问记录99）
+        methods = dict(filter(
+            lambda x: all(
+                name in kwargs or name in x[1].default_params
+                for i, name in enumerate(x[1].arg_names) if i >= len(arg_types)
+            ),
+            methods.items()
+        ))
         return list(methods.values())
 
     def get_all_to_instantiate_symbols(self, src_info: SourceInfo,
