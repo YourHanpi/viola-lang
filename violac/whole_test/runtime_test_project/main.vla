@@ -87,14 +87,21 @@ sq main() -> () {
     check(piValue > 3.14, "math pi lower bound");
     check(piValue < 3.15, "math pi upper bound");
 
-    // 线程
+    // 线程（真实增减工作线程）
     uint32 threadCount = getThreadsNum();
     check(threadCount == 2, "threads initial count");
     addThread(1);
     uint32 newCount = getThreadsNum();
     check(newCount == 3, "threads addThread count");
-    delThread(1);
-    check(getThreadsNum() == 2, "threads delThread count");
+    setThreadsNum(4);
+    check(getThreadsNum() == 4, "threads setThreadsNum grow");
+    // 多工作线程下异步调用仍然正确
+    async int threaded = doubleValue(21);
+    check(threaded == 42, "threads async after grow");
+    setThreadsNum(2);
+    check(getThreadsNum() == 2, "threads setThreadsNum shrink");
+    async int threaded2 = doubleValue(21);
+    check(threaded2 == 42, "threads async after shrink");
 
     // control_flow：forEach 与 while
     int[] numbers = [1, 2, 3, 4];

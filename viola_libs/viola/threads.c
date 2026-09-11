@@ -26,8 +26,18 @@ viola$threads$TaskQueue *viola$threads$queue = NULL;
 
 static pthread_mutex_t s_queueMutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_queueCond = PTHREAD_COND_INITIALIZER;
-static int s_running = 0;
-static pthread_t *s_workers = NULL;
+
+/* 工作线程槽。槽位单独分配且永不移动，因此工作线程持有的指针在
+   增删线程时始终有效（viola$threads$threads的下标即线程号，
+   0为主线程，1..workerNum为工作线程）。 */
+typedef struct WorkerSlot {
+    pthread_t thread;
+    viola$lang$uint32 id;       /* 对应的viola$threads$threads下标 */
+    volatile int shouldExit;    /* 请求该工作线程在完成当前任务后退出 */
+    int started;
+} WorkerSlot;
+
+static WorkerSlot **s_workers = NULL;
 static viola$lang$uint32 s_workerNum = 0;
 
 /* ================= 内部工具 ================= */
@@ -94,36 +104,18 @@ static void yieldCPU(void) {
    避免一次性重复分配/泄漏（见开发疑问记录#100）。 */
 static int s_runtimeState = 0;
 
-/* 确保运行时已初始化（线程数组、任务队列、资源管理器） */
-static void ensureRuntime(void) {
-    if (s_runtimeState != 0) {
-        return;
-    }
-    s_runtimeState = 1;
-    viola$threads$queue = createQueue();
-    viola$threads$threadsNum = 2; /* 主线程 + 1个工作线程 */
-    viola$threads$threads = (viola$threads$Thread **)malloc(
-        sizeof(viola$threads$Thread *) * viola$threads$threadsNum);
-    for (viola$lang$uint32 i = 0; i < viola$threads$threadsNum; i++) {
-        viola$threads$threads[i] = createThread();
-    }
-    s_running = 1;
-    s_runtimeState = 2;
-    /* 资源管理器的初始化会回调initListener->ensureRuntime，
-       此时s_runtimeState已为2，递归调用直接返回 */
-    viola$lang$global_resource_manager$init();
-}
-
 /* 工作线程入口 */
 static void *workerMain(void *arg) {
-    viola$lang$uint32 workerId = (viola$lang$uint32)(uintptr_t)arg;
-    while (s_running) {
+    WorkerSlot *slot = (WorkerSlot *)arg;
+    for (;;) {
         viola$threads$FuncCall *call = NULL;
         pthread_mutex_lock(&s_queueMutex);
-        while (s_running && viola$threads$queue->size == 0) {
+        while (!slot->shouldExit && viola$threads$queue->size == 0) {
             pthread_cond_wait(&s_queueCond, &s_queueMutex);
         }
-        if (!s_running) {
+        if (slot->shouldExit) {
+            /* 该线程被请求移除：不再取新任务，直接退出
+               （已完成当前任务，等待中的任务仍留在队列里由其他线程执行） */
             pthread_mutex_unlock(&s_queueMutex);
             break;
         }
@@ -132,7 +124,7 @@ static void *workerMain(void *arg) {
         viola$threads$queue->size--;
         pthread_mutex_unlock(&s_queueMutex);
         if (call != NULL) {
-            call->listener->currentThreadId = workerId;
+            call->listener->currentThreadId = slot->id;
             ((void (*)(void *, void *, viola$threads$Listener *))call->func)(
                 call->args, call->rets, call->listener);
             call->listener->done = 1;
@@ -141,15 +133,66 @@ static void *workerMain(void *arg) {
     return NULL;
 }
 
-static void startWorkers(void) {
-    pthread_mutex_lock(&s_queueMutex);
-    s_running = 1;
-    s_workerNum = viola$threads$threadsNum > 0 ? viola$threads$threadsNum - 1 : 0;
-    s_workers = (pthread_t *)malloc(sizeof(pthread_t) * (s_workerNum > 0 ? s_workerNum : 1));
-    for (viola$lang$uint32 i = 0; i < s_workerNum; i++) {
-        pthread_create(&s_workers[i], NULL, workerMain, (void *)(uintptr_t)(i + 1));
+/* 新增一个工作线程（真实创建pthread），并扩展线程槽数组 */
+static void addWorker(void) {
+    /* 1. 扩展viola$threads$threads（线程号即下标） */
+    viola$threads$threads = (viola$threads$Thread **)realloc(
+        viola$threads$threads, sizeof(viola$threads$Thread *) * (viola$threads$threadsNum + 1));
+    viola$threads$threads[viola$threads$threadsNum] = createThread();
+    viola$threads$threadsNum++;
+    /* 2. 槽位单独分配，指针数组扩容不会移动已分配槽位 */
+    s_workers = (WorkerSlot **)realloc(s_workers, sizeof(WorkerSlot *) * (s_workerNum + 1));
+    WorkerSlot *slot = (WorkerSlot *)malloc(sizeof(WorkerSlot));
+    slot->id = viola$threads$threadsNum - 1;
+    slot->shouldExit = 0;
+    slot->started = 1;
+    s_workers[s_workerNum] = slot;
+    s_workerNum++;
+    pthread_create(&slot->thread, NULL, workerMain, slot);
+}
+
+/* 移除最后一个工作线程：请求其退出并等待其完成当前任务，
+   同时销毁对应的线程槽（保持线程号与下标一致） */
+static void removeWorker(void) {
+    if (s_workerNum == 0) {
+        return;
     }
+    WorkerSlot *slot = s_workers[s_workerNum - 1];
+    pthread_mutex_lock(&s_queueMutex);
+    slot->shouldExit = 1;
+    pthread_cond_broadcast(&s_queueCond);
     pthread_mutex_unlock(&s_queueMutex);
+    pthread_join(slot->thread, NULL);
+    s_workerNum--;
+    free(slot);
+    /* 销毁对应的线程槽并收缩数组 */
+    if (viola$threads$threadsNum > 1) {
+        viola$lang$uint32 last = viola$threads$threadsNum - 1;
+        destroyThread(viola$threads$threads[last]);
+        viola$threads$threads[last] = NULL;
+        viola$threads$threadsNum--;
+        viola$threads$threads = (viola$threads$Thread **)realloc(
+            viola$threads$threads, sizeof(viola$threads$Thread *) * viola$threads$threadsNum);
+    }
+}
+
+/* 确保运行时已初始化（线程数组、任务队列、工作线程、资源管理器） */
+static void ensureRuntime(void) {
+    if (s_runtimeState != 0) {
+        return;
+    }
+    s_runtimeState = 1;
+    viola$threads$queue = createQueue();
+    /* 主线程（线程0） */
+    viola$threads$threadsNum = 1;
+    viola$threads$threads = (viola$threads$Thread **)malloc(sizeof(viola$threads$Thread *));
+    viola$threads$threads[0] = createThread();
+    /* 默认1个工作线程（主线程 + 1个工作线程，共2个） */
+    addWorker();
+    s_runtimeState = 2;
+    /* 资源管理器的初始化会回调initListener->ensureRuntime，
+       此时s_runtimeState已为2，递归调用直接返回 */
+    viola$lang$global_resource_manager$init();
 }
 
 /* ================= 对外接口 ================= */
@@ -163,9 +206,6 @@ void viola$threads$initListener(viola$threads$Listener *listener, viola$lang$uin
 
 void viola$threads$enqueue(viola$threads$FuncCall *call) {
     ensureRuntime();
-    if (s_workers == NULL) {
-        startWorkers();
-    }
     call->listener->done = 0;
     pthread_mutex_lock(&s_queueMutex);
     if (viola$threads$queue->size >= viola$threads$queue->capacity) {
@@ -244,28 +284,19 @@ void viola$threads$popStackB(viola$lang$uint32 threadId) {
 
 void viola$threads$addThread(viola$lang$uint32 num, viola$threads$Listener *listener) {
     ensureRuntime();
-    viola$lang$uint32 newNum = viola$threads$threadsNum + num;
-    viola$threads$threads = (viola$threads$Thread **)realloc(
-        viola$threads$threads, sizeof(viola$threads$Thread *) * newNum);
-    for (viola$lang$uint32 i = viola$threads$threadsNum; i < newNum; i++) {
-        viola$threads$threads[i] = createThread();
+    for (viola$lang$uint32 i = 0; i < num; i++) {
+        addWorker();
     }
-    viola$threads$threadsNum = newNum;
 }
 
 void viola$threads$delThread(viola$lang$uint32 num, viola$threads$Listener *listener) {
     ensureRuntime();
+    /* 主线程（线程0）不可删除：最多删除到只剩主线程 */
     if (num >= viola$threads$threadsNum) {
         num = viola$threads$threadsNum - 1;
     }
-    for (viola$lang$uint32 i = viola$threads$threadsNum - num; i < viola$threads$threadsNum; i++) {
-        destroyThread(viola$threads$threads[i]);
-        viola$threads$threads[i] = NULL;
-    }
-    viola$threads$threadsNum -= num;
-    if (viola$threads$threadsNum == 0) {
-        viola$threads$threadsNum = 1;
-        viola$threads$threads[0] = createThread();
+    for (viola$lang$uint32 i = 0; i < num; i++) {
+        removeWorker();
     }
 }
 
