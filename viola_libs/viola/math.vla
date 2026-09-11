@@ -61,17 +61,19 @@ fn fmin(float64 x, float64 y) -> (float64 result);
 fn fmax(float64 x, float64 y) -> (float64 result);
 
 // ================= 常量 =================
+// 原生全局变量：存储与初值由运行库viola_libs/viola/math.c提供
+// （与viola.os的STDIN_FILENO等、viola.stat的S_*采用相同方式）
 
 // 圆周率π
-float64 pi = 3.14159265358979323846;
+float64 pi;
 // 自然常数e
-float64 e = 2.71828182845904523536;
+float64 e;
 // 0.1新增：圆周率的两倍（τ = 2π）
-float64 tau = 6.28318530717958647692;
+float64 tau;
 // 0.1新增：非数（NaN）
-float64 nan = sqrt(-1.0);
+float64 nan;
 // 0.1新增：正无穷
-float64 inf = exp(1000.0);
+float64 inf;
 
 // ================= 0.1新增：反双曲函数 =================
 

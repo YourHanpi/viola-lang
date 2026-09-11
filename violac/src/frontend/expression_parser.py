@@ -1211,9 +1211,13 @@ class ExprParser(GlobalParser):
             elif self._match_type("GENERIC_START"):
                 # 泛型参数列表中的>是闭合尖括号，不是比较运算符
                 angle_bracket_count += 1
-            elif self._match_type("GT"):
+            elif self._match_type("GT") and angle_bracket_count > 0:
+                # 仅在泛型参数列表内部，>才作为闭合尖括号处理；
+                # 否则（如a > b）交由下面的运算符分支处理
                 angle_bracket_count -= 1
-            elif self._match_type("R_SHIFT"):
+            elif self._match_type("R_SHIFT") and angle_bracket_count >= 2:
+                # >>闭合两层泛型参数（如Array::<Array::<T>>）；
+                # 不在泛型列表中时作为右移运算符处理
                 angle_bracket_count -= 2
             elif self._match_types(op_types) and bracket_count == 0 and square_bracket_count == 0 and \
                     curly_bracket_count == 0 and angle_bracket_count == 0:

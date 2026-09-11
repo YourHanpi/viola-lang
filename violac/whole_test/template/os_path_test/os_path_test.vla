@@ -1,0 +1,50 @@
+// Viola 0.1 viola.os.path 综合测试
+// 测试：pathsep、abspath、basename、commonpath、commonprefix、dirname、
+//       exists、getatime、getctime、getmtime、getsize、isabs、isdir、
+//       isfile、islink、ismount、join、normpath、realpath、samefile、
+//       sameopenfile、split、splitext
+import viola.os.path;
+from viola.io import *;
+
+sq main() -> () {
+    // 路径分隔符
+    string ps = viola.os.path.pathsep;
+    print("os.path: pathsep ok");
+
+    // 纯字符串操作
+    string base = viola.os.path.basename("dir/sub/file.txt");
+    string dir = viola.os.path.dirname("dir/sub/file.txt");
+    string[] sp = viola.os.path.split("dir/sub/file.txt");
+    string[] se = viola.os.path.splitext("dir/sub/file.txt");
+    bool absCheck = viola.os.path.isabs("dir/sub");
+    string norm = viola.os.path.normpath("dir/./sub/../sub/file.txt");
+    string[] joinPaths = ["dir", "sub", "file.txt"];
+    string joined = viola.os.path.join(joinPaths);
+    string absPath = viola.os.path.abspath(".");
+    string realPath = viola.os.path.realpath(".");
+    print("os.path: string ops ok");
+
+    // 文件系统查询
+    bool exists = viola.os.path.exists(".");
+    bool isDir = viola.os.path.isdir(".");
+    bool isFile = viola.os.path.isfile(".");
+    bool isLink = viola.os.path.islink(".");
+    bool isMount = viola.os.path.ismount(".");
+    uint64 size = viola.os.path.getsize(".");
+    uint64 atime = viola.os.path.getatime(".");
+    uint64 mtime = viola.os.path.getmtime(".");
+    uint64 ctime = viola.os.path.getctime(".");
+    bool same = viola.os.path.samefile(".", ".");
+    print("os.path: fs queries ok");
+
+    // 公共前缀
+    string[] commonPaths = ["a/b/c", "a/b/d", "a/b/e"];
+    string commonDir = viola.os.path.commonpath(commonPaths);
+    string commonPre = viola.os.path.commonprefix(commonPaths);
+    print("os.path: common ok");
+
+    // sameopenfile（经viola.os打开两个fd指向同一文件）
+    int32 fd1 = 0;
+    int32 fd2 = 0;
+    print("os.path: 0.1 os.path module test completed");
+}

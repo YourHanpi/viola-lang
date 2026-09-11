@@ -13,6 +13,14 @@ import cpart "runtime.h";
 // ================= 文件类型位 =================
 uint32 S_IFDIR;
 uint32 S_IFREG;
+// 以下类型位与Python的stat模块一致（Windows上不存在对应文件类型）
+uint32 S_IFBLK;
+uint32 S_IFCHR;
+uint32 S_IFIFO;
+uint32 S_IFLNK;
+uint32 S_IFSOCK;
+// 文件类型掩码
+uint32 S_IFMT;
 // ================= 权限位 =================
 uint32 S_IRGRP;
 uint32 S_IROTH;

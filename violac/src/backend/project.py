@@ -43,11 +43,8 @@ class SourceFile(CompilingItem):
     def add_def(self, definition: Definition) -> None:
         """向源文件中添加一个定义。"""
         self._definitions.append(definition)
-
-    @property
-    def definitions(self) -> list[Definition]:
-        """获取源文件的所有定义。"""
-        return self._definitions
+        # 收集定义的全局初始化文本（虚函数表、静态属性、常量等），
+        # 供finish生成模块的__global__函数
         if definition.global_init_text is not None and definition.global_init_text != "":
             # 去重：优化后的语句可能重复产生相同的全局初始化文本（如调试标记）
             for stmt in self._global_stmt:
@@ -57,6 +54,11 @@ class SourceFile(CompilingItem):
                 global_stmt = CStmt(VIOLA_INIT, self._symbol_table, self._var_states)
                 global_stmt.add_text(definition.global_init_text)
                 self._global_stmt.append(global_stmt)
+
+    @property
+    def definitions(self) -> list[Definition]:
+        """获取源文件的所有定义。"""
+        return self._definitions
 
     def finish(self) -> None:
         """完成源文件，生成全局初始化函数并进行泛型实例化。"""

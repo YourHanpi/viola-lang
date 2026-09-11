@@ -884,20 +884,29 @@ class GlobalParser:
             self._next()
         self._symbol_types[class_name] = "CLASS", generic_args
         parent_names: list[str] = []
-        if self._match_type("EXTENDS") or self._match_type("IMPL"):
-            # extends与impl均解析为父类型列表（接口允许多继承）
+        interface_names: list[str] = []
+        # extends声明父类型（接口可多继承），impl声明实现的接口
+        for keyword in ["EXTENDS", "IMPL"]:
+            if not self._match_type(keyword):
+                continue
             self._next()
             while True:
                 parent_name: Optional[str] = self._parse_type()
                 if parent_name is None:
                     self._raise("Unexpected token: " + self._get_current().text)
                     return None
-                parent_names.append(parent_name)
+                if keyword == "IMPL":
+                    interface_names.append(parent_name)
+                else:
+                    parent_names.append(parent_name)
                 if self._match_type("COMMA"):
                     self._next()
                     continue
                 break
         parent_name: str = "object" if len(parent_names) == 0 else ",".join(parent_names)
+        if len(interface_names) > 0:
+            # impl的接口以"!"与父类型列表分隔（后端据此区分父类与接口）
+            parent_name += "!" + ",".join(interface_names)
         if self._match_type("L_CURLY_BRACKET"):
             symbol.append(f"{class_name}%" + " ".join([parent_name] + prefixes))
             symbol.append(" ".join(generic_args))

@@ -1,0 +1,51 @@
+from viola.io import *;
+import viola.os;
+// Viola 0.1 尾递归优化测试
+// 验证：尾递归调用转换为goto循环时，先按原顺序求值全部新参数，
+//       再统一赋值给形参（错误的实现是 x = f(y); y = g(x)，
+//       会让g(x)读到已经更新的x，与语义不符）。
+
+fn first(int y) -> (int r) {
+    r = y * 2;
+}
+
+fn second(int x) -> (int r) {
+    r = x + 1;
+}
+
+// 尾递归：result = loop(first(y), second(x));
+// 正确语义：x' = 2*y，y' = x + 1；从(1,1)出发第11轮到(126,95)，
+// x>=100时返回126+95=221。若错误地先更新x再计算y（y' = 2*y+1），
+// 结果为253，可据此判定求值顺序是否被破坏。
+sq loop(int x, int y) -> (int result) {
+    if (x >= 100) {
+        result = x + y;
+        return;
+    }
+    result = loop(first(y), second(x));
+}
+
+// 经典尾递归：求和
+sq sumTo(int n, int acc) -> (int result) {
+    if (n <= 0) {
+        result = acc;
+        return;
+    }
+    result = sumTo(n - 1, acc + n);
+}
+
+sq main() -> () {
+    int loopResult = loop(1, 1);
+    if (loopResult != 221) {
+        perror("tail recursion evaluation order is wrong");
+        viola.os.exit(1);
+    }
+
+    int sum = sumTo(100, 0);
+    if (sum != 5050) {
+        perror("tail recursion sum is wrong");
+        viola.os.exit(1);
+    }
+
+    print("tail recursion test completed");
+}

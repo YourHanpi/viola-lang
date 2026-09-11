@@ -1044,7 +1044,7 @@ static uint16_t fillCharOf(const viola$lang$string *fill) {
     return ' ';
 }
 
-/* 用fill字符在左侧填充到length长度 */
+/* 左对齐：用fill字符在右侧填充到length长度（"ab".ljust(4,"*") == "ab**"） */
 void viola$lang$string$ljust$_0(viola$lang$string *_this, viola$lang$uint32 length,
                                 viola$lang$string *fillChar, viola$lang$string **result,
                                 viola$threads$Listener *listener) {
@@ -1062,7 +1062,7 @@ void viola$lang$string$ljust$_0(viola$lang$string *_this, viola$lang$uint32 leng
     free(buf);
 }
 
-/* 用fill字符在右侧填充到length长度 */
+/* 右对齐：用fill字符在左侧填充到length长度（"ab".rjust(4,"*") == "**ab"） */
 void viola$lang$string$rjust$_0(viola$lang$string *_this, viola$lang$uint32 length,
                                 viola$lang$string *fillChar, viola$lang$string **result,
                                 viola$threads$Listener *listener) {
@@ -1177,7 +1177,9 @@ void viola$lang$string$zfill$_0(viola$lang$string *_this, viola$lang$uint32 leng
         signLen = 1;
     }
     uint16_t *buf = total > 0 ? (uint16_t *)malloc(sizeof(uint16_t) * total) : NULL;
-    for (uint64_t i = 0; i + _this->length < total; i++) {
+    /* 需要补的零的个数：有符号时符号位也占用一个位置（补零数加一） */
+    uint64_t zeroCount = total - _this->length + signLen;
+    for (uint64_t i = 0; i < zeroCount; i++) {
         buf[i] = '0';
     }
     if (signLen > 0 && total > 0) {

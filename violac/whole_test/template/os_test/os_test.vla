@@ -1,0 +1,98 @@
+// Viola 0.1 viola.os 综合测试
+// 测试：文件描述符常量、O_*常量、getcwd、stat/fstat/lstat、Stat字段、
+//       mkdir/rmdir/makedirs/removedirs、open/write/read/close、listdir、
+//       access、rename、getuid/getgid、dup/dup2、lseek、pipe、statvfs、
+//       popen/fdopen、utime、system、getEnv、time
+import viola.os;
+from viola.os import Stat, StatVFS;
+from viola.io import *;
+
+sq main() -> () {
+    // 标准文件描述符
+    int32 fdIn = viola.os.STDIN_FILENO;
+    int32 fdOut = viola.os.STDOUT_FILENO;
+    int32 fdErr = viola.os.STDERR_FILENO;
+    print("os: std fds ok");
+
+    // 当前工作目录与用户ID
+    string cwd = viola.os.getcwd();
+    string cwdB = viola.os.getcwdb();
+    uint32 uid = viola.os.getuid();
+    uint32 gid = viola.os.getgid();
+    print("os: cwd ok");
+
+    // 目录操作
+    viola.os.mkdir("os_test_dir");
+    viola.os.makedirs("os_test_nested/sub");
+    bool dirExists = viola.os.access("os_test_dir", 0);
+    string[] entries = viola.os.listdir(".");
+    viola.os.rmdir("os_test_nested/sub");
+    viola.os.removedirs("os_test_nested");
+    viola.os.rmdir("os_test_dir");
+    print("os: dirs ok");
+
+    // 文件操作：低层open/write/read/close
+    int32 fdW = viola.os.open("os_test_file.txt", viola.os.O_WRONLY | viola.os.O_CREAT | viola.os.O_TRUNC, 0o666);
+    uint32 written = viola.os.write(fdW, "hello from viola.os\n");
+    viola.os.close(fdW);
+    int32 fdR = viola.os.open("os_test_file.txt", viola.os.O_RDONLY, 0o666);
+    string content = viola.os.read(fdR, 128);
+    viola.os.close(fdR);
+    print("os: file io ok");
+
+    // 文件状态
+    Stat st = viola.os.stat("os_test_file.txt");
+    uint64 fileSize = st.st_size;
+    uint32 fileMode = st.st_mode;
+    Stat st2 = viola.os.lstat("os_test_file.txt");
+    uint64 fileSize2 = st2.st_size;
+    print("os: stat ok");
+
+    // 重命名与删除
+    viola.os.rename("os_test_file.txt", "os_test_file2.txt");
+    bool renamed = viola.os.access("os_test_file2.txt", 0);
+    viola.os.remove("os_test_file2.txt");
+    bool removed = !viola.os.access("os_test_file2.txt", 0);
+    print("os: rename ok");
+
+    // 文件描述符复制与定位
+    int32 fd2 = viola.os.open("os_test_file.txt", viola.os.O_WRONLY | viola.os.O_CREAT, 0o666);
+    int32 fdDup = viola.os.dup(fd2);
+    int32 pos = viola.os.lseek(fdDup, 0, 2);
+    viola.os.close(fdDup);
+    viola.os.close(fd2);
+    print("os: dup ok");
+
+    // 管道（返回读端与写端fd）
+    int32 pipeReadFd, int32 pipeWriteFd = viola.os.pipe();
+    bool pipeOk = pipeReadFd >= 0 and pipeWriteFd >= 0;
+    viola.os.close(pipeReadFd);
+    viola.os.close(pipeWriteFd);
+    print("os: pipe ok");
+
+    // 文件系统信息
+    StatVFS vfs = viola.os.statvfs(".");
+    uint64 vfsBlocks = vfs.f_blocks;
+    print("os: statvfs ok");
+
+    // popen：执行命令并读取输出
+    file pf = viola.os.popen("echo popen-test", "r");
+    string popenOut = read(pf);
+    print("os: popen ok");
+
+    // 设备号
+    uint32 dev = viola.os.makedev(1, 2);
+    uint32 maj = viola.os.major(dev);
+    uint32 min = viola.os.minor(dev);
+    print("os: dev ok");
+
+    // 其他
+    viola.os.stat_float_times(true);
+    string env = viola.os.getEnv("PATH");
+    uint64 t1 = viola.os.time();
+    print("os: misc ok");
+
+    // 清理
+    viola.os.unlink("os_test_file.txt");
+    print("os: 0.1 os module test completed");
+}

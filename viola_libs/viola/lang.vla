@@ -110,13 +110,13 @@ wrapper class string {
     public fn isspace() -> (bool result);
     // 是否全部为大写
     public fn isupper() -> (bool result);
-    // 左侧用fillChar填充到length长度
+    // 左对齐：在右侧用fillChar填充到length长度（"ab".ljust(4,"*") == "ab**"）
     public fn ljust(uint32 length, string fillChar) -> (string result);
     // 去除左侧空白（默认 " \t\n\r"）
     public fn lstrip() -> (string result);
     // 去除左侧toRemove集合中的字符
     public fn lstrip(string toRemove) -> (string result);
-    // 右侧用fillChar填充到length长度
+    // 右对齐：在左侧用fillChar填充到length长度（"ab".rjust(4,"*") == "**ab"）
     public fn rjust(uint32 length, string fillChar) -> (string result);
     // 去除右侧空白（默认 " \t\n\r"）
     public fn rstrip() -> (string result);

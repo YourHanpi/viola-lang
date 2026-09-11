@@ -338,6 +338,9 @@ class UnpackExpr(Expression):
         self._tail_var: Optional[LocalVariableName] = None
         self._tail_type: Optional[TupleTypeName] = None
         self._inline_mapping: dict[str, str] = {}
+        # 同步调用的直接解包（0.1）：被解包表达式为同步函数调用且返回值
+        # 与目标变量一一对应时，由调用直接把结果写入目标变量，不物化元组
+        self._delegate_call: bool = False
 
     def as_async(self) -> "Expression":
         return self
@@ -349,8 +352,9 @@ class UnpackExpr(Expression):
         for i, ret in enumerate(self._returns):
             new_expr._inline_mapping[ret.name] = self._symbol_table.get_counter()
             new_expr._returns[i].rename(new_expr._inline_mapping[ret.name])
-        new_expr._inline_mapping[new_expr._var.name] = self._symbol_table.get_counter()
-        new_expr._var.rename(new_expr._inline_mapping[new_expr._var.name])
+        if new_expr._var is not None:
+            new_expr._inline_mapping[new_expr._var.name] = self._symbol_table.get_counter()
+            new_expr._var.rename(new_expr._inline_mapping[new_expr._var.name])
         return new_expr
 
     def check_tail_recursive(self, func_name: str) -> "Expression":
@@ -358,6 +362,9 @@ class UnpackExpr(Expression):
 
     @property
     def front_text(self) -> Optional[str]:
+        if self._delegate_call:
+            # 同步调用直接写入目标变量：调用自身的front_text即为全部代码
+            return self._to_unpack.front_text
         to_unpack_front_text: Optional[str] = self._to_unpack.front_text
         if len(self._returns) == 0:
             return to_unpack_front_text
@@ -396,6 +403,8 @@ class UnpackExpr(Expression):
 
     @property
     def head_text(self) -> Optional[str]:
+        if self._delegate_call:
+            return self._to_unpack.head_text
         if len(self._returns) == 0:
             # 尚未设置解包目标：只声明被解包表达式自身的临时变量
             return self._to_unpack.head_text
@@ -413,8 +422,9 @@ class UnpackExpr(Expression):
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
         new_expr = copy(self)
         new_expr._to_unpack = self._to_unpack.instantiation(type_args)
-        # noinspection PyTypeChecker
-        new_expr._var = self._var.instantiation(self._var.name, type_args)
+        if self._var is not None:
+            # noinspection PyTypeChecker
+            new_expr._var = self._var.instantiation(self._var.name, type_args)
         new_expr._returns = list(map(lambda ret: ret.instantiation(ret.name, type_args), self._returns))
         return new_expr
 
@@ -428,6 +438,9 @@ class UnpackExpr(Expression):
 
     @property
     def release_text(self) -> Optional[str]:
+        if self._delegate_call:
+            # 直接解包不产生临时元组，无需释放
+            return None
         result: list[str] = [
             f"if ({self._var.name}->$refCount == 0) {{",
             f"\tif ({self._var.name}->$parent) {{",
@@ -480,6 +493,14 @@ class UnpackExpr(Expression):
                 self._src_info
             )
         self._returns = returns
+        # 同步函数调用的直接解包（0.1）：返回值个数与目标变量个数相同时，
+        # 由调用把各返回值直接写入目标变量，无需物化临时元组。
+        # （异步调用仍通过返回元组传递，见CallOp.front_text）
+        if isinstance(self._to_unpack, CallOp) and not self._to_unpack._is_async and \
+                len(expr_type.types) == len(returns):
+            self._delegate_call = True
+            self._to_unpack.set_returns(returns)
+            return True
         self._var = LocalVariableName(
             self._src_info,
             self._symbol_table.get_counter(),
@@ -2124,17 +2145,15 @@ class AttrOp(Expression):
             # 编译器内部调用（自动释放等）不受访问权限限制
             return
         current_cls = self._symbol_table.current_cls
-        if current_cls is None:
-            raise CompilerException(
-                f"Can not access {'protected' if modifier == Modifier.PROTECTED else 'private'} "
-                f"member {self._attr} of {caller_type.raw_name}.", self._src_info)
-        if current_cls == caller_type:
+        if current_cls is not None and current_cls == caller_type:
             # 自身（类自身的代码访问自己的成员）
             return
         if modifier == Modifier.PRIVATE:
             raise CompilerException(
                 f"Can not access private member {self._attr} of {caller_type.raw_name}.", self._src_info)
-        # protected：仅同一模块可访问（模块以命名空间判定）
+        # protected：仅同一模块可访问（模块以命名空间判定）。
+        # 注意：不在任何类体内时（模块级函数/变量）同样按模块判定——
+        # manual中"同一模块内的其他成员"包含模块级成员
         if list(caller_type.namespace) != self._symbol_table.namespace:
             raise CompilerException(
                 f"Can not access protected member {self._attr} of {caller_type.raw_name} "
@@ -2400,17 +2419,23 @@ class CallOp(Expression):
         result: list[str] = [children_front_text] if children_front_text != "" else []
         if self._is_async:
             result.append("\n".join(listener_text))
-            if len(self._returns_list) == 0:
-                ret_text: str = "NULL"
-            else:
-                ret_text = "&" + self._returns_tuple.text
             if self._call_struct:
                 # 结构体调用（闭包/函数值）：实参元组末尾附加捕获环境
                 arg_text = self._ensure_closure_args(True).text
             elif len(self._arg_list) + len(self._kwarg_dict.keys()) == 0:
                 arg_text: str = "NULL"
             else:
+                # 异步调用的实参通过参数元组传递给工作线程，
+                # 元组必须在此处分配并填充（head_text只做声明）
+                result.append(self._args_tuple.front_text)
                 arg_text = self._args_tuple.text
+            if len(self._returns_list) == 0:
+                ret_text: str = "NULL"
+            else:
+                # 返回元组由调用方分配（工作线程把结果写回其成员），
+                # waitListener之后由语句块将成员复制回目标变量
+                result.append(self._returns_tuple.front_text)
+                ret_text = self._returns_tuple.text
             call = "\n".join([
                 f"{self._call_name} = ({FUNC_CALL_T} *)malloc(sizeof({FUNC_CALL_T}));",
                 f"{self._call_name}->args = {arg_text};",
@@ -2433,6 +2458,9 @@ class CallOp(Expression):
                 self._returns_list) > 0 else ""
             capture_arg: str = f", {self._func_expr.text}->$capture" if self._call_struct else ""
             call = self._get_func_text(False) + f"({args_str}{rets_str}listener{capture_arg});"
+            # 同步调用后刷新本函数的异常缓存：被调函数抛出且未捕获的异常
+            # 记录在其listener中，调用方需要通过$$exc感知（见开发疑问记录）
+            call += "\n$$exc = listener->exc;"
         result.append(call)
         if len(self._returns_list) > 1:
             if self._is_async:
@@ -2449,6 +2477,20 @@ class CallOp(Expression):
                 list(self._arg_list), list(self._kwarg_dict.items()), with_capture
             )
         return self._closure_args
+
+    def restore_text(self, var: VariableName) -> Optional[str]:
+        """生成把异步调用的返回值从返回元组复制回目标变量的代码。
+
+        异步调用的返回值由工作线程写入调用方分配的返回元组（见front_text），
+        等待（waitListener）完成后需要复制回语句的赋值目标；
+        同步调用直接传递变量指针，无需此步骤。
+        """
+        if not self._is_async or self._returns_tuple is None:
+            return None
+        if var not in self._returns_list:
+            return None
+        index: int = self._returns_list.index(var)
+        return f"{var.name} = {self._returns_tuple.text}->${index};"
 
     def _get_func_text(self, is_async: bool) -> str:
         """获取被调用函数的C名称文本。

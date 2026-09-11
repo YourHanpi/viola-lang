@@ -49,6 +49,16 @@ MATH_BINARY_FUNC(fmod, fmod)
 MATH_BINARY_FUNC(fmin, fmin)
 MATH_BINARY_FUNC(fmax, fmax)
 
+/* ================= 常量 ================= */
+/* math.vla中声明的原生全局变量在此提供存储（头文件中为extern声明）。
+   注意：这些全局变量必须在本文件中给出定义，否则使用它们的
+   程序会在链接时报告 undefined reference。 */
+viola$lang$float64 viola$math$pi = 3.14159265358979323846;
+viola$lang$float64 viola$math$e = 2.71828182845904523536;
+viola$lang$float64 viola$math$tau = 6.28318530717958647692;
+viola$lang$float64 viola$math$nan = (viola$lang$float64)NAN;
+viola$lang$float64 viola$math$inf = (viola$lang$float64)INFINITY;
+
 /* ================= 0.1新增：反双曲函数 ================= */
 MATH_UNARY_FUNC(asinh, asinh)
 MATH_UNARY_FUNC(acosh, acosh)

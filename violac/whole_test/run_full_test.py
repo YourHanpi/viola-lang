@@ -33,8 +33,10 @@ RUNTIME_SOURCES = [
     os.path.join("viola", "stat.c"),
 ]
 GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2",
-             # 注意：生成的异常处理代码与gcc的-O2内联存在未定义行为交互
-             # （内联后throw路径被错误优化，见开发疑问记录），暂用-fno-inline规避
+             # 历史规避项：此前观察到异常处理代码与gcc的-O2内联交互异常；
+             # 其根因为子类结构体字段布局与父类不一致（未定义行为，已修复，
+             # 见开发疑问记录），在无-fno-inline的-O2下异常测试亦通过，
+             # 是否移除该规避项待确认
              "-fno-inline"]
 
 

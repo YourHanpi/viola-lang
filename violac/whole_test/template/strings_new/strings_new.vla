@@ -1,0 +1,56 @@
+from viola.io import *;
+// Viola 0.1 string新增方法测试
+// 测试：count/find/rfind/index/rindex/float/int/fromInt/fromFloat/
+//       isalnum等判断/ljust/rjust/lstrip/rstrip/strip/swapcase/zfill/replace
+
+sq main() -> () {
+    // 查找与统计
+    uint32 c1 = "aaa".count("aa");
+    uint32 f1 = "hello world".find("world");
+    uint32 rf1 = "hello world hello".rfind("hello");
+    uint32 i1 = "hello world".index("world");
+    uint32 ri1 = "abcabc".rindex("abc");
+
+    // 数值转换
+    float64 fl = "3.5".float();
+    float64 fl2 = "1.5e3".float();
+    float64 inf = "inf".float();
+    float64 nan = "nan".float();
+    int64 n1 = "42".int();
+    int64 n2 = "ff".int(16);
+    int64 n3 = "1010".int(2);
+    string s1 = string.fromInt(255, 16);
+    string s2 = string.fromInt(-42);
+    string s3 = string.fromFloat(3.5);
+    string s4 = string.fromFloat(0.5);
+
+    // 字符类别判断
+    bool b1 = "abc123".isalnum();
+    bool b2 = "abc".isalpha();
+    bool b3 = "123".isdecimal();
+    bool b4 = "123".isdigit();
+    bool b5 = "var_1".isidentifier();
+    bool b6 = "abc".islower();
+    bool b7 = "123".isnumeric();
+    bool b8 = "abc".isprintable();
+    bool b9 = " \t\n".isspace();
+    bool b10 = "ABC".isupper();
+
+    // 填充与修剪
+    string p1 = "ab".ljust(5, "-");
+    string p2 = "ab".rjust(5, "-");
+    string t1 = "  hello  ".strip();
+    string t2 = "xxhelloxx".lstrip("x");
+    string t3 = "xxhelloxx".rstrip("x");
+    string t4 = "xxhelloxx".strip("x");
+
+    // 大小写与补零
+    string sw = "Hello WORLD".swapcase();
+    string zf = "-42".zfill(6);
+
+    // 替换
+    string r1 = "aaa".replace("a", "b");
+    string r2 = "aaa".replace("a", "b", 1);
+
+    print("strings_new test completed");
+}

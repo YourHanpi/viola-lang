@@ -161,6 +161,9 @@ typedef struct viola$lang$uint8$$array {
 /* open()的默认参数全局变量（定义于viola/io/file.c） */
 extern viola$lang$string *viola$io$open$$default$mode;
 extern viola$lang$string *viola$io$open$$default$encoding;
+/* print()/perror()的默认参数（content = ""，定义于viola/io/print.c） */
+extern viola$lang$string *viola$io$print$$default$text;
+extern viola$lang$string *viola$io$perror$$default$text;
 void viola$io$print(viola$lang$string *content, viola$threads$Listener *listener);
 void viola$io$perror(viola$lang$string *content, viola$threads$Listener *listener);
 void viola$io$input(viola$lang$string **result, viola$threads$Listener *listener);

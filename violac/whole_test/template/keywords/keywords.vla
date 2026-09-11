@@ -1,0 +1,140 @@
+from viola.io import *;
+import viola.os;
+// Viola 0.1 关键字功能测试
+// 测试：export、final、impl/interface、访问修饰符、return、static、
+//       unsafe/wrapper、_、Pointer::<T>
+// 每项均校验运行结果，失败时以非0退出码结束（便于整体测试脚本判定）。
+
+// 接口：只允许方法和静态属性，方法均为抽象方法
+interface Shape2D {
+    public static uint32 KIND = 7;
+    fn area() -> (double result);
+}
+
+// 实现接口的类
+class Circle impl Shape2D {
+    public double radius;
+
+    public sq __new__(double r) -> (this) {
+        this.radius = r;
+    }
+
+    public fn area() -> (double result) {
+        result = 3.14159 * this.radius * this.radius;
+    }
+}
+
+// final类：不能被继承
+final class FinalBox {
+    public int value;
+
+    public sq __new__(int v) -> (this) {
+        this.value = v;
+    }
+}
+
+// wrapper类：包装非安全资源，需要用户实现__del__并调用del(super)
+wrapper class RawHolder {
+    unsafe uint32 rawValue;
+    public uint32 size;
+
+    public sq __new__(uint32 n) -> (this) {
+        this.size = n;
+        this.rawValue = 0x114514;
+    }
+
+    public sq __del__() -> () {
+        del(super);
+    }
+}
+
+// 静态方法与静态属性
+class Counter {
+    static uint32 total = 0;
+
+    public static fn getTotal() -> (uint32 result) {
+        result = Counter.total;
+    }
+}
+
+// 使用return的sq函数（void返回值的return）
+sq countTo(uint32 n) -> () {
+    if (n == 0) {
+        return;
+    }
+    countTo(n - 1);
+}
+
+// 使用丢弃变量_接收不需要的值
+fn discardTest() -> (int result) {
+    int x, string _ = *(42, "ignored");
+    result = x;
+}
+
+// 丢弃变量的多次赋值
+fn discardAssignTest() -> (int result) {
+    int x = 1;
+    _ = x;
+    _ = "discarded";
+    result = x + 1;
+}
+
+// 导出的函数
+export fn exportedAdd(int a, int b) -> (int result) {
+    result = a + b;
+}
+
+sq main() -> () {
+    // interface + impl
+    Circle c(2.0);
+    double area = c.area();
+    uint32 kind = Shape2D.KIND;
+    if (kind != 7 || area < 12.5 || area > 12.6) {
+        perror("interface/impl check failed");
+        viola.os.exit(1);
+    }
+
+    // final类
+    FinalBox box(9);
+    if (box.value != 9) {
+        perror("final class check failed");
+        viola.os.exit(1);
+    }
+
+    // wrapper + unsafe + del(super)
+    RawHolder holder(16);
+    if (holder.size != 16) {
+        perror("wrapper/unsafe check failed");
+        viola.os.exit(1);
+    }
+
+    // static
+    uint32 total = Counter.getTotal();
+    if (total != 0) {
+        perror("static check failed");
+        viola.os.exit(1);
+    }
+
+    // return + void返回值
+    countTo(3);
+
+    // 丢弃变量
+    int kept = discardTest();
+    int kept2 = discardAssignTest();
+    if (kept != 42 || kept2 != 2) {
+        perror("discard variable check failed");
+        viola.os.exit(1);
+    }
+
+    // export
+    int sum = exportedAdd(1, 2);
+    if (sum != 3) {
+        perror("export check failed");
+        viola.os.exit(1);
+    }
+
+    // Pointer::<T>（C层为void *，用于C互操作）
+    Pointer::<uint8> rawPtr;
+
+    print("0.1 keywords test completed");
+}

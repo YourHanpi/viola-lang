@@ -665,7 +665,7 @@ bool var14 = var0.endsWith("Hello"); // var14 = false
 ### 字符串的常用方法（0.1新增）
 
 `string`类（命名空间`viola.lang`）还提供以下方法（未找到子串时
-`find`/`rfind`/`index`/`rindex`返回`UINT32_MAX`；Viola 0.1尚无异常机制）：
+`find`/`rfind`/`index`/`rindex`返回`UINT32_MAX`；这些string方法本身不抛出异常）：
 
 ```viola
 uint32 var15 = var0.count("o");      // 统计子串非重叠出现的次数
@@ -803,8 +803,9 @@ fn isfinite(double x) -> (bool result);         // 是否为有限值
 
 `viola.os`绑定Windows和POSIX的相关接口（使用条件编译，使用前需
 `import viola.os;`）。其中涉及到文件操作的函数由子线程发送请求、
-由主线程串行执行。**注意：Viola 0.1尚无异常机制，执行失败时
-`sq`函数静默忽略、`fn`函数返回约定值（-1、0或空字符串）。**
+由主线程串行执行。**注意：这些系统接口本身不抛出异常，执行失败时
+`sq`函数静默忽略、`fn`函数返回约定值（-1、0或空字符串）；
+用户代码可用`try`/`catch`捕获自行抛出的异常（见“异常处理”一节）。**
 
 常量与类型：
 

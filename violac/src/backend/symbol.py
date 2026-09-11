@@ -1021,6 +1021,23 @@ class ClassName(TypeName):
         """
         return self._properties
 
+    @property
+    def ordered_properties(self) -> list[PropertyVariableName]:
+        """获取按C结构体布局排序的属性列表（父类属性在前）。
+
+        子类实例在C层必须与其父类具有相同的字段前缀布局，否则以父类类型
+        （如Exception、或泛型父类）操作子类对象时会按父类的字段偏移读写，
+        得到错误的字段（异常捕获时的$$vtable读取即依赖该布局）。
+        同名属性（属性遮蔽）保留父类中的位置，类型以子类的声明为准。
+        """
+        ordered: dict[str, PropertyVariableName] = {}
+        if self._parent is not None and self._parent != Object:
+            for prop in self._parent.ordered_properties:
+                ordered[prop.self_name] = prop
+        for name, prop in self._properties.items():
+            ordered[name] = prop
+        return list(ordered.values())
+
     def shared_parent(
             self,
             other: TypeName
@@ -1343,10 +1360,12 @@ class TupleTypeName(ClassName):
             viola$lang$uint32 $refCount;
             viola$lang$ptr $parent;
             viola$lang$uint64 size;
-            <元素0的c_calling_type> _0;
+            <元素0的c_calling_type> $0;
             ...
         } viola$collections$Tuple$<元素0名>$<元素1名>$...;
     结构体定义由编译器在模块头文件中生成（带include guard）。
+    成员名为$0、$1……（下标从0开始），类类型元素的成员类型为T *，
+    基本类型元素的成员类型为T。
     """
 
     def __init__(self, src_info: SourceInfo, types: list[TypeName]) -> None:
@@ -3666,6 +3685,12 @@ class SymbolTable:
         matches = dict(map(
             lambda x: (x[0][0], x[1]) if not x[1].kw_type == SymbolType.FUNCTION else x, matches.items()
         ))
+        # 参数数量精确匹配优先：形参个数与实参个数相同的重载，优先于依靠
+        # 默认参数接收该调用的重载（如log(x)同时匹配log(x)与log(x, base)时
+        # 应选择单参数重载；与find_methods的重载解析规则一致）
+        arity_matches = dict(filter(lambda x: len(x[0][1]) == args_length, matches.items()))
+        if len(arity_matches) > 0:
+            matches = arity_matches
         # 精确匹配优先：参数数量相同且每个参数类型名称完全一致时，优先选择精确匹配的重载
         exact_matches = dict(filter(
             lambda x: len(x[0][1]) == args_length and all(
@@ -3720,8 +3745,24 @@ class SymbolTable:
         kwargs = dict(map(lambda k, v: (k, v if "$$" in v else self.clean_namespace(v)), kwargs.items()))
         if not isinstance(cls, ClassName):
             raise CompilerException(f"{cls_name} is not a class", self._src_info)
-        arg_types: list[TypeName] = list(map(lambda x: self[x, None], args))
-        kwargs_types: dict[str, TypeName] = dict(map(lambda x: (x, self[kwargs[x], None]), kwargs.keys()))
+
+        def lookup_type(type_name: str) -> TypeName:
+            """解析方法查找用的类型名。
+
+            泛型类的方法查找可能使用该类的泛型参数名（如Array::<T>的T）；
+            此时泛型参数不在符号表中（类声明结束后已被移除），
+            按泛型参数构造类型名即可。
+            """
+            try:
+                return self[type_name, None]
+            except CompilerException:
+                generic_names: Optional[list[str]] = cls.generic_args_str
+                if generic_names is not None and type_name in generic_names:
+                    return GenericArgument(self._src_info, type_name)
+                raise
+
+        arg_types: list[TypeName] = list(map(lookup_type, args))
+        kwargs_types: dict[str, TypeName] = dict(map(lambda x: (x, lookup_type(kwargs[x])), kwargs.keys()))
         methods = dict(filter(lambda x: x[0][0] == name, cls.methods.items()))
         methods = dict(filter(lambda x: len(x[0][1]) >= len(arg_types), methods.items()))
         methods = dict(filter(lambda x: all(map(lambda i: arg_types[i].convertible_to(x[0][1][i], self.symbols),
@@ -4097,8 +4138,14 @@ class SymbolTable:
                     self.remove(arg.name)
                 return
             raise CompilerException(f"Symbol {symbol_key} already exists.", self._src_info)
+        # 原生方法（运行库提供实现）的C名称必须与运行库一致，重载序号由
+        # ClassName.add_method（set_cls）统一追加一次；若此处再追加一次会得到
+        # 双重后缀（如__new__$_0$_0），与运行库的__new__$_0不符导致链接失败。
+        # 非原生方法沿用原有的“前置序号”命名（与set_cls的序号共同构成名称）。
+        method_self_name: str = method_name if is_native else \
+            f"{method_name}$_{self._func_overload_times[f'{cls.name}.{method_name}']}"
         method = MethodName(
-            self._src_info, cls, f"{method_name}$_{self._func_overload_times[f'{cls.name}.{method_name}']}",
+            self._src_info, cls, method_self_name,
             func_type, is_abstract, is_static, item_args[1::2] if len(item_args) > 1 else [],
             item_returns[1::2] if len(item_returns) > 1 else [], modifier, export, is_native, is_final
         )
@@ -4138,23 +4185,26 @@ class SymbolTable:
         modifiers: list[str] = item[0].split(" ")[1:]
         parent: ClassName = Object
         parents_text: str = item[0].split(" ")[0].split("%")[1]
-        if parents_text != "object":
-            parent_names: list[str] = parents_text.split(",")
+        # impl声明的接口以"!"与父类型列表分隔（0.1起）
+        extends_text, _, impl_text = parents_text.partition("!")
+        parent_names: list[str] = []
+        interfaces: list[ClassName] = []
+        cls_interfaces: list[ClassName] = []
+        if extends_text != "object":
+            parent_names = extends_text.split(",")
             # noinspection PyTypeChecker
             parent = self[parent_names[0], None]
             if not isinstance(parent, ClassName):
                 raise CompilerException(f"$parent class {parent_names[0]} is not a class.", self._src_info)
             if parent.is_final:
                 raise CompilerException(f"Class {parent_names[0]} is final and can not be inherited.", self._src_info)
-            # 其余父类型为实现的接口
-            interfaces: list[ClassName] = []
+            # 其余父类型为接口（接口允许多继承）
             for interface_name in parent_names[1:]:
-                # noinspection PyTypeChecker
-                interface = self[interface_name, None]
-                if not isinstance(interface, ClassName) or not interface.is_interface:
-                    raise CompilerException(f"{interface_name} is not an interface.", self._src_info)
-                interfaces.append(interface)
-            cls_interfaces = interfaces
+                interfaces.append(self.__get_interface(interface_name))
+        # impl声明的接口
+        for interface_name in filter(lambda x: x != "", impl_text.split(",")):
+            interfaces.append(self.__get_interface(interface_name))
+        cls_interfaces = interfaces
         is_abstract: bool = "abstract" in modifiers
         is_c_part: bool = "c" in modifiers
         is_final: bool = "final" in modifiers
@@ -4169,7 +4219,7 @@ class SymbolTable:
                         is_final, is_wrapper, is_unsafe, is_interface)
         cls._export = "export" in modifiers
         cls.modifier = self.__get_modifier(modifiers)
-        if parents_text != "object" and len(parent_names) > 1:
+        if len(cls_interfaces) > 0:
             cls._interfaces = cls_interfaces
         if len(generic_args) > 0:
             self._generic_table.add_cls_def(cls)
@@ -4254,6 +4304,17 @@ class SymbolTable:
         # noinspection PyTypeChecker
         enum = EnumName(self.namespace, item_name, self[based_type], self._src_info)
         self.add(enum, item_name, None)
+
+    def __get_interface(self, interface_name: str) -> ClassName:
+        """获取接口类（用于extends的多个父类型与impl的接口列表）。
+
+        接口名必须是已声明的接口，否则报编译时错误。
+        """
+        # noinspection PyTypeChecker
+        interface = self[interface_name, None]
+        if not isinstance(interface, ClassName) or not interface.is_interface:
+            raise CompilerException(f"{interface_name} is not an interface.", self._src_info)
+        return interface
 
     def __get_modifier(self, item: list[str]) -> Modifier:
         """

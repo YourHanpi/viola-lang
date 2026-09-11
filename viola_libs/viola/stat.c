@@ -48,7 +48,7 @@ viola$lang$uint32 viola$stat$S_IWOTH = S_IWOTH;
 viola$lang$uint32 viola$stat$S_IXOTH = S_IXOTH;
 #endif
 
-/* 文件类型掩码与其余类型位（判断函数内部使用，不对外暴露） */
+/* 文件类型掩码与其余类型位（与Python的stat模块一致；判断函数内部使用） */
 #ifdef _WIN32
 #define VIOLA_STAT_S_IFMT _S_IFMT
 #else
@@ -59,6 +59,14 @@ viola$lang$uint32 viola$stat$S_IXOTH = S_IXOTH;
 #define VIOLA_STAT_S_IFIFO 0x1000
 #define VIOLA_STAT_S_IFLNK 0xA000
 #define VIOLA_STAT_S_IFSOCK 0xC000
+
+/* 文件类型位与掩码（stat.vla中的Viola全局变量声明） */
+viola$lang$uint32 viola$stat$S_IFMT = VIOLA_STAT_S_IFMT;
+viola$lang$uint32 viola$stat$S_IFBLK = VIOLA_STAT_S_IFBLK;
+viola$lang$uint32 viola$stat$S_IFCHR = VIOLA_STAT_S_IFCHR;
+viola$lang$uint32 viola$stat$S_IFIFO = VIOLA_STAT_S_IFIFO;
+viola$lang$uint32 viola$stat$S_IFLNK = VIOLA_STAT_S_IFLNK;
+viola$lang$uint32 viola$stat$S_IFSOCK = VIOLA_STAT_S_IFSOCK;
 
 /* ================= 文件类型判断 ================= */
 

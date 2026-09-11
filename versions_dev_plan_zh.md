@@ -278,7 +278,7 @@ def get_prefix(path: str, identifier: str) -> str:
         - `sq doWhile::<T>(T inputs, (T) -> (T) updater, (T) -> (bool) predicate) -> (T result);`
 - `viola.util.functools`
     - 添加函数式编程原语：
-        - `fn map::<T, U>(T[] iterable, (T) -> (U) mapper, booluseAsync) -> (U[] result);`
+        - `fn map::<T, U>(T[] iterable, (T) -> (U) mapper, bool useAsync) -> (U[] result);`
         - `fn filter::<T>(T[] iterable, (T) -> (bool) predicate, bool useAsync) -> (T[] result);`
         - `fn reduce::<T>(T[] iterable, (T[]) -> (T) reducer, uint32 reduceSize, bool useAsync) -> (T result);`
         - `fn expand::<T>(T[] inputs, (T[]) -> (T[]) expander, uint32 targetSize) -> (T[] result);`（先将`inputs`拷贝一份到`results`，然后反复将最后`inputs.length`个元素送入`expander`，产生的新元素追加到`result`末尾，直至`result`的长度不小于`targetSize`。）
@@ -341,6 +341,10 @@ fn divmod(int32 a, int32 b) -> (int32 divResult, int32 modResult) {
 }
 ```
 
+- 实现联合类型及其静态和动态转换。其中，联合类型的语法是`T | U | V | ...`，表示`T`、`U`或`V`等等中的任意一种。
+    - 符号`|`的优先级：`(T1, T2 | T3[], T4)`表示`T1`、`T2 | T3[]`、`T4`三个类型组成的元组。其中`T2 | T3[]`等效于`T2`和`T3[]`组成的联合类型。
+    - 如有需要，可提前加入`typevar`关键字，以声明一个类型表达式。
+
 ### 运行库
 
 - `viola.io.files`
@@ -360,5 +364,5 @@ sq myFunction() -> () {
 
 - `viola.util.hashmap`
     - 定义接口`interface Hashable`，这一接口要求实现`fn hash() -> (uint32);`方法。
-    - 用哈希表实现字典类`class dict::<K, V>`和集合类`class set::<T>`。
+    - 用哈希表实现字典类`class dict::<K, V>`和集合类`class set::<T>`。哈希算法默认使用SipHash-2-4，但是允许用户自定义哈希算法，并作为参数传入。
 

@@ -45,9 +45,12 @@
 
 /* ================= 编译器生成的类结构体布局 ================= */
 /* 与编译器为os.vla中的wrapper class Stat/StatVFS生成的结构体一致：
-   布局为 $$vtable、属性（按声明顺序）、$refCount、$parent。
+   继承自object的$refCount、$parent位于最前（与父类保持相同的前缀布局），
+   其后为$$vtable、属性（按声明顺序）。
    本TU不包含生成的os.vla.h，因此自行声明相同布局。 */
 typedef struct viola$os$Stat {
+    viola$lang$uint32 $refCount;
+    viola$lang$ptr $parent;
     viola$lang$ptr $$vtable;
     viola$lang$uint32 st_mode;
     viola$lang$uint64 st_ino;
@@ -59,11 +62,11 @@ typedef struct viola$os$Stat {
     viola$lang$uint64 st_atime;
     viola$lang$uint64 st_mtime;
     viola$lang$uint64 st_ctime;
-    viola$lang$uint32 $refCount;
-    viola$lang$ptr $parent;
 } viola$os$Stat;
 
 typedef struct viola$os$StatVFS {
+    viola$lang$uint32 $refCount;
+    viola$lang$ptr $parent;
     viola$lang$ptr $$vtable;
     viola$lang$uint64 f_bsize;
     viola$lang$uint64 f_frsize;
@@ -75,8 +78,6 @@ typedef struct viola$os$StatVFS {
     viola$lang$uint64 f_favail;
     viola$lang$uint64 f_flag;
     viola$lang$uint64 f_namemax;
-    viola$lang$uint32 $refCount;
-    viola$lang$ptr $parent;
 } viola$os$StatVFS;
 
 /* ================= 全局变量（os.vla中的声明） ================= */
@@ -94,6 +95,22 @@ viola$lang$uint32 viola$os$O_EXCL = 0x80;
 viola$lang$uint32 viola$os$O_TRUNC = 0x200;
 viola$lang$uint32 viola$os$O_APPEND = 0x400;
 viola$lang$uint32 viola$os$O_BINARY = 0x0; /* POSIX上无二进制模式 */
+/* 0.1补充的flags常量（POSIX取值；Windows上不具备对应语义者在
+   viola$os$open中原样忽略，仅O_CLOEXEC转换为_O_NOINHERIT） */
+viola$lang$uint32 viola$os$O_ACCMODE = 0x3;
+viola$lang$uint32 viola$os$O_ASYNC = 0x2000;
+viola$lang$uint32 viola$os$O_CLOEXEC = 0x80000;
+viola$lang$uint32 viola$os$O_DIRECT = 0x4000;
+viola$lang$uint32 viola$os$O_DIRECTORY = 0x10000;
+viola$lang$uint32 viola$os$O_DSYNC = 0x1000;
+viola$lang$uint32 viola$os$O_NOATIME = 0x40000;
+viola$lang$uint32 viola$os$O_NOCTTY = 0x100;
+viola$lang$uint32 viola$os$O_NOFOLLOW = 0x20000;
+viola$lang$uint32 viola$os$O_NONBLOCK = 0x800;
+viola$lang$uint32 viola$os$O_NDELAY = 0x800;
+viola$lang$uint32 viola$os$O_PATH = 0x200000;
+viola$lang$uint32 viola$os$O_RSYNC = 0x101000;
+viola$lang$uint32 viola$os$O_SYNC = 0x101000;
 
 /* 默认参数全局变量（编译器生成的默认参数引用指向这里） */
 viola$lang$uint32 viola$os$makedirs$$default$mode = 0777;
@@ -243,6 +260,8 @@ typedef struct viola$os$OsRequest {
     viola$lang$int32 pgid;
     viola$lang$bool *resultBool;
     viola$lang$int32 *resultInt;
+    /* 第二个int32结果（pipe的写端fd） */
+    viola$lang$int32 *resultInt2;
     viola$lang$uint32 *resultU32;
     viola$lang$string **resultString;
     viola$lang$string$$array **resultStringArray;
@@ -537,6 +556,9 @@ static void handleOpen(viola$lang$global_resource_manager$Request *base) {
     if ((req->flags & 0x400) != 0) {
         flags |= _O_APPEND;
     }
+    if ((req->flags & 0x80000) != 0) { /* O_CLOEXEC -> _O_NOINHERIT */
+        flags |= _O_NOINHERIT;
+    }
     int pmode = 0;
     if ((req->mode & 0x100) != 0) {
         pmode |= _S_IREAD;
@@ -554,8 +576,10 @@ static void handlePipe(viola$lang$global_resource_manager$Request *base) {
     int fds[2];
     if (_pipe(fds, 256, _O_BINARY) == 0) {
         *req->resultInt = fds[0];
+        *req->resultInt2 = fds[1];
     } else {
         *req->resultInt = -1;
+        *req->resultInt2 = -1;
     }
     req->done = 1;
 }
@@ -1106,8 +1130,10 @@ static void handlePipe(viola$lang$global_resource_manager$Request *base) {
     int fds[2];
     if (pipe(fds) == 0) {
         *req->resultInt = fds[0];
+        *req->resultInt2 = fds[1];
     } else {
         *req->resultInt = -1;
+        *req->resultInt2 = -1;
     }
     req->done = 1;
 }
@@ -1395,7 +1421,7 @@ void viola$os$registerOsHandlers(void) {
 
 /* ================= 类析构 ================= */
 
-void viola$os$Stat$__del__$_0$_0(viola$os$Stat *_this, viola$threads$Listener *listener) {
+void viola$os$Stat$__del__$_0(viola$os$Stat *_this, viola$threads$Listener *listener) {
     (void)listener;
     if (_this == NULL) {
         return;
@@ -1409,7 +1435,7 @@ void viola$os$Stat$__del__$_0$_0(viola$os$Stat *_this, viola$threads$Listener *l
     }
 }
 
-void viola$os$StatVFS$__del__$_0$_0(viola$os$StatVFS *_this, viola$threads$Listener *listener) {
+void viola$os$StatVFS$__del__$_0(viola$os$StatVFS *_this, viola$threads$Listener *listener) {
     (void)listener;
     if (_this == NULL) {
         return;
@@ -1782,9 +1808,11 @@ void viola$os$pathconf(viola$lang$string *path, viola$lang$int32 name, viola$lan
     free(req);
 }
 
-void viola$os$pipe(viola$lang$int32 *result, viola$threads$Listener *listener) {
+void viola$os$pipe(viola$lang$int32 *readFd, viola$lang$int32 *writeFd,
+                   viola$threads$Listener *listener) {
     viola$os$OsRequest *req = newRequest(VIOLA_OS_REQUEST_PIPE);
-    req->resultInt = result;
+    req->resultInt = readFd;
+    req->resultInt2 = writeFd;
     submitOrRun(req, listener);
     free(req);
 }

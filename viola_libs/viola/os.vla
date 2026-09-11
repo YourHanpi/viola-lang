@@ -27,6 +27,22 @@ uint32 O_RDONLY;
 uint32 O_RDWR;
 uint32 O_TRUNC;
 uint32 O_WRONLY;
+// 以下为0.1补充的flags常量（取值与POSIX一致；Windows不具备对应语义的
+// 常量在viola$os$open中原样忽略，仅O_CLOEXEC转换为_O_NOINHERIT）
+uint32 O_ACCMODE;
+uint32 O_ASYNC;
+uint32 O_CLOEXEC;
+uint32 O_DIRECT;
+uint32 O_DIRECTORY;
+uint32 O_DSYNC;
+uint32 O_NOATIME;
+uint32 O_NOCTTY;
+uint32 O_NOFOLLOW;
+uint32 O_NONBLOCK;
+uint32 O_NDELAY;
+uint32 O_PATH;
+uint32 O_RSYNC;
+uint32 O_SYNC;
 
 // ================= 文件状态 =================
 // 文件状态信息（字段与Python的stat_result一致）
@@ -140,8 +156,8 @@ sq open(string path, uint32 flags, uint32 mode = 0o666) -> (int32 fd);
 sq openpty() -> (int32 result);
 // 获取路径的配置值（仅POSIX，失败返回-1）
 fn pathconf(string path, int32 name) -> (int32 result);
-// 创建管道（返回读端文件描述符，失败返回-1）
-sq pipe() -> (int32 result);
+// 创建管道（返回读端与写端文件描述符，失败时两者均为-1）
+sq pipe() -> (int32 readFd, int32 writeFd);
 // 执行命令并返回可读取其输出的viola.io.file
 sq popen(string command, string mode) -> (file result);
 // 读取文件描述符（最多nbyte字节，失败返回空字符串）

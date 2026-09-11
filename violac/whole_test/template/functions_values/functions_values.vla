@@ -1,0 +1,61 @@
+from viola.io import *;
+// Viola 0.1 函数值（Function结构体）功能测试
+// 测试：静态函数封装为Function、闭包捕获、按参数名传参、异步函数值调用
+
+// 供测试的静态函数
+fn add(int a, int b) -> (int result) {
+    result = a + b;
+}
+
+fn twice(int x) -> (int result) {
+    result = x * 2;
+}
+
+// 返回闭包的函数（捕获offset）
+fn makeAdder(int offset) -> ((int) -> (int) result) {
+    auto f = sq(int x) -> (int r) {
+        r = x + offset;
+    };
+    result = f;
+}
+
+// 通过函数值调用
+fn callFunc((int) -> (int) f, int x) -> (int result) {
+    result = f(x);
+}
+
+// 按参数名传参调用函数值
+fn callFuncByName((int, int) -> (int) f) -> (int result) {
+    result = f(b=2, a=3);
+}
+
+sq main() -> () {
+    // 1. 静态函数封装为Function结构体并调用
+    (int) -> (int) doubleIt = twice;
+    print("step1");
+    int d = doubleIt(21);
+
+    // 2. 静态函数作为实参传递
+    print("step2");
+    int viaCall = callFunc(twice, 7);
+
+    // 3. 闭包捕获
+    (int) -> (int) addFive = makeAdder(5);
+    print("step3");
+    int s = addFive(10);
+
+    // 4. 按参数名传参（位置实参）
+    (int, int) -> (int) addFn = add;
+    print("step4");
+    int named = addFn(b=2, a=3);
+    print("step5");
+    int namedVia = callFuncByName(addFn);
+
+    // 5. 异步调用函数值
+    print("step6");
+    async int asyncVal = doubleIt(5);
+    print("step7");
+    int total = asyncVal + s + d + viaCall + named + namedVia;
+
+    print("functions_values test completed");
+}

@@ -1,0 +1,16 @@
+from viola.io import *;
+import viola.lang.global_resource_manager as grm;
+// Viola 0.1 全局资源管理器测试
+// 测试：register_request_handler的Viola接口声明与Function处理器注册
+
+// 请求处理器
+sq handleTest(_Request request) -> () {
+    print("request handled");
+}
+
+sq main() -> () {
+    // 注册请求处理器（Viola函数被封装为Function结构体传入）
+    grm.register_request_handler(100, handleTest);
+
+    print("grm test completed");
+}

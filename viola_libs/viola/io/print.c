@@ -19,6 +19,12 @@ static void writeStringToStream(FILE *stream, viola$lang$string *content) {
     fflush(stream);
 }
 
+/* print()/perror()的默认参数全局变量（编译器生成的默认参数引用指向这里）：
+ * content = ""（空字符串）。引用计数为1使清理代码不会释放该静态对象。 */
+static viola$lang$string _viola_io_default_text = {1, NULL, 0, NULL};
+viola$lang$string *viola$io$print$$default$text = &_viola_io_default_text;
+viola$lang$string *viola$io$perror$$default$text = &_viola_io_default_text;
+
 /* print(string content) -> () */
 void viola$io$print(viola$lang$string *content, viola$threads$Listener *listener) {
     (void)listener;

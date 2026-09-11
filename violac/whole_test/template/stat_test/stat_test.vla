@@ -1,0 +1,42 @@
+// Viola 0.1 viola.stat 综合测试
+// 测试：S_IF*与S_IRWX*常量、S_IS*判断函数、filemode
+import viola.stat;
+import viola.os;
+from viola.os import Stat;
+from viola.io import *;
+
+sq main() -> () {
+    // 常量
+    uint32 ifDir = viola.stat.S_IFDIR;
+    uint32 ifReg = viola.stat.S_IFREG;
+    uint32 irUsr = viola.stat.S_IRUSR;
+    uint32 iwUsr = viola.stat.S_IWUSR;
+    uint32 ixUsr = viola.stat.S_IXUSR;
+    uint32 irGrp = viola.stat.S_IRGRP;
+    uint32 iwGrp = viola.stat.S_IWGRP;
+    uint32 ixGrp = viola.stat.S_IXGRP;
+    uint32 irOth = viola.stat.S_IROTH;
+    uint32 iwOth = viola.stat.S_IWOTH;
+    uint32 ixOth = viola.stat.S_IXOTH;
+    print("stat: constants ok");
+
+    // 创建文件并获取状态
+    viola.os.mkdir("stat_test_dir");
+    Stat dirStat = viola.os.stat("stat_test_dir");
+    bool isDir = viola.stat.S_ISDIR(dirStat.st_mode);
+    bool isReg = viola.stat.S_ISREG(dirStat.st_mode);
+    bool isBlk = viola.stat.S_ISBLK(dirStat.st_mode);
+    bool isChr = viola.stat.S_ISCHR(dirStat.st_mode);
+    bool isFifo = viola.stat.S_ISFIFO(dirStat.st_mode);
+    bool isLnk = viola.stat.S_ISLNK(dirStat.st_mode);
+    bool isSock = viola.stat.S_ISSOCK(dirStat.st_mode);
+    print("stat: predicates ok");
+
+    // filemode
+    string mode644 = viola.stat.filemode(ifReg | irUsr | iwUsr | irGrp | irOth);
+    string modeDir = viola.stat.filemode(dirStat.st_mode);
+    print("stat: filemode ok");
+
+    viola.os.rmdir("stat_test_dir");
+    print("stat: 0.1 stat module test completed");
+}

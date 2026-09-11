@@ -8,10 +8,12 @@ import cpart "runtime.h";
 
 // ================= 标准输入输出 =================
 
-// 向标准输出打印字符串
-sq print(string text) -> ();
-// 向标准错误输出字符串
-sq perror(string text) -> ();
+// 向标准输出打印字符串（默认参数值由运行库的
+// viola$io$print$$default$text 全局变量提供）
+sq print(string text = "") -> ();
+// 向标准错误输出字符串（默认参数值由运行库的
+// viola$io$perror$$default$text 全局变量提供）
+sq perror(string text = "") -> ();
 // 从标准输入读取一行（去除末尾换行）
 sq input() -> (string result);
 

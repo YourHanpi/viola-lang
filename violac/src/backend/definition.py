@@ -307,7 +307,11 @@ class SqDef(Definition):
         if len(self._rets) == 0:
             return
         # unsafe变量不得被返回（0.1要求）：unsafe成员、unsafe类实例
-        # 与指针（Pointer类型天然unsafe）均不可作为返回值
+        # 与指针（Pointer类型天然unsafe）均不可作为返回值。
+        # 例外：构造函数返回的this即新建的实例本身——unsafe类的对象必须
+        # 经由构造函数创建，否则unsafe类无法实例化（与计划的类前缀语义冲突）
+        if isinstance(self, ConstructorDef):
+            return
         for ret in self._rets:
             is_unsafe_var: bool = getattr(ret, "is_unsafe", False) or \
                 getattr(ret.type, "is_unsafe", False)
@@ -626,6 +630,12 @@ class SqDef(Definition):
             # 闭包函数需要传递捕获结构体指针
             sync_call_params_text += ", $$capture"
         sync_call_text: str = f"\t{self._decl.name}({sync_call_params_text});"
+        # 将返回值写回返回元组，供调用方在waitListener之后取回
+        # （返回值元组的成员与_decl.ret_names一一对应）
+        ret_write_back_text: list[str] = [
+            f"\treturns->${i} = {ret_name};"
+            for i, ret_name in enumerate(self._decl.ret_names)
+        ]
         try_stmt: TryStmt = TryStmt(self._src_info, self._symbol_table, self._var_states)
         try_inner: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
         # 解包语句的临时变量（params/returns元组指针）声明在head_text中，需一并输出。
@@ -639,6 +649,7 @@ class SqDef(Definition):
             arg_unpack_text,
             ret_unpack_text,
             sync_call_text,
+            *ret_write_back_text,
             f"{STACK_B_POP_FUNC}(listener->currentThreadId);"
         ]))))
         try_stmt.set_stmt(try_inner)
@@ -782,7 +793,9 @@ class DestructorDef(SqDef):
         if cls.is_c_part:
             return
         this_free_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
-        properties_to_free: list[VariableName] = list(filter(lambda y: y.is_object, cls.properties.values()))
+        # 仅释放实例属性：静态属性是模块级全局变量，不是结构体成员
+        properties_to_free: list[VariableName] = list(
+            filter(lambda y: y.is_object and not y.is_static, cls.properties.values()))
         free_texts: list[str] = []
         for x in properties_to_free:
             # 类结构体的成员名为属性的self_name，访问时需要通过_this指针
@@ -1141,7 +1154,7 @@ class ClassDef(Definition):
         properties_text: str = "\n".join(
             map(
                 lambda x: f"\t{x.type.c_calling_name} {x.self_name};",
-                filter(lambda x: not x.is_static, self._decl.properties.values())
+                filter(lambda x: not x.is_static, self._decl.ordered_properties)
             )
         )
         struct_def: list[str] = [

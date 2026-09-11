@@ -16,7 +16,8 @@ from .symbol import (
     ClassName,
     GenericArgument,
     SymbolTable,
-    ExceptionTypeName
+    ExceptionTypeName,
+    AutoTypeName
 )
 from utils import CompilerException, unreachable_warning, SourceInfo, InternalCompilerException
 
@@ -190,6 +191,15 @@ class Statement(CompilingItem, ABC):
     def new_listeners(self) -> dict[VariableName, str]:
         """获取语句创建的新监听器映射。"""
         pass
+
+    @property
+    def restore_listeners(self) -> dict[str, list[str]]:
+        """获取语句创建的监听器对应的返回值复制代码（监听器名 -> 代码行）。
+
+        异步调用的返回值由工作线程写入调用方分配的返回元组，
+        在waitListener之后需要把元组成员复制回赋值目标（见CallOp.restore_text）。
+        """
+        return {}
 
     @property
     @abstractmethod
@@ -549,6 +559,20 @@ class DeclStmt(Statement):
         return {}
 
     @property
+    def restore_listeners(self) -> dict[str, list[str]]:
+        if self._var_value is None or self._var_value.listener_name is None:
+            return {}
+        if isinstance(self._var_value, (CallOp, UnpackExpr)) and len(self._var) > 0:
+            # 与head_text/_inner_text一致：先设置返回值目标，
+            # 使restore_text能按目标变量定位返回元组中的下标
+            self._var_value.set_returns(self._var)
+        restores: list[str] = list(filter(
+            lambda x: x is not None, map(lambda var: self._var_value.restore_text(var), self._var)))
+        if len(restores) == 0:
+            return {}
+        return {self._var_value.listener_name: restores}
+
+    @property
     def new_variables(self) -> set[VariableName]:
         return set(self._var)
 
@@ -713,9 +737,22 @@ class AssignStmt(Statement):
         self._const_vars: dict[VariableName, Expression] = {}
         self._this_cls: Optional[ClassName] = this_cls
         self._is_super: bool = False
+        # 丢弃变量（赋值目标为_）：不登记符号表，其声明由本语句自行生成
+        self._discard_vars: set[VariableName] = set()
 
     def add_var_name(self, var_name: str) -> None:
         """添加赋值目标变量名。"""
+        if var_name == "_":
+            # 丢弃变量（0.1要求）：允许在同一作用域内多次赋值，不登记到符号表，
+            # 类型在finish时按表达式类型推断（与声明语句中的丢弃变量一致）
+            discard_var = LocalVariableName(
+                self._src_info,
+                "$_discard$" + str(self._symbol_table.get_counter()),
+                AutoTypeName(self._src_info)
+            )
+            self._var.append(discard_var)
+            self._discard_vars.add(discard_var)
+            return
         if self._this_cls is not None and var_name == "this.super":
             # 调用父类的构造函数初始化this
             self._is_super = True
@@ -770,6 +807,7 @@ class AssignStmt(Statement):
     def finish(self) -> None:
         """完成赋值语句，进行类型检查和收包处理。"""
         expr_type = self._var_value.return_type
+        self._infer_discard_types(expr_type)
         if isinstance(expr_type, TupleTypeName):
             if len(expr_type.types) == 0:
                 raise CompilerException("Cannot unpacking an empty tuple.", self._src_info)
@@ -794,13 +832,37 @@ class AssignStmt(Statement):
                         self._src_info)
         self._is_finished = True
 
+    def _infer_discard_types(self, expr_type: TypeName) -> None:
+        """按表达式类型推断丢弃变量（赋值目标为_）的类型。
+
+        丢弃变量不登记到符号表，其C声明由本语句生成（见head_text），
+        类型必须在此处确定以便生成声明与赋值代码。
+        """
+        if len(self._discard_vars) == 0:
+            return
+        for i, var in enumerate(self._var):
+            if var not in self._discard_vars or not isinstance(var.type, AutoTypeName):
+                continue
+            if isinstance(expr_type, TupleTypeName):
+                if i < len(self._var) - 1:
+                    var.type.set_real_type(expr_type.types[i])
+                else:
+                    var.type.set_real_type(TupleTypeName(self._src_info, expr_type.types[i:]))
+            else:
+                var.type.set_real_type(expr_type)
+
     @property
     def head_text(self) -> Optional[str]:
         if isinstance(self._var_value, (CallOp, UnpackExpr)) and len(self._var) > 0:
             # 与_inner_text一致：先设置返回值目标，
             # 使head_text包含调用/解包产生的临时变量声明
             self._var_value.set_returns(self._var)
+        prefix: str = "\n".join(
+            f"{var.type_name_pair_calling};" for var in self._var if var in self._discard_vars
+        )
         result: Optional[str] = self._var_value.head_text if self._var_value is not None else None
+        if prefix != "":
+            result = prefix if result is None else prefix + "\n" + result
         if isinstance(self._var_value, UnpackExpr):
             # 元组解包：解包链的head_text不包含被解包元组的临时变量声明，补上
             to_unpack = getattr(self._var_value, "_to_unpack", None)
@@ -838,13 +900,29 @@ class AssignStmt(Statement):
         return {}
 
     @property
+    def restore_listeners(self) -> dict[str, list[str]]:
+        if self._var_value is None or self._var_value.listener_name is None:
+            return {}
+        if isinstance(self._var_value, (CallOp, UnpackExpr)) and len(self._var) > 0:
+            # 与head_text/_inner_text一致：先设置返回值目标，
+            # 使restore_text能按目标变量定位返回元组中的下标
+            self._var_value.set_returns(self._var)
+        restores: list[str] = list(filter(
+            lambda x: x is not None, map(lambda var: self._var_value.restore_text(var), self._var)))
+        if len(restores) == 0:
+            return {}
+        return {self._var_value.listener_name: restores}
+
+    @property
     def new_variables(self) -> set[VariableName]:
         return set(self._var)
 
     def optimize(self) -> "Statement":
         if self._var_value is not None:
             self._var_value = self._var_value.optimize()
-            if self._var_value.is_const and len(self._var) == 1:
+            # 返回值变量不参与常量折叠：返回槽位在C层是指针形参，
+            # 折叠会删除赋值语句，使函数返回未初始化/旧值
+            if self._var_value.is_const and len(self._var) == 1 and not self._var[0].is_return:
                 self._const_vars[self._var[0]] = self._var_value
                 return _StmtList(self._src_info, self._symbol_table, self._var_states, [], self._const_vars)
         if isinstance(self._var_value, UnpackExpr):
@@ -1610,7 +1688,10 @@ class IfStmt(CondStmt):
         new_stmt._stmt = self._stmt.check_tail_recursive(func_name)
         for i, branch in enumerate(self._branches):
             # noinspection PyTypeChecker
-            new_stmt._branches[i] = branch.check_tail_recursive(func_name).insert_finally_stmt(new_stmt._stmt)
+            new_branch: CondStmt = branch.check_tail_recursive(func_name)
+            # insert_finally_stmt就地修改分支并返回None，不能作为赋值来源
+            new_branch.insert_finally_stmt(new_stmt._stmt)
+            new_stmt._branches[i] = new_branch
         marks: list[Optional[str]] = list(map(lambda x: x.tail_recursive_mark, self._branches)) + [self._stmt.tail_recursive_mark]
         mark: list[str] = list(filter(lambda x: x is not None, marks))
         new_stmt._tail_recursive_mark = mark[0] if len(mark) > 0 else None
@@ -1804,6 +1885,10 @@ class CatchStmt(Statement):
             f"if ({CONVERTIBLE_TO_FUNC}($$exc->$$vtable, &{except_vtable_name})) {{",
             self._stmt.head_text,
             f"\t{self._except_decl.type_name_pair_calling} = $$exc;",
+            # 捕获成功后清除待处理异常：否则catch块内后续语句的异常检查会
+            # 立即跳转到清理标签，catch块无法继续执行
+            "\t$$exc = NULL;",
+            "\tlistener->exc = NULL;",
             self._stmt.text,
             f"\t{self._except_decl.type.name}$__del__$_0({self._except_decl.name}, listener);",
             f"\t{self._except_decl.name} = NULL;",
@@ -2193,6 +2278,8 @@ class BlockStmt(Statement):
         self._outer_variables: dict[VariableName, VariableState] = var_states.state.copy()
         self._inner_variables: dict[VariableName, VariableState] = {}
         self._listeners: dict[VariableName, str] = {}
+        # 监听器名 -> 异步返回值复制回目标变量的代码（waitListener之后执行）
+        self._listener_restores: dict[str, list[str]] = {}
         self._input_variables: set[VariableName] = set()
         self._new_variables: list[VariableName] = []
         self._used_outer_variables: list[VariableName] = []
@@ -2256,10 +2343,11 @@ class BlockStmt(Statement):
         for var in stmt.input_variables:
             if var in self._listeners:
                 wait_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                listener_name: str = self._listeners[var]
                 wait_text = "\n".join([
-                    f"{LISTENER_WAIT_FUNC}({self._listeners[var]});",
-                    f"free({self._listeners[var]}$$_call);"
-                ])
+                    f"{LISTENER_WAIT_FUNC}({listener_name});",
+                    f"free({listener_name}$$_call);"
+                ] + self._listener_restores.pop(listener_name, []))
                 wait_stmt.set_text(wait_text)
                 self._stmt.append(wait_stmt)
                 if var in self._outer_variables:
@@ -2268,6 +2356,7 @@ class BlockStmt(Statement):
                     self._inner_variables[var] = VariableState.ASSIGNED
                 del self._listeners[var]
         self._listeners.update(stmt.new_listeners)
+        self._listener_restores.update(stmt.restore_listeners)
         self._stmt.append(stmt)
         self._input_variables |= stmt.input_variables
         # 仅减去块内已产生（inner）与外部已赋值（ASSIGNED）的变量；
@@ -2334,6 +2423,9 @@ class BlockStmt(Statement):
                         call_op.set_func(attr_op)
                         release_stmt.set_expr(call_op)
                         release_stmt.indent()
+                        # 释放代码位于块的异常清理路径中：异常时不应跳出本块
+                        # （否则try块的catch分发标签不可达），而是继续执行清理
+                        release_stmt.remove_jump_mark()
                         null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
                         null_stmt.remove_jump_mark()
                         null_stmt.remove_mark()
@@ -2360,15 +2452,18 @@ class BlockStmt(Statement):
         self._stmt = new_stmt_list
         for listener in self._listeners.values():
             wait_stmt = CStmt(self.src_info, self._symbol_table, self._var_states)
-            wait_text = f"{LISTENER_WAIT_FUNC}({listener});"
+            wait_text = "\n".join(
+                [f"{LISTENER_WAIT_FUNC}({listener});"] + self._listener_restores.pop(listener, []))
             wait_stmt.set_text(wait_text)
             self._stmt.append(wait_stmt)
         cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
+        cleanup_mark.remove_jump_mark()
         cleanup_mark.add_text(f"goto {self._after_cleanup_mark_name};")
         cleanup_mark.add_text(f"{self._cleanup_mark_name}:")
         self._stmt.append(cleanup_mark)
         self._stmt += self._release_stmt_list
         after_cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
+        after_cleanup_mark.remove_jump_mark()
         after_cleanup_mark.add_text(f"{self._after_cleanup_mark_name}:")
         self._stmt.append(after_cleanup_mark)
         self._is_finished = True
