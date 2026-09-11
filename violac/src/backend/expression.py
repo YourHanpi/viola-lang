@@ -2758,6 +2758,14 @@ class CallOp(Expression):
             self._func_expr = expr
             self._call_struct = True
         if self._func is not None and isinstance(self._func, FunctionName):
+            # 实参过多校验（见开发疑问记录99）：动态调用的第一个实参是接收者
+            # （调用方对象），不属于形参列表，比较时需要排除
+            receiver_count: int = 1 if self._call_dynamic else 0
+            declared_count: int = len(self._func.arg_names) + receiver_count
+            if len(self._arg_list) > declared_count:
+                raise CompilerException(
+                    f"Function {self._func.raw_name} expects at most {declared_count} argument(s), "
+                    f"but {len(self._arg_list)} given.", self._src_info)
             func_arg_names: list[str] = self._func.arg_names[len(self._arg_list):]
             for n in func_arg_names:
                 if n in self._kwarg_dict:
@@ -2765,6 +2773,12 @@ class CallOp(Expression):
                 else:
                     if n in self._func.default_params:
                         self._arg_list.append(VariableRef(self._src_info, self._symbol_table, self._func.default_params[n]))
+                    else:
+                        # 既未提供实参又没有默认值：若继续下去会生成实参个数
+                        # 不足的C调用，只能由gcc报错（见开发疑问记录99）
+                        raise CompilerException(
+                            f"Missing argument {n} for function {self._func.raw_name}, "
+                            f"and it has no default value.", self._src_info)
             # 空数组字面量的元素类型按形参类型推断
             for i, arg in enumerate(self._arg_list):
                 if i >= len(self._func.type.args):

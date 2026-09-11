@@ -2273,6 +2273,20 @@ class MethodName(PropertyVariableName):
         return self._function_name.default_params
 
     @property
+    def arg_names(self) -> list[str]:
+        """
+        获取方法的参数名称。
+        """
+        return self._function_name.arg_names
+
+    @property
+    def arg_types_dict(self) -> dict[str, TypeName]:
+        """
+        获取从参数名称到参数类型的字典。
+        """
+        return self._function_name.arg_types_dict
+
+    @property
     def kw_type(self) -> SymbolType:
         return SymbolType.METHOD
 
@@ -3676,6 +3690,15 @@ class SymbolTable:
                           for y in kwargs_declaration.keys()),
             matches.items()
         ))
+        # 实参个数校验：未被实参（位置或关键字）覆盖的形参必须带有默认值，
+        # 否则生成的C调用会因实参个数不足而由gcc报错（见开发疑问记录99）
+        matches = dict(filter(
+            lambda x: all(
+                name in kwargs or name in x[1].default_params
+                for i, name in enumerate(x[1].arg_names) if i >= args_length
+            ),
+            matches.items()
+        ))
         matches = dict(
             filter(
                 lambda x: x[1].kw_type == (SymbolType.METHOD if find_method else SymbolType.FUNCTION),
@@ -3770,6 +3793,15 @@ class SymbolTable:
         methods = dict(filter(lambda x: all(
             x[1].arg_types_dict[y].convertible_to(kwargs_types[y], self.symbols) for y in kwargs_types.keys()
         ), methods.items()))
+        # 实参个数校验：未被实参（位置或关键字）覆盖的形参必须带有默认值，
+        # 否则生成的C调用会因实参个数不足而由gcc报错（见开发疑问记录99）
+        methods = dict(filter(
+            lambda x: all(
+                name in kwargs or name in x[1].default_params
+                for i, name in enumerate(x[1].arg_names) if i >= len(arg_types)
+            ),
+            methods.items()
+        ))
         return list(methods.values())
 
     def get_all_to_instantiate_symbols(self, src_info: SourceInfo,

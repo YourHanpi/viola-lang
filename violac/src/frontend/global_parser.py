@@ -1878,7 +1878,7 @@ class GlobalParser:
                 l_angle_bracket_count += 1
             elif "GT" in token.type:
                 l_angle_bracket_count -= 1
-            elif "R_SHIFT" in token.type:
+            elif "RSHIFT" in token.type:
                 l_angle_bracket_count -= 2
             elif "L_SQUARE_BRACKET" in token.type:
                 l_square_bracket_count += 1
@@ -2150,7 +2150,7 @@ class GlobalParser:
                 angle_depth += 1
             elif "GT" in token_buffer[i].type:
                 angle_depth -= 1
-            elif "R_SHIFT" in token_buffer[i].type:
+            elif "RSHIFT" in token_buffer[i].type:
                 angle_depth -= 2
             if angle_depth < 0:
                 return False

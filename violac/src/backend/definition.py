@@ -2,7 +2,7 @@
 from .compiling_item import CompilingItem
 from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp, ClassRef, TypeRef
 from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, ReturnStmt, \
-    STACK_B_POP_FUNC, CleanupBlock
+    STACK_B_POP_FUNC, STACK_B_PUSH_FUNC, CleanupBlock
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
     ClassName, MethodName, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, TypeName, EXCEPTION_T_NAME, \
     EnumName, GlobalVariableName, GenericArgument, \
@@ -575,8 +575,13 @@ class SqDef(Definition):
         async_text: list[str] = [
             async_define_name + " {",
             f"\t{EXCEPTION_T_NAME} *$$exc = listener->exc;",
+            # 异步任务开始执行时压入B栈（记录发起线程与目标线程），
+            # 结束时退栈；退栈放在$$cleanup标签之后，使正常返回与异常
+            # 跳转两条路径都恰好退栈一次（见开发疑问记录87）
+            f"\t{STACK_B_PUSH_FUNC}(listener->currentThreadId);",
             self._async_body.text,
             "$$cleanup: ;",
+            f"\t{STACK_B_POP_FUNC}(listener->currentThreadId);",
             "}"
         ]
         text = [*sync_text, "", *async_text]
@@ -649,8 +654,7 @@ class SqDef(Definition):
             arg_unpack_text,
             ret_unpack_text,
             sync_call_text,
-            *ret_write_back_text,
-            f"{STACK_B_POP_FUNC}(listener->currentThreadId);"
+            *ret_write_back_text
         ]))))
         try_stmt.set_stmt(try_inner)
         catch_stmt: CatchStmt = CatchStmt(self._src_info, self._symbol_table, self._var_states)

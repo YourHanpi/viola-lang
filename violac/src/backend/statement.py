@@ -56,19 +56,22 @@ class _Mark:
 
     @property
     def mark_declare(self) -> str:
-        """获取标记变量的声明代码。"""
-        return f"{MARK_T} *{self._mark_name};"
+        """获取标记变量的声明代码。
+
+        标记声明为静态结构体（path与line为编译期常量），无需运行时分配，
+        也不需要模块级变量：语句文本与全局初始化文本可以各自独立引用。
+        """
+        return f"static {MARK_T} {self._mark_name} = {{$$_PATH, {self._lineno}, NULL}};"
 
     @property
     def mark_init(self) -> str:
-        """获取标记的初始化代码。"""
+        """获取标记文本的惰性初始化代码（幂等）。"""
         result = [
             self._text.head_text,
-            f"{self._mark_name} = ({MARK_T} *)malloc(sizeof({MARK_T}));",
-            f"{self._mark_name}->path = $$_PATH;",
-            f"{self._mark_name}->line = {self._lineno};",
+            f"if ({self._mark_name}.text == NULL) {{",
             self._text.front_text,
-            f"{self._mark_name}->text = {self._text.text};",
+            f"{self._mark_name}.text = {self._text.text};",
+            "}"
         ]
         return "\n".join(result)
 
@@ -81,14 +84,14 @@ class _Mark:
     def mark_insert(self) -> str:
         """获取插入标记到栈中的代码。"""
         if self._is_const_def:
-            return f"{STACK_A_PUSH_FUNC}(0, {self._mark_name});"
-        return f"{STACK_A_PUSH_FUNC}(listener->currentThreadId, {self._mark_name});"
+            return f"{STACK_A_PUSH_FUNC}(0, &{self._mark_name});"
+        return f"{STACK_A_PUSH_FUNC}(listener->currentThreadId, &{self._mark_name});"
 
     @property
     def mark_pop(self) -> str:
         """获取从栈中弹出标记的代码。"""
         if self._is_const_def:
-            return f"{STACK_A_PUSH_FUNC}(0);"
+            return f"{STACK_A_POP_FUNC}(0);"
         return f"{STACK_A_POP_FUNC}(listener->currentThreadId);"
 
     def set_as_const_def(self) -> None:
@@ -112,9 +115,10 @@ class Statement(CompilingItem, ABC):
         self._indent: int = 0
         self._is_async: bool = False
         self._inline_mapping: dict[str, str] = {}
-        # 0.1：暂不生成traceback调试标记（大量冗余代码与重复初始化问题，
-        # 且违反0.1“减少冗余”的要求）。保留_jump_mark用于异常跳转。
-        self._mark = None
+        # traceback调试标记：语句执行前压入A栈、执行后弹出；异常时停留在
+        # 栈上，供调试输出还原调用路径（见开发疑问记录87）。
+        # 标记对象在模块全局初始化阶段创建，语句内只做压栈/退栈。
+        self._mark: Optional[_Mark] = _Mark(src_info, symbol_table) if with_mark else None
         self._jump_mark: Optional[str] = "$$cleanup" if single_stmt else None
         self._tail_recursive_mark: Optional[str] = None
         self._is_const_def: bool = False
@@ -146,8 +150,8 @@ class Statement(CompilingItem, ABC):
     @property
     @abstractmethod
     def global_init_text(self) -> str:
-        """获取全局初始化代码文本（包含标记初始化）。"""
-        return self._mark.mark_init if self._mark is not None else ""
+        """获取全局初始化代码文本。"""
+        return ""
 
     @property
     @abstractmethod
@@ -215,9 +219,7 @@ class Statement(CompilingItem, ABC):
     @property
     @abstractmethod
     def outer_text(self) -> Optional[str]:
-        """获取语句的外层代码文本（包含标记声明）。"""
-        if self._mark is not None:
-            return self._mark.mark_declare
+        """获取语句的外层代码文本（标记声明随语句自身输出，见text）。"""
         return None
 
     def remove_jump_mark(self) -> None:
@@ -261,6 +263,9 @@ class Statement(CompilingItem, ABC):
                 return self._indent_text(inner + "\n" + f"if ($$exc) goto {self._jump_mark};")
             return self._indent_text(inner)
         result: list[str] = [
+            # 标记在语句所在作用域内声明（静态结构体，异常跳转越过它是合法的）
+            self._mark.mark_declare,
+            self._mark.mark_init,
             self._mark.mark_insert,
             self._inner_text,
             f"if ($$exc) goto {self._jump_mark};" if self._jump_mark is not None else "// jump passed",

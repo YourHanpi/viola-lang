@@ -1033,7 +1033,8 @@ class ExprParser(GlobalParser):
             elif self._match_type("GT"):
                 self._next()
                 return result, 0
-            elif self._match_type("R_SHIFT"):
+            elif self._match_type("RSHIFT"):
+                # >>一次闭合两层泛型参数（如Box::<Box::<int>>）
                 self._next()
                 return result, -1
             else:
@@ -1214,7 +1215,7 @@ class ExprParser(GlobalParser):
                 # 仅在泛型参数列表内部，>才作为闭合尖括号处理；
                 # 否则（如a > b）交由下面的运算符分支处理
                 angle_bracket_count -= 1
-            elif self._match_type("R_SHIFT") and angle_bracket_count >= 2:
+            elif self._match_type("RSHIFT") and angle_bracket_count >= 2:
                 # >>闭合两层泛型参数（如Array::<Array::<T>>）；
                 # 不在泛型列表中时作为右移运算符处理
                 angle_bracket_count -= 2
