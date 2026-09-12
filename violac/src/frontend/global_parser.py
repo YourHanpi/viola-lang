@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from .utils import ParserGenericTable, ParsingResult, TokenStreamIO
-from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS
+from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS, SUPER_ASSIGN_MARKER
 from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, IMPORTS_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock, get_cache_path
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
@@ -754,8 +754,9 @@ class GlobalParser:
     def _parse_super_assign_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         """解析父类构造调用语句（super = 父类名(参数);，见开发疑问记录107）。
 
-        赋值目标复用AssignStmt的this.super形式，由后端按当前类的父类
-        解析__new__并生成对&_this的构造调用。
+        赋值目标使用标记名$super$（后端AssignStmt的super标记），由后端按
+        当前类的父类解析__new__并生成对&_this的构造调用。该标记不是用户
+        可见语法：原先的this.super形式已移除（见开发疑问记录114）。
         """
         self._next()  # 跳过super
         if not self._match_type("ASSIGN"):
@@ -771,7 +772,7 @@ class GlobalParser:
             return None
         self._next()
         return ["MAKE STMT ASSIGN", expr_commands, "CALL SET_VAR_VALUE",
-                "CALL ADD_VAR_NAME this.super", "CALL FINISH"], []
+                f"CALL ADD_VAR_NAME {SUPER_ASSIGN_MARKER}", "CALL FINISH"], []
 
     @_set_loc_command
     def _parse_block_stmt(self, new_scope: bool) -> Optional[tuple[list[str], list[str]]]:
@@ -1971,6 +1972,11 @@ class GlobalParser:
                     result.append(self._get_current().text)
                     self._next()
                     return self._qualify_imported_type("".join(result), first_identifier)
+                if "DOT" in token.type or self._match_type("DOT"):
+                    # 限定名（如viola.util.array.Array）：点号前后仍是类型名的一部分，
+                    # 继续累积后续标识符（其后的泛型参数由本循环的GENERIC_START
+                    # 分支处理），见开发疑问记录112
+                    continue
                 return self._qualify_imported_type("".join(result), first_identifier)
             if l_bracket_count < 0 or l_angle_bracket_count < 0 or l_square_bracket_count < 0:
                 self._raise(f"Unexpected token {token.text}")
@@ -1983,8 +1989,24 @@ class GlobalParser:
         """
         类型若以导入的类名开头，替换为其限定名（如Stat -> viola.os.Stat）。
         导入映射中的函数名不会被替换（它们不是类型）。
+        限定名（如arr.Array::<int>）按其最长前缀查导入映射，替换为完整路径
+        （见开发疑问记录112）。
         """
-        if first_identifier is None or "." in first_identifier:
+        if first_identifier is None:
+            return type_str
+        if "." in type_str:
+            # 限定名：按最长前缀匹配导入映射（如arr.Array::<int> -> viola.util.array.Array::<int>）
+            name_end: int = 0
+            for i, char in enumerate(type_str):
+                if char.isalnum() or char == "_" or char == ".":
+                    name_end = i + 1
+                else:
+                    break
+            parts: list[str] = type_str[:name_end].split(".")
+            for i in range(len(parts), 1, -1):
+                prefix: str = ".".join(parts[:i])
+                if prefix in self._imports:
+                    return self._imports[prefix] + type_str[len(prefix):]
             return type_str
         if first_identifier in self._imports and first_identifier in self._symbol_types and \
                 self._symbol_types[first_identifier][0] == "CLASS":

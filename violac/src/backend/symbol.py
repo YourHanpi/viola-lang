@@ -8,6 +8,7 @@ from copy import copy, deepcopy
 from enum import Enum
 import os
 import re
+import threading
 from typing import Optional, Callable
 
 # 函数值结构体（0.1起原Closure更名为Function，见versions_dev_plan_zh.md）
@@ -1088,9 +1089,12 @@ class ClassName(TypeName):
         （如Exception、或泛型父类）操作子类对象时会按父类的字段偏移读写，
         得到错误的字段（异常捕获时的$$vtable读取即依赖该布局）。
         同名属性（属性遮蔽）保留父类中的位置，类型以子类的声明为准。
+        继承链一直到object（$refCount、$parent位于最前）：运行库以
+        viola$lang$object*操作对象（以及运行库为wrapper类提供结构体定义）
+        时依赖该布局，见开发疑问记录113。
         """
         ordered: dict[str, PropertyVariableName] = {}
-        if self._parent is not None and self._parent != Object:
+        if self._parent is not None:
             for prop in self._parent.ordered_properties:
                 ordered[prop.self_name] = prop
         for name, prop in self._properties.items():
@@ -1145,6 +1149,34 @@ _ARRAY_TYPE_DEFS: dict[str, TypeName] = {}
 # 实例化请求发生在调用方模块，而泛型函数的定义位于其所在模块，
 # 定义方实例化时需合并其他模块发起的请求。
 _GENERIC_FUNC_INSTANCE_REQUESTS: dict[str, set[tuple[TypeName, ...]]] = {}
+
+# 泛型类实例化请求的全局注册表（按类的C名 -> 类型参数元组集合）。
+# 与泛型函数同理：调用方模块只能提出请求，实例的定义必须由定义该泛型类的
+# 模块生成（见开发疑问记录111）。
+_GENERIC_CLS_INSTANCE_REQUESTS: dict[str, set[tuple[TypeName, ...]]] = {}
+
+# 泛型实例的C名序号注册表（泛型符号C名 -> {(类型实参C名, ...): 序号}）。
+# 实例的C名形如Array__0、lib$identity$_0，序号原先取决于“该模块内第几个
+# 被实例化”，因此调用方模块与定义方模块会各自按自己的顺序编号，得到
+# 不同的C名（实测跨模块泛型函数会因此调用到错误的实例，见开发疑问记录111）。
+# 改用进程内共享的注册表按（泛型符号C名, 类型实参）分配序号，使所有模块
+# 对同一实例得到相同的C名。
+_GENERIC_INSTANCE_INDEXES: dict[str, dict[tuple[str, ...], int]] = {}
+# 泛型注册表（上述请求表与序号表）在并行编译的多个线程间共享，需互斥访问：
+# 1) 两个线程同时登记不同的类型实参时会读到相同的len()，使不同实例取得
+#    同一序号（C名冲突）；
+# 2) 一个线程遍历请求集合（合并请求、排序）时另一个线程可能正在登记新请求，
+#    遍历中集合被修改会抛RuntimeError，使编译偶发失败。
+_GENERIC_REGISTRY_LOCK: threading.Lock = threading.Lock()
+
+
+def _generic_instance_index(symbol_c_name: str, arg_names: tuple[str, ...]) -> int:
+    """获取泛型实例的C名序号（同一进程内对同一实例始终返回同一序号）。"""
+    with _GENERIC_REGISTRY_LOCK:
+        index_table: dict[tuple[str, ...], int] = _GENERIC_INSTANCE_INDEXES.setdefault(symbol_c_name, {})
+        if arg_names not in index_table:
+            index_table[arg_names] = len(index_table)
+        return index_table[arg_names]
 
 
 def _type_is_fully_concrete(t: TypeName) -> bool:
@@ -2794,6 +2826,18 @@ class GenericTable:
             raise InternalCompilerException("Class already exists.", self._source_info)
         self._class_instances[class_name] = {}
 
+    def _instance_index(self, symbol: "ClassName | FunctionName", t: tuple[TypeName, ...]) -> int:
+        """获取实例C名中的序号。
+
+        具体类型实参的实例按全局注册表编号（跨模块一致，见
+        _GENERIC_INSTANCE_INDEXES）；含泛型参数的伪实例不产生定义，
+        按本表的登记数量编号即可。
+        """
+        if all(not isinstance(x, GenericArgument) for x in t):
+            return _generic_instance_index(symbol.name, tuple(x.name for x in t))
+        return len(self._class_instances[symbol] if isinstance(symbol, ClassName)
+                   else self._function_instances[symbol])
+
     def add_cls_instance(self, class_name: ClassName, t: tuple[TypeName, ...]) -> None:
         """
         添加一个已实例化的泛型类。
@@ -2802,7 +2846,7 @@ class GenericTable:
             raise InternalCompilerException("Class does not exist.", self._source_info)
         if t in self._class_instances[class_name]:
             raise InternalCompilerException("Class already exists.", self._source_info)
-        new_name: str = f"{class_name.self_name}__{len(self._class_instances[class_name])}"
+        new_name: str = f"{class_name.self_name}__{self._instance_index(class_name, t)}"
 
         def register_shell(shell: ClassName) -> None:
             # 先登记实例再填充成员：成员签名中对本实例的引用
@@ -2831,7 +2875,7 @@ class GenericTable:
             if t in self._function_instances[function_name]:
                 raise InternalCompilerException("Function already exists.", self._source_info)
             self._function_instances[function_name][t] = function_name.instantiation_full(
-                f"{function_name.self_name}$_{len(self._function_instances[function_name])}", list(t)
+                f"{function_name.self_name}$_{self._instance_index(function_name, t)}", list(t)
             )
         else:
             raise InternalCompilerException("Function does not exist.", self._source_info)
@@ -2853,11 +2897,19 @@ class GenericTable:
                 # 泛型函数体内的递归调用（类型参数仍为泛型参数）不产生具体实例
                 if all(not isinstance(x, GenericArgument) for x in t):
                     result.append(t)
-        if isinstance(symbol, FunctionName):
-            # 合并其他模块发起的实例化请求（调用发生在调用方模块）
-            for t in _GENERIC_FUNC_INSTANCE_REQUESTS.get(symbol.name, set()):
-                if all(not isinstance(x, GenericArgument) for x in t) and t not in result:
-                    result.append(t)
+        # 在锁内取请求集合的副本：本函数可能在编译线程中被调用（模块完成时
+        # 实例化其泛型定义），而其他线程可能正在登记新请求
+        with _GENERIC_REGISTRY_LOCK:
+            if isinstance(symbol, FunctionName):
+                requests = set(_GENERIC_FUNC_INSTANCE_REQUESTS.get(symbol.name, set()))
+            else:
+                requests = set(_GENERIC_CLS_INSTANCE_REQUESTS.get(symbol.name, set()))
+        # 合并其他模块发起的实例化请求（实例化发生在调用方模块）。
+        # 请求存放在set中，迭代顺序依赖类型名的哈希（随PYTHONHASHSEED变化），
+        # 故按类型名排序后再合并，使实例的生成顺序确定（见开发疑问记录115）
+        for t in sorted(requests, key=lambda x: tuple(y.name for y in x)):
+            if all(not isinstance(x, GenericArgument) for x in t) and t not in result:
+                result.append(t)
         return result
 
     def get_cls_instance(self, class_name: ClassName, t: tuple[TypeName, ...]) -> ClassName:
@@ -3016,13 +3068,19 @@ class _TypeNameParser:
         ;
     """
 
-    def __init__(self, real_type_getter: Callable[[str], Optional[TypeName]], generic_table: GenericTable) -> None:
+    def __init__(self, real_type_getter: Callable[[str], Optional[TypeName]],
+                 generic_table: GenericTable,
+                 cls_instance_getter: Optional[Callable[[ClassName, tuple[TypeName, ...]], ClassName]] = None) -> None:
         self._tokens: list[Token] = []
         self._current: int = -1
         self._tokens_num: int = 0
         self._src_info: SourceInfo = VIOLA_INIT
         self._real_type_getter: Callable[[str], Optional[TypeName]] = real_type_getter
         self._generic_table: GenericTable = generic_table
+        # 泛型类实例的获取方式：默认直接取实例表；符号表传入其get_generic_cls_instance
+        # （额外登记跨模块实例化请求，见开发疑问记录111）
+        self._cls_instance_getter: Callable[[ClassName, tuple[TypeName, ...]], ClassName] = \
+            cls_instance_getter if cls_instance_getter is not None else generic_table.get_cls_instance
         self._lexer: _TypeNameLexer = _TypeNameLexer()
 
     def parse(self, src_info: SourceInfo, type_str: str) -> Optional[TypeName]:
@@ -3123,7 +3181,7 @@ class _TypeNameParser:
                 type_args: Optional[list[TypeName]] = self._parse_type_list(">")
                 if type_args is None:
                     return None
-                result = self._generic_table.get_cls_instance(result, tuple(type_args))
+                result = self._cls_instance_getter(result, tuple(type_args))
             else:
                 self._back()
                 break
@@ -3626,7 +3684,8 @@ class SymbolTable:
                 return matches[0]
             return None
 
-        self._type_name_parser: _TypeNameParser = _TypeNameParser(__real_type_getter, self._generic_table)
+        self._type_name_parser: _TypeNameParser = _TypeNameParser(
+            __real_type_getter, self._generic_table, self.get_generic_cls_instance)
 
     def _init_builtin_types(self) -> None:
         builtin_types = [
@@ -3926,6 +3985,12 @@ class SymbolTable:
         """
         获取泛型类的实例化对象。
         """
+        if all(not isinstance(x, GenericArgument) for x in t):
+            # 仅具体类型实参注册为实例化请求：实例的定义只能在定义该泛型类的
+            # 模块中生成（本模块的泛型定义表中没有它），由Project.finish的
+            # 不动点迭代把请求交给定义方（见开发疑问记录111）
+            with _GENERIC_REGISTRY_LOCK:
+                _GENERIC_CLS_INSTANCE_REQUESTS.setdefault(class_name.name, set()).add(t)
         cls = self._generic_table.get_cls_instance(class_name, t)
         if (cls.self_name, None) not in self.symbols:
             self.add_to_root(cls, cls.self_name, None)
@@ -3941,7 +4006,8 @@ class SymbolTable:
         if all(not isinstance(x, GenericArgument) for x in t):
             # 仅具体类型实参注册为实例化请求；泛型参数实参（泛型函数体内的
             # 递归调用）为伪实例，不产生定义
-            _GENERIC_FUNC_INSTANCE_REQUESTS.setdefault(func_name.name, set()).add(t)
+            with _GENERIC_REGISTRY_LOCK:
+                _GENERIC_FUNC_INSTANCE_REQUESTS.setdefault(func_name.name, set()).add(t)
         return self._generic_table.get_func_instance(func_name, t)
 
     def get_generic_instance(self, name: ClassName | FunctionName | MethodName,

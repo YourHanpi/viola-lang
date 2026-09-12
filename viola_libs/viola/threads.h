@@ -87,6 +87,9 @@ void viola$threads$enqueue(viola$threads$FuncCall *call);
 void viola$threads$getThreadsNum(viola$lang$uint32 *result, viola$threads$Listener *listener);
 /* 初始化任务监听器。senderThreadId指的是发出任务的线程ID。 */
 void viola$threads$initListener(viola$threads$Listener *listener, viola$lang$uint32 senderThreadId);
+/* 当前线程是否为主线程（线程0）。用于判断能否直接执行资源管理器派发的
+   请求（文件、os等）：非主线程需入队并等待主线程处理。 */
+viola$lang$bool viola$threads$isMainThread(void);
 /* 对相应线程的A栈进行退栈。 */
 void viola$threads$popStackA(viola$lang$uint32 threadId);
 /* 对相应线程的B栈进行退栈。 */

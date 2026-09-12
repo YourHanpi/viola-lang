@@ -136,6 +136,13 @@ typedef struct viola$threads$Listener viola$threads$Listener;
 void viola$collections$Tuple$__del__(void *_this, viola$threads$Listener *listener);
 
 /* ================= 文件 ================= */
+/* wrapper类的结构体定义由编译器按.vla中的wrapper class声明生成；此处给出
+   正式定义，供运行库与生成代码共用（见开发疑问记录113）。编译器生成的同名
+   定义带相同的include guard，二者不会冲突（本文件先行包含时以本定义为准）。
+   修改viola.io/viola.os的wrapper类声明时，必须同步修改此处，否则两侧按
+   不同的字段偏移读写。 */
+#ifndef _VIOLA_CLASS_T_viola$io$file
+#define _VIOLA_CLASS_T_viola$io$file
 typedef struct viola$io$file {
     viola$lang$uint32 $refCount;
     viola$lang$ptr $parent;
@@ -144,6 +151,45 @@ typedef struct viola$io$file {
     /* 是否为popen创建的文件（关闭时使用pclose而非fclose） */
     viola$lang$int32 isPopen;
 } viola$io$file;
+#endif
+
+/* viola.os的wrapper类（字段与viola/os.vla中的声明一致） */
+#ifndef _VIOLA_CLASS_T_viola$os$Stat
+#define _VIOLA_CLASS_T_viola$os$Stat
+typedef struct viola$os$Stat {
+    viola$lang$uint32 $refCount;
+    viola$lang$ptr $parent;
+    viola$lang$ptr $$vtable;
+    viola$lang$uint32 st_mode;
+    viola$lang$uint64 st_ino;
+    viola$lang$uint64 st_dev;
+    viola$lang$uint64 st_nlink;
+    viola$lang$uint32 st_uid;
+    viola$lang$uint32 st_gid;
+    viola$lang$uint64 st_size;
+    viola$lang$uint64 st_atime;
+    viola$lang$uint64 st_mtime;
+    viola$lang$uint64 st_ctime;
+} viola$os$Stat;
+#endif
+#ifndef _VIOLA_CLASS_T_viola$os$StatVFS
+#define _VIOLA_CLASS_T_viola$os$StatVFS
+typedef struct viola$os$StatVFS {
+    viola$lang$uint32 $refCount;
+    viola$lang$ptr $parent;
+    viola$lang$ptr $$vtable;
+    viola$lang$uint64 f_bsize;
+    viola$lang$uint64 f_frsize;
+    viola$lang$uint64 f_blocks;
+    viola$lang$uint64 f_bfree;
+    viola$lang$uint64 f_bavail;
+    viola$lang$uint64 f_files;
+    viola$lang$uint64 f_ffree;
+    viola$lang$uint64 f_favail;
+    viola$lang$uint64 f_flag;
+    viola$lang$uint64 f_namemax;
+} viola$os$StatVFS;
+#endif
 
 /* 本头文件内的数组类型（布局与编译器生成的数组结构体一致）。
    使用与编译器相同的include guard，避免与模块头文件中的typedef冲突 */

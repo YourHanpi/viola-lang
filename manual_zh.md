@@ -435,6 +435,10 @@ int c = 3 + 4; // 同步执行
 int d = a + b + c; // 在a、b计算完成后才会计算d
 ```
 
+运行库中声明的原生函数（`viola.math`、`viola.stat`、`viola.threads`、
+`viola.lang`、`viola.io`、`viola.os`）同样可以异步调用，例如
+`async string text = read(f);`、`async Stat st = viola.os.stat(".");`。
+
 ## 函数
 
 函数是一组语句的集合，可以有返回值。每个Viola程序都至少有一个函数，即`main`函数。
@@ -1200,7 +1204,7 @@ abstract class Triangle extends Shape { // 抽象类Triangle继承抽象类Shape
 
 class RightTriangle extends Triangle { // 不是抽象类，必须实现抽象方法
     public sq __new__(double a, double b) -> (this) {
-        this.super = __new__(a, b, sqrt(a * a + b * b));
+        super = Triangle(a, b, sqrt(a * a + b * b)); // 调用父类构造函数初始化父类成员
     }
     
     public fn area() -> (double result) {
@@ -1244,6 +1248,26 @@ class PCMWave::<T> {
     public sq save(string path) -> () {...}
 }
 ```
+
+引用其他模块中定义的泛型类型时，类型名可以用模块别名或完整模块路径限定
+（在声明与表达式两种位置均可用）：
+
+```viola
+import viola.util.array as array;
+
+sq main() -> () {
+    int[] data = [1, 2, 3];
+    array.Array::<int> a(data);                          // 声明
+    array.Array::<int> b = array.Array::<int>(data);     // 表达式
+}
+```
+
+以`import viola.util.array;`引入时，也可以直接书写完整模块路径
+（`viola.util.array.Array::<int>`）。注意同一文件中不要混用两种写法：
+以别名导入时，完整模块路径不参与解析。
+
+泛型类（如`viola.util.array.Array::<T>`）的实例由定义该泛型类的模块生成，
+调用方模块只需引入该模块即可正常使用。
 
 ## 重载
 

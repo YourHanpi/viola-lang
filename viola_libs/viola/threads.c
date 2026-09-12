@@ -49,6 +49,14 @@ static viola$lang$uint32 s_threadsCapacity = 0;
 static viola$threads$Thread **s_retiredThreads[64];
 static viola$lang$uint32 s_retiredThreadsNum = 0;
 
+/* 主线程标识（运行时初始化时记录）。
+   判断“当前是否主线程”不能用listener->currentThreadId：工作线程执行任务时
+   会把该字段改写为自己的线程号（见workerLoop），于是主线程在waitListener中
+   会误判为自己不是主线程而不再处理全局资源请求，导致异步任务内同步调用
+   os/io等经资源管理器派发的原生函数时死锁（见开发疑问记录113）。 */
+static pthread_t s_mainThread;
+static int s_hasMainThread = 0;
+
 /* 确保线程数组容量足够容纳newSize个线程槽（不释放旧块） */
 static void reserveThreadSlots(viola$lang$uint32 newSize) {
     if (newSize <= s_threadsCapacity) {
@@ -212,6 +220,9 @@ static void ensureRuntime(void) {
         return;
     }
     s_runtimeState = 1;
+    /* 首次进入运行时的线程即主线程（工作线程只在本函数创建之后存在） */
+    s_mainThread = pthread_self();
+    s_hasMainThread = 1;
     viola$threads$queue = createQueue();
     /* 主线程（线程0） */
     viola$threads$threadsNum = 1;
@@ -259,10 +270,19 @@ void viola$threads$enqueue(viola$threads$FuncCall *call) {
     pthread_mutex_unlock(&s_queueMutex);
 }
 
+viola$lang$bool viola$threads$isMainThread(void) {
+    if (!s_hasMainThread) {
+        ensureRuntime();
+    }
+    return s_hasMainThread && pthread_equal(pthread_self(), s_mainThread) != 0;
+}
+
 viola$lang$exception$Exception *viola$threads$waitListener(viola$threads$Listener *listener) {
     while (!listener->done) {
-        /* 主线程在等待期间处理全局资源请求（如文件读写） */
-        if (listener->currentThreadId == 0) {
+        /* 主线程在等待期间处理全局资源请求（如文件读写）。
+           注意：本任务可能正被工作线程执行（listener->currentThreadId已被其
+           改写为工作线程号），故必须按线程自身判断是否为主线程 */
+        if (viola$threads$isMainThread()) {
             viola$lang$global_resource_manager$drainRequests();
         }
         yieldCPU();

@@ -65,7 +65,9 @@ static void yieldCPU(void) {
 
 /* 子线程提交请求并等待主线程执行（主线程直接执行） */
 static void submitOrRun(viola$io$FileRequest *request, viola$threads$Listener *listener) {
-    if (listener != NULL && listener->currentThreadId == 0) {
+    /* 按当前线程判断是否为主线程：执行本任务的线程可能已改写
+       listener->currentThreadId（见开发疑问记录113） */
+    if (listener != NULL && viola$threads$isMainThread()) {
         /* 主线程直接执行 */
         viola$lang$global_resource_manager$handleRequest(&request->base);
         return;

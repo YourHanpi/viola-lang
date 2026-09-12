@@ -5,8 +5,10 @@ from viola.io import *;
 
 import viola.util.control_flow as control_flow;
 import viola.util.functools as functools;
+import viola.util.array as array;
+import viola.os;
 from viola.math import *;
-from viola.os import exit;
+from viola.os import exit, Stat;
 from viola.threads import *;
 
 fn doubleValue(int x) -> (int result) {
@@ -144,6 +146,33 @@ sq main() -> () {
     int[] filteredAsync = functools.filter::<int>(numbers, isEven, true);
     check(filteredAsync.length() == 2 && filteredAsync[0] == 2 && filteredAsync[1] == 4,
           "functools.filter async order");
+
+    // 跨模块泛型类（viola.util.array的Array::<T>，实例定义由该模块生成）
+    array.Array::<int> wrapped(numbers);
+    array.Array::<string> wrappedStrings(["a", "bb"]);
+    array.Array::<int> extended = wrapped.append(5);
+    check(wrapped.length() == 4 && extended.length() == 5 && wrapped.__getitem__(0) == 1,
+          "util.array cross-module generic class");
+    check(wrappedStrings.length() == 2 && wrappedStrings.__getitem__(1) == "bb",
+          "util.array string instance");
+
+    // 运行库原生函数的异步调用（原生$async包装，交工作线程执行）
+    async string cwdAsync = viola.os.getcwd();
+    string cwdText = cwdAsync;
+    check(cwdText.length() > 0, "os.getcwd async");
+    int32 fdSync = viola.os.open("async_probe.bin", viola.os.O_WRONLY | viola.os.O_CREAT | viola.os.O_TRUNC, 0o666);
+    uint32 bytesWritten = viola.os.write(fdSync, "1234567");
+    viola.os.close(fdSync);
+    async Stat statAsync = viola.os.stat("async_probe.bin");
+    Stat statSync = statAsync;
+    check(statSync.st_size == 7, "os.stat async");
+    async string[] entriesAsync = viola.os.listdir(".");
+    string[] entriesSync = entriesAsync;
+    check(entriesSync.length() > 0, "os.listdir async");
+    file asyncReadFile = open("test_output.txt", "r", "utf-8");
+    async string contentAsync = read(asyncReadFile);
+    string contentSync = contentAsync;
+    check(contentSync == "line1\nline2\n", "io.read async");
 
     print("0.1 runtime library test completed\n");
 }

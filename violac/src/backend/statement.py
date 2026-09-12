@@ -19,7 +19,7 @@ from .symbol import (
     ExceptionTypeName,
     AutoTypeName
 )
-from utils import CompilerException, unreachable_warning, SourceInfo, InternalCompilerException
+from utils import CompilerException, unreachable_warning, SourceInfo, InternalCompilerException, SUPER_ASSIGN_MARKER
 
 from abc import ABC, abstractmethod
 from copy import copy
@@ -194,6 +194,27 @@ class Statement(CompilingItem, ABC):
         """获取语句作为输入使用的变量集合。"""
         pass
 
+    @property
+    def used_variables(self) -> set[VariableName]:
+        """获取语句读取的所有变量（含本块/本语句内声明并赋值的变量）。
+
+        与input_variables的区别：input_variables表示“需要由外部提供的变量”，
+        语句块会减去自身的内部变量与外层已赋值的变量，用于依赖排序；而判断
+        “某变量的最后一次使用”必须用本属性，否则这些变量会被误判为不再使用
+        而提前释放（见开发疑问记录115）。
+        """
+        return self.input_variables
+
+    @property
+    def declared_variables(self) -> set[VariableName]:
+        """获取本语句（含嵌套语句）声明的变量。
+
+        释放语句只能在变量可见的作用域内插入：读取集合（used_variables）减去
+        本属性，即“本语句从外层使用的变量”，其声明位于本语句之外
+        （见开发疑问记录115）。
+        """
+        return set()
+
     @abstractmethod
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
         """对语句进行泛型实例化。"""
@@ -230,6 +251,11 @@ class Statement(CompilingItem, ABC):
     def new_variables(self) -> set[VariableName]:
         """获取语句创建的新变量集合。"""
         pass
+
+    @property
+    def new_variables_ordered(self) -> list[VariableName]:
+        """按声明顺序获取语句新声明的变量（生成确定性输出，见开发疑问记录115）。"""
+        return list(self.new_variables)
 
     @abstractmethod
     def optimize(self) -> "Statement":
@@ -360,6 +386,20 @@ class _StmtList(Statement):
     def input_variables(self) -> set[VariableName]:
         raise InternalCompilerException("Not implemented", self._src_info)
 
+    @property
+    def used_variables(self) -> set[VariableName]:
+        result: set[VariableName] = set()
+        for stmt in self._stmts:
+            result |= stmt.used_variables
+        return result
+
+    @property
+    def declared_variables(self) -> set[VariableName]:
+        result: set[VariableName] = set()
+        for stmt in self._stmts:
+            result |= stmt.declared_variables
+        return result
+
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
         raise InternalCompilerException("Not implemented", self._src_info)
 
@@ -377,6 +417,13 @@ class _StmtList(Statement):
     @property
     def new_variables(self) -> set[VariableName]:
         raise InternalCompilerException("Not implemented", self._src_info)
+
+    @property
+    def new_variables_ordered(self) -> list[VariableName]:
+        result: list[VariableName] = []
+        for stmt in self._stmts:
+            result.extend(stmt.new_variables_ordered)
+        return result
 
     def optimize(self) -> "Statement":
         raise InternalCompilerException("Not implemented", self._src_info)
@@ -576,6 +623,10 @@ class DeclStmt(Statement):
     def input_variables(self) -> set[VariableName]:
         return self._var_value.used_variables if self._var_value is not None else set()
 
+    @property
+    def declared_variables(self) -> set[VariableName]:
+        return set(self._var)
+
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
         pass
 
@@ -612,6 +663,11 @@ class DeclStmt(Statement):
     @property
     def new_variables(self) -> set[VariableName]:
         return set(self._var)
+
+    @property
+    def new_variables_ordered(self) -> list[VariableName]:
+        """按声明顺序获取本语句新增的变量（见开发疑问记录115）。"""
+        return list(self._var)
 
     def optimize(self) -> "Statement":
         if self._var_value is not None:
@@ -790,8 +846,10 @@ class AssignStmt(Statement):
             self._var.append(discard_var)
             self._discard_vars.add(discard_var)
             return
-        if self._this_cls is not None and var_name == "this.super":
-            # 调用父类的构造函数初始化this
+        if var_name == SUPER_ASSIGN_MARKER:
+            # 父类构造初始化语句（super = 父类名(...);）的赋值目标：
+            # 由前端在解析该语句时产生，用户代码无法构造出该名称
+            # （原先使用this.super，已按开发疑问记录114移除该形式）
             self._is_super = True
             return
         if self._this_cls is not None and var_name.startswith("this."):
@@ -953,6 +1011,11 @@ class AssignStmt(Statement):
     @property
     def new_variables(self) -> set[VariableName]:
         return set(self._var)
+
+    @property
+    def new_variables_ordered(self) -> list[VariableName]:
+        """按声明顺序获取本语句新增的变量（见开发疑问记录115）。"""
+        return list(self._var)
 
     def optimize(self, foldable: Optional[set[VariableName]] = None) -> "Statement":
         """
@@ -1373,6 +1436,18 @@ class ThrowStmt(Statement):
         return self._to_throw_expr.used_variables | set(
             *map(lambda finally_stmt: finally_stmt.input_variables, self._finally_stmt_list)
         )
+
+    @property
+    def used_variables(self) -> set[VariableName]:
+        return self._to_throw_expr.used_variables | set(
+            *map(lambda finally_stmt: finally_stmt.used_variables, self._finally_stmt_list)
+        )
+
+    @property
+    def declared_variables(self) -> set[VariableName]:
+        if len(self._finally_stmt_list) == 0:
+            return set()
+        return set().union(*map(lambda x: x.declared_variables, self._finally_stmt_list))
 
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
         self._finally_stmt_list.append(finally_stmt)
@@ -1812,6 +1887,16 @@ class IfStmt(CondStmt):
         return self._cond_expr.used_variables | self._stmt.input_variables | set().union(*map(lambda x: x.input_variables, self._branches))
 
     @property
+    def used_variables(self) -> set[VariableName]:
+        return self._cond_expr.used_variables | self._stmt.used_variables | \
+            set().union(*map(lambda x: x.used_variables, self._branches))
+
+    @property
+    def declared_variables(self) -> set[VariableName]:
+        return self._stmt.declared_variables | \
+            set().union(*map(lambda x: x.declared_variables, self._branches))
+
+    @property
     def _inner_text(self) -> str:
         """渲染if及其全部elif/else分支。"""
         result: str = super()._inner_text
@@ -1865,6 +1950,15 @@ class CatchStmt(Statement):
     @property
     def input_variables(self) -> set[VariableName]:
         return self._stmt.input_variables
+
+    @property
+    def used_variables(self) -> set[VariableName]:
+        return self._stmt.used_variables
+
+    @property
+    def declared_variables(self) -> set[VariableName]:
+        """catch子句声明的异常变量与catch体内的变量（其作用域限于catch体）。"""
+        return self._stmt.declared_variables | {self._except_decl}
 
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
         self._stmt.insert_finally_stmt(finally_stmt)
@@ -1983,6 +2077,14 @@ class FinallyStmt(Statement):
     @property
     def input_variables(self) -> set[VariableName]:
         return self._stmt.input_variables
+
+    @property
+    def used_variables(self) -> set[VariableName]:
+        return self._stmt.used_variables
+
+    @property
+    def declared_variables(self) -> set[VariableName]:
+        return self._stmt.declared_variables
 
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
         pass
@@ -2114,6 +2216,31 @@ class TryStmt(Statement):
         return self._try_stmt.input_variables | set(
             *map(lambda except_stmt: except_stmt.input_variables, self._except_stmt)
         )
+
+    @property
+    def used_variables(self) -> set[VariableName]:
+        """try/catch/finally各分支读取的全部变量。
+
+        释放语句的定位按本属性判断最后一次使用：try块内的调用以及finally块
+        读取的变量同样算作使用（原先只统计input_variables，块内已赋值的变量
+        被减去，导致释放语句被插到仍在使用该变量的语句之前，
+        见开发疑问记录115）。
+        """
+        result: set[VariableName] = self._try_stmt.used_variables | set(
+            *map(lambda except_stmt: except_stmt.used_variables, self._except_stmt)
+        )
+        if self._finally_stmt is not None:
+            result |= self._finally_stmt.used_variables
+        return result
+
+    @property
+    def declared_variables(self) -> set[VariableName]:
+        result: set[VariableName] = self._try_stmt.declared_variables | set(
+            *map(lambda except_stmt: except_stmt.declared_variables, self._except_stmt)
+        )
+        if self._finally_stmt is not None:
+            result |= self._finally_stmt.declared_variables
+        return result
 
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
         self._try_stmt.insert_finally_stmt(finally_stmt)
@@ -2452,11 +2579,15 @@ class BlockStmt(Statement):
         used_variables: set[VariableName] = set()
         new_stmt_list: list[Statement] = []
         for stmt in self._stmt:
-            stmt_used_variables: set[VariableName] = stmt.input_variables
-            if isinstance(stmt, BlockStmt):
-                # 嵌套语句块使用的外层变量同样属于本块（供闭包捕获等使用）
-                stmt_used_variables = stmt_used_variables | set(stmt._used_outer_variables)
-            for var in stmt_used_variables:
+            # 判断“最后一次使用”必须用used_variables（input_variables已减去
+            # 块内定义/已赋值的变量，会把仍在使用该变量的语句误判为不使用，
+            # 使释放语句插到使用之前）；再减去本语句自身声明的变量，因为那些
+            # 变量的作用域在本语句之内，其释放由声明处所在的块负责
+            # （见开发疑问记录115）。
+            # 迭代顺序按变量名排序，使生成的释放代码与哈希种子无关
+            stmt_used_variables: set[VariableName] = \
+                stmt.used_variables - stmt.declared_variables
+            for var in sorted(stmt_used_variables, key=lambda v: v.name):
                 if var not in used_variables and var not in self._outer_variables and not var.is_global:
                     used_variables.add(var)
                     # 变量已在本块内完成最后一次使用并释放，不再向外层传播
@@ -2537,6 +2668,26 @@ class BlockStmt(Statement):
     def input_variables(self) -> set[VariableName]:
         return self._input_variables
 
+    @property
+    def used_variables(self) -> set[VariableName]:
+        """本块从外层读取的变量（供外层块定位“变量的最后一次使用”）。
+
+        不含本块内声明的变量：那些变量由本块自身的释放逻辑处理。
+        _input_variables只统计“尚未由外层赋值”的变量，故需并入
+        _used_outer_variables（本块内读取到的外层变量）。
+        注意不可递归合并嵌套语句的读取集合：嵌套块内声明的变量（含表达式
+        临时变量）由嵌套块自行释放，向外层传播会使外层在其作用域之外
+        生成释放语句（见开发疑问记录115）。
+        """
+        return self._input_variables | set(self._used_outer_variables)
+
+    @property
+    def declared_variables(self) -> set[VariableName]:
+        result: set[VariableName] = set()
+        for stmt in self._stmt:
+            result |= stmt.declared_variables
+        return result
+
     def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
         for stmt in self._stmt:
             stmt.insert_finally_stmt(finally_stmt)
@@ -2562,6 +2713,15 @@ class BlockStmt(Statement):
     @property
     def new_variables(self) -> set[VariableName]:
         return set(self._new_variables)
+
+    @property
+    def new_variables_ordered(self) -> list[VariableName]:
+        """按声明顺序获取本块新增的变量。
+
+        用于生成函数级清理代码（释放顺序不确定会使同一源码在不同编译进程下
+        生成不同的输出，见开发疑问记录115）。
+        """
+        return list(self._new_variables)
 
     def optimize(self) -> "BlockStmt":
         const_vars: dict[VariableName, Expression] = {}

@@ -13,431 +13,24 @@ typedef struct viola$lang$float64$$array {
 } viola$lang$float64$$array;
 #endif
 
-#ifndef _VIOLA_ARRAY_T_viola$lang$float64$$array
-#define _VIOLA_ARRAY_T_viola$lang$float64$$array
-typedef struct viola$lang$float64$$array {
+#ifndef _VIOLA_ARRAY_T_viola$lang$uint8$$array
+#define _VIOLA_ARRAY_T_viola$lang$uint8$$array
+typedef struct viola$lang$uint8$$array {
 	viola$lang$uint32 $refCount;
 	viola$lang$ptr $parent;
-	viola$lang$float64 data;
+	viola$lang$uint8 data;
 	viola$lang$uint64 size;
-} viola$lang$float64$$array;
+} viola$lang$uint8$$array;
 #endif
 
-#ifndef _VIOLA_ARRAY_T_viola$lang$float64$$array
-#define _VIOLA_ARRAY_T_viola$lang$float64$$array
-typedef struct viola$lang$float64$$array {
+#ifndef _VIOLA_ARRAY_T_viola$lang$string$$array
+#define _VIOLA_ARRAY_T_viola$lang$string$$array
+typedef struct viola$lang$string$$array {
 	viola$lang$uint32 $refCount;
 	viola$lang$ptr $parent;
-	viola$lang$float64 data;
+	viola$lang$string ** data;
 	viola$lang$uint64 size;
-} viola$lang$float64$$array;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
+} viola$lang$string$$array;
 #endif
 
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
@@ -461,352 +54,6 @@ typedef struct {
 	viola$lang$float64  $1;
 
 } viola$collections$Tuple$viola$lang$float64$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-	viola$lang$float64  $1;
-
-} viola$collections$Tuple$viola$lang$float64$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-	viola$lang$float64  $1;
-
-} viola$collections$Tuple$viola$lang$float64$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-	viola$lang$float64  $1;
-
-} viola$collections$Tuple$viola$lang$float64$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-	viola$lang$float64  $1;
-
-} viola$collections$Tuple$viola$lang$float64$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-	viola$lang$float64  $1;
-
-} viola$collections$Tuple$viola$lang$float64$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
 #endif
 
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
@@ -831,17 +78,6 @@ typedef struct {
 } viola$collections$Tuple$viola$lang$uint64;
 #endif
 
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$int32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$int32
 typedef struct {
@@ -852,52 +88,6 @@ typedef struct {
 	viola$lang$int32  $1;
 
 } viola$collections$Tuple$viola$lang$float64$viola$lang$int32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$int32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$int32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-	viola$lang$int32  $1;
-
-} viola$collections$Tuple$viola$lang$float64$viola$lang$int32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int64$viola$lang$int64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int64$viola$lang$int64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$int64  $0;
-	viola$lang$int64  $1;
-
-} viola$collections$Tuple$viola$lang$int64$viola$lang$int64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$int64  $0;
-
-} viola$collections$Tuple$viola$lang$int64;
 #endif
 
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int64$viola$lang$int64
@@ -933,40 +123,6 @@ typedef struct {
 	viola$lang$uint32  $1;
 
 } viola$collections$Tuple$viola$lang$uint32$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint64  $0;
-
-} viola$collections$Tuple$viola$lang$uint64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-	viola$lang$uint32  $1;
-
-} viola$collections$Tuple$viola$lang$uint32$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint64  $0;
-
-} viola$collections$Tuple$viola$lang$uint64;
 #endif
 
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$$array
@@ -978,17 +134,6 @@ typedef struct {
 	viola$lang$float64$$array *  $0;
 
 } viola$collections$Tuple$viola$lang$float64$$array;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
 #endif
 
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$$array$viola$lang$float64$$array
@@ -1003,74 +148,6 @@ typedef struct {
 } viola$collections$Tuple$viola$lang$float64$$array$viola$lang$float64$$array;
 #endif
 
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-	viola$lang$float64  $1;
-
-} viola$collections$Tuple$viola$lang$float64$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-	viola$lang$float64  $1;
-
-} viola$collections$Tuple$viola$lang$float64$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
 typedef struct {
@@ -1080,215 +157,6 @@ typedef struct {
 	viola$lang$bool  $0;
 
 } viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$bool  $0;
-
-} viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$float64  $0;
-
-} viola$collections$Tuple$viola$lang$float64;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$bool  $0;
-
-} viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$bool  $0;
-
-} viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$bool  $0;
-
-} viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$bool  $0;
-
-} viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$bool  $0;
-
-} viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$bool  $0;
-
-} viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$bool  $0;
-
-} viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$bool  $0;
-
-} viola$collections$Tuple$viola$lang$bool;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
 #endif
 
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string
@@ -1302,17 +170,6 @@ typedef struct {
 } viola$collections$Tuple$viola$lang$string;
 #endif
 
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$
 typedef struct {
@@ -1321,39 +178,6 @@ typedef struct {
 	viola$lang$uint64 size;
 
 } viola$collections$Tuple$;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
-#endif
-
-#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
-typedef struct {
-	viola$lang$uint32 $refCount;
-	viola$lang$ptr $parent;
-	viola$lang$uint64 size;
-	viola$lang$uint32  $0;
-
-} viola$collections$Tuple$viola$lang$uint32;
 #endif
 
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$object
@@ -1365,6 +189,220 @@ typedef struct {
 	viola$lang$object *  $0;
 
 } viola$collections$Tuple$viola$lang$object;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$string$viola$lang$string
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$string$viola$lang$string
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$string *  $0;
+	viola$lang$string *  $1;
+	viola$lang$string *  $2;
+
+} viola$collections$Tuple$viola$lang$string$viola$lang$string$viola$lang$string;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$io$file *  $0;
+
+} viola$collections$Tuple$viola$io$file;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint8$$array
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint8$$array
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$uint8$$array *  $0;
+
+} viola$collections$Tuple$viola$lang$uint8$$array;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file$viola$lang$string
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file$viola$lang$string
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$io$file *  $0;
+	viola$lang$string *  $1;
+
+} viola$collections$Tuple$viola$io$file$viola$lang$string;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file$viola$lang$uint8$$array
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file$viola$lang$uint8$$array
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$io$file *  $0;
+	viola$lang$uint8$$array *  $1;
+
+} viola$collections$Tuple$viola$io$file$viola$lang$uint8$$array;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$uint32
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$uint32
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$string *  $0;
+	viola$lang$uint32  $1;
+
+} viola$collections$Tuple$viola$lang$string$viola$lang$uint32;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$string *  $0;
+	viola$lang$uint32  $1;
+	viola$lang$uint32  $2;
+
+} viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$int32  $0;
+
+} viola$collections$Tuple$viola$lang$int32;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$int32
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$int32
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$int32  $0;
+	viola$lang$int32  $1;
+
+} viola$collections$Tuple$viola$lang$int32$viola$lang$int32;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$uint32
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$uint32
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$int32  $0;
+	viola$lang$uint32  $1;
+
+} viola$collections$Tuple$viola$lang$int32$viola$lang$uint32;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$uint32$viola$lang$uint32
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$uint32$viola$lang$uint32
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$int32  $0;
+	viola$lang$uint32  $1;
+	viola$lang$uint32  $2;
+
+} viola$collections$Tuple$viola$lang$int32$viola$lang$uint32$viola$lang$uint32;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$os$Stat
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$os$Stat
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$os$Stat *  $0;
+
+} viola$collections$Tuple$viola$os$Stat;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$string
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$string
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$string *  $0;
+	viola$lang$string *  $1;
+
+} viola$collections$Tuple$viola$lang$string$viola$lang$string;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$$array
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$$array
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$string$$array *  $0;
+
+} viola$collections$Tuple$viola$lang$string$$array;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$int32$viola$lang$int32
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$int32$viola$lang$int32
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$int32  $0;
+	viola$lang$int32  $1;
+	viola$lang$int32  $2;
+
+} viola$collections$Tuple$viola$lang$int32$viola$lang$int32$viola$lang$int32;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$int32
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$int32
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$string *  $0;
+	viola$lang$int32  $1;
+
+} viola$collections$Tuple$viola$lang$string$viola$lang$int32;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$os$StatVFS
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$os$StatVFS
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$os$StatVFS *  $0;
+
+} viola$collections$Tuple$viola$os$StatVFS;
+#endif
+
+#ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$string
+#define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$string
+typedef struct {
+	viola$lang$uint32 $refCount;
+	viola$lang$ptr $parent;
+	viola$lang$uint64 size;
+	viola$lang$int32  $0;
+	viola$lang$string *  $1;
+
+} viola$collections$Tuple$viola$lang$int32$viola$lang$string;
 #endif
 
 /* 同步函数原型 */
@@ -1430,6 +468,77 @@ void viola$threads$delThread(viola$lang$uint32 num, viola$threads$Listener *list
 void viola$threads$getThreadsNum(viola$lang$uint32 * result, viola$threads$Listener *listener);
 void viola$threads$setThreadsNum(viola$lang$uint32 num, viola$threads$Listener *listener);
 void viola$lang$del(viola$lang$object * _this, viola$threads$Listener *listener);
+void viola$io$print$print(viola$lang$string * text, viola$threads$Listener *listener);
+void viola$io$print$perror(viola$lang$string * text, viola$threads$Listener *listener);
+void viola$io$print$input(viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$io$file$open(viola$lang$string * path, viola$lang$string * mode, viola$lang$string * encoding, viola$io$file ** f, viola$threads$Listener *listener);
+void viola$io$file$read(viola$io$file * f, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$io$file$readBytes(viola$io$file * f, viola$lang$uint8$$array ** result, viola$threads$Listener *listener);
+void viola$io$file$write(viola$io$file * f, viola$lang$string * content, viola$threads$Listener *listener);
+void viola$io$file$writeBytes(viola$io$file * f, viola$lang$uint8$$array * content, viola$threads$Listener *listener);
+void viola$os$access(viola$lang$string * path, viola$lang$uint32 mode, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$chdir(viola$lang$string * path, viola$threads$Listener *listener);
+void viola$os$chflags(viola$lang$string * path, viola$lang$uint32 flags, viola$threads$Listener *listener);
+void viola$os$chmod(viola$lang$string * path, viola$lang$uint32 mode, viola$threads$Listener *listener);
+void viola$os$chown(viola$lang$string * path, viola$lang$uint32 uid, viola$lang$uint32 gid, viola$threads$Listener *listener);
+void viola$os$chroot(viola$lang$string * path, viola$threads$Listener *listener);
+void viola$os$close(viola$lang$int32 fd, viola$threads$Listener *listener);
+void viola$os$closerange(viola$lang$int32 fd1, viola$lang$int32 fd2, viola$threads$Listener *listener);
+void viola$os$dup(viola$lang$int32 fd, viola$lang$int32 * result, viola$threads$Listener *listener);
+void viola$os$dup2(viola$lang$int32 fd1, viola$lang$int32 fd2, viola$lang$int32 * result, viola$threads$Listener *listener);
+void viola$os$fchdir(viola$lang$int32 fd, viola$threads$Listener *listener);
+void viola$os$fchmod(viola$lang$int32 fd, viola$lang$uint32 mode, viola$threads$Listener *listener);
+void viola$os$fchown(viola$lang$int32 fd, viola$lang$uint32 uid, viola$lang$uint32 gid, viola$threads$Listener *listener);
+void viola$os$fdatasync(viola$lang$int32 fd, viola$threads$Listener *listener);
+void viola$os$fdopen(viola$lang$int32 fd, viola$io$file ** result, viola$threads$Listener *listener);
+void viola$os$fpathconf(viola$lang$int32 fd, viola$lang$int32 name, viola$lang$int32 * result, viola$threads$Listener *listener);
+void viola$os$fstat(viola$lang$int32 fd, viola$os$Stat ** result, viola$threads$Listener *listener);
+void viola$os$ftruncate(viola$lang$int32 fd, viola$lang$uint32 size, viola$threads$Listener *listener);
+void viola$os$getcwd(viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$getcwdb(viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$getgid(viola$lang$uint32 * result, viola$threads$Listener *listener);
+void viola$os$getuid(viola$lang$uint32 * result, viola$threads$Listener *listener);
+void viola$os$isatty(viola$lang$int32 fd, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$lchflags(viola$lang$string * path, viola$lang$uint32 flags, viola$threads$Listener *listener);
+void viola$os$lchmod(viola$lang$string * path, viola$lang$uint32 mode, viola$threads$Listener *listener);
+void viola$os$lchown(viola$lang$string * path, viola$lang$uint32 uid, viola$lang$uint32 gid, viola$threads$Listener *listener);
+void viola$os$link(viola$lang$string * path, viola$lang$string * newPath, viola$threads$Listener *listener);
+void viola$os$listdir(viola$lang$string * path, viola$lang$string$$array ** result, viola$threads$Listener *listener);
+void viola$os$lseek(viola$lang$int32 fd, viola$lang$int32 offset, viola$lang$int32 whence, viola$lang$int32 * result, viola$threads$Listener *listener);
+void viola$os$lstat(viola$lang$string * path, viola$os$Stat ** result, viola$threads$Listener *listener);
+void viola$os$major(viola$lang$uint32 dev, viola$lang$uint32 * result, viola$threads$Listener *listener);
+void viola$os$makedev(viola$lang$uint32 major, viola$lang$uint32 minor, viola$lang$uint32 * result, viola$threads$Listener *listener);
+void viola$os$makedirs(viola$lang$string * path, viola$lang$uint32 mode, viola$threads$Listener *listener);
+void viola$os$minor(viola$lang$uint32 dev, viola$lang$uint32 * result, viola$threads$Listener *listener);
+void viola$os$mkdir(viola$lang$string * path, viola$lang$uint32 mode, viola$threads$Listener *listener);
+void viola$os$mkfifo(viola$lang$string * path, viola$lang$uint32 mode, viola$threads$Listener *listener);
+void viola$os$mknod(viola$lang$string * path, viola$lang$uint32 mode, viola$lang$uint32 dev, viola$threads$Listener *listener);
+void viola$os$open(viola$lang$string * path, viola$lang$uint32 flags, viola$lang$uint32 mode, viola$lang$int32 * fd, viola$threads$Listener *listener);
+void viola$os$openpty(viola$lang$int32 * result, viola$threads$Listener *listener);
+void viola$os$pathconf(viola$lang$string * path, viola$lang$int32 name, viola$lang$int32 * result, viola$threads$Listener *listener);
+void viola$os$pipe(viola$lang$int32 * readFd, viola$lang$int32 * writeFd, viola$threads$Listener *listener);
+void viola$os$popen(viola$lang$string * command, viola$lang$string * mode, viola$io$file ** result, viola$threads$Listener *listener);
+void viola$os$read(viola$lang$int32 fd, viola$lang$uint32 nbyte, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$readlink(viola$lang$string * path, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$remove(viola$lang$string * path, viola$threads$Listener *listener);
+void viola$os$removedirs(viola$lang$string * path, viola$threads$Listener *listener);
+void viola$os$rename(viola$lang$string * oldPath, viola$lang$string * newPath, viola$threads$Listener *listener);
+void viola$os$renames(viola$lang$string * oldPath, viola$lang$string * newPath, viola$threads$Listener *listener);
+void viola$os$rmdir(viola$lang$string * path, viola$threads$Listener *listener);
+void viola$os$stat(viola$lang$string * path, viola$os$Stat ** result, viola$threads$Listener *listener);
+void viola$os$stat_float_times(viola$lang$bool useFloat, viola$threads$Listener *listener);
+void viola$os$statvfs(viola$lang$string * path, viola$os$StatVFS ** result, viola$threads$Listener *listener);
+void viola$os$tcgetpgrp(viola$lang$int32 fd, viola$lang$int32 * result, viola$threads$Listener *listener);
+void viola$os$tcsetpgrp(viola$lang$int32 fd, viola$lang$int32 pgid, viola$threads$Listener *listener);
+void viola$os$ttyname(viola$lang$int32 fd, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$unlink(viola$lang$string * path, viola$threads$Listener *listener);
+void viola$os$utime(viola$lang$string * path, viola$lang$uint32 atime, viola$lang$uint32 mtime, viola$threads$Listener *listener);
+void viola$os$write(viola$lang$int32 fd, viola$lang$string * data, viola$lang$uint32 * result, viola$threads$Listener *listener);
+void viola$os$sleep(viola$lang$uint64 milliseconds, viola$threads$Listener *listener);
+void viola$os$exit(viola$lang$int32 code, viola$threads$Listener *listener);
+void viola$os$getEnv(viola$lang$string * name, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$time(viola$lang$uint64 * result, viola$threads$Listener *listener);
+void viola$os$system(viola$lang$string * command, viola$lang$int32 * result, viola$threads$Listener *listener);
 
 void viola$math$sqrt$async(viola$collections$Tuple$viola$lang$float64 * params, viola$collections$Tuple$viola$lang$float64 * returns,
                           viola$threads$Listener *listener) {
@@ -3474,6 +2583,7 @@ void viola$threads$addThread$async(viola$collections$Tuple$viola$lang$uint32 * p
 	viola$lang$exception$Exception *$$exc = listener->exception;
 	viola$threads$pushStackB(listener->currentThreadId);
 	do {
+		(void)returns;
 		viola$lang$uint32 num;
 		num = params->$0;
 		if ($$exc) goto $$_async_err;
@@ -3507,6 +2617,7 @@ void viola$threads$delThread$async(viola$collections$Tuple$viola$lang$uint32 * p
 	viola$lang$exception$Exception *$$exc = listener->exception;
 	viola$threads$pushStackB(listener->currentThreadId);
 	do {
+		(void)returns;
 		viola$lang$uint32 num;
 		num = params->$0;
 		if ($$exc) goto $$_async_err;
@@ -3540,6 +2651,7 @@ void viola$threads$getThreadsNum$async(viola$collections$Tuple$ * params, viola$
 	viola$lang$exception$Exception *$$exc = listener->exception;
 	viola$threads$pushStackB(listener->currentThreadId);
 	do {
+		(void)params;
 		viola$lang$uint32 result;
 		viola$threads$getThreadsNum(&result, listener);
 		if ($$exc == NULL) { $$exc = listener->exception; }
@@ -3572,6 +2684,7 @@ void viola$threads$setThreadsNum$async(viola$collections$Tuple$viola$lang$uint32
 	viola$lang$exception$Exception *$$exc = listener->exception;
 	viola$threads$pushStackB(listener->currentThreadId);
 	do {
+		(void)returns;
 		viola$lang$uint32 num;
 		num = params->$0;
 		if ($$exc) goto $$_async_err;
@@ -3605,11 +2718,2568 @@ void viola$lang$del$async(viola$collections$Tuple$viola$lang$object * params, vi
 	viola$lang$exception$Exception *$$exc = listener->exception;
 	viola$threads$pushStackB(listener->currentThreadId);
 	do {
+		(void)returns;
 		viola$lang$object * _this = NULL;
 		_this = params->$0;
 		if ($$exc) goto $$_async_err;
 		viola$lang$del(_this, listener);
 		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$io$print$print$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * text = NULL;
+		text = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$io$print$print(text, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$io$print$perror$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * text = NULL;
+		text = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$io$print$perror(text, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$io$print$input$async(viola$collections$Tuple$ * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)params;
+		viola$lang$string * result = NULL;
+		viola$io$print$input(&result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$io$file$open$async(viola$collections$Tuple$viola$lang$string$viola$lang$string$viola$lang$string * params, viola$collections$Tuple$viola$io$file * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string * mode = NULL;
+		viola$lang$string * encoding = NULL;
+		viola$io$file * f = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		encoding = params->$2;
+		if ($$exc) goto $$_async_err;
+		viola$io$file$open(path, mode, encoding, &f, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = f;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$io$file$read$async(viola$collections$Tuple$viola$io$file * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$io$file * f = NULL;
+		viola$lang$string * result = NULL;
+		f = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$io$file$read(f, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$io$file$readBytes$async(viola$collections$Tuple$viola$io$file * params, viola$collections$Tuple$viola$lang$uint8$$array * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$io$file * f = NULL;
+		viola$lang$uint8$$array * result = NULL;
+		f = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$io$file$readBytes(f, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$io$file$write$async(viola$collections$Tuple$viola$io$file$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$io$file * f = NULL;
+		viola$lang$string * content = NULL;
+		f = params->$0;
+		if ($$exc) goto $$_async_err;
+		content = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$io$file$write(f, content, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$io$file$writeBytes$async(viola$collections$Tuple$viola$io$file$viola$lang$uint8$$array * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$io$file * f = NULL;
+		viola$lang$uint8$$array * content = NULL;
+		f = params->$0;
+		if ($$exc) goto $$_async_err;
+		content = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$io$file$writeBytes(f, content, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$access$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32 * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 mode;
+		viola$lang$bool result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$access(path, mode, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$chdir$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$chdir(path, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$chflags$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 flags;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		flags = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$chflags(path, flags, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$chmod$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 mode;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$chmod(path, mode, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$chown$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 uid;
+		viola$lang$uint32 gid;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		uid = params->$1;
+		if ($$exc) goto $$_async_err;
+		gid = params->$2;
+		if ($$exc) goto $$_async_err;
+		viola$os$chown(path, uid, gid, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$chroot$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$chroot(path, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$close$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$int32 fd;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$close(fd, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$closerange$async(viola$collections$Tuple$viola$lang$int32$viola$lang$int32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$int32 fd1;
+		viola$lang$int32 fd2;
+		fd1 = params->$0;
+		if ($$exc) goto $$_async_err;
+		fd2 = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$closerange(fd1, fd2, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$dup$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$lang$int32 result;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$dup(fd, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$dup2$async(viola$collections$Tuple$viola$lang$int32$viola$lang$int32 * params, viola$collections$Tuple$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd1;
+		viola$lang$int32 fd2;
+		viola$lang$int32 result;
+		fd1 = params->$0;
+		if ($$exc) goto $$_async_err;
+		fd2 = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$dup2(fd1, fd2, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$fchdir$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$int32 fd;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$fchdir(fd, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$fchmod$async(viola$collections$Tuple$viola$lang$int32$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$int32 fd;
+		viola$lang$uint32 mode;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$fchmod(fd, mode, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$fchown$async(viola$collections$Tuple$viola$lang$int32$viola$lang$uint32$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$int32 fd;
+		viola$lang$uint32 uid;
+		viola$lang$uint32 gid;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		uid = params->$1;
+		if ($$exc) goto $$_async_err;
+		gid = params->$2;
+		if ($$exc) goto $$_async_err;
+		viola$os$fchown(fd, uid, gid, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$fdatasync$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$int32 fd;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$fdatasync(fd, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$fdopen$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$viola$io$file * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$io$file * result = NULL;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$fdopen(fd, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$fpathconf$async(viola$collections$Tuple$viola$lang$int32$viola$lang$int32 * params, viola$collections$Tuple$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$lang$int32 name;
+		viola$lang$int32 result;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		name = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$fpathconf(fd, name, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$fstat$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$viola$os$Stat * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$os$Stat * result = NULL;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$fstat(fd, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$ftruncate$async(viola$collections$Tuple$viola$lang$int32$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$int32 fd;
+		viola$lang$uint32 size;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		size = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$ftruncate(fd, size, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$getcwd$async(viola$collections$Tuple$ * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)params;
+		viola$lang$string * result = NULL;
+		viola$os$getcwd(&result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$getcwdb$async(viola$collections$Tuple$ * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)params;
+		viola$lang$string * result = NULL;
+		viola$os$getcwdb(&result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$getgid$async(viola$collections$Tuple$ * params, viola$collections$Tuple$viola$lang$uint32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)params;
+		viola$lang$uint32 result;
+		viola$os$getgid(&result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$getuid$async(viola$collections$Tuple$ * params, viola$collections$Tuple$viola$lang$uint32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)params;
+		viola$lang$uint32 result;
+		viola$os$getuid(&result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$isatty$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$lang$bool result;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$isatty(fd, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$lchflags$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 flags;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		flags = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$lchflags(path, flags, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$lchmod$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 mode;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$lchmod(path, mode, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$lchown$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 uid;
+		viola$lang$uint32 gid;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		uid = params->$1;
+		if ($$exc) goto $$_async_err;
+		gid = params->$2;
+		if ($$exc) goto $$_async_err;
+		viola$os$lchown(path, uid, gid, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$link$async(viola$collections$Tuple$viola$lang$string$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$string * newPath = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		newPath = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$link(path, newPath, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$listdir$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string$$array * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string$$array * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$listdir(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$lseek$async(viola$collections$Tuple$viola$lang$int32$viola$lang$int32$viola$lang$int32 * params, viola$collections$Tuple$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$lang$int32 offset;
+		viola$lang$int32 whence;
+		viola$lang$int32 result;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		offset = params->$1;
+		if ($$exc) goto $$_async_err;
+		whence = params->$2;
+		if ($$exc) goto $$_async_err;
+		viola$os$lseek(fd, offset, whence, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$lstat$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$os$Stat * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$os$Stat * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$lstat(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$major$async(viola$collections$Tuple$viola$lang$uint32 * params, viola$collections$Tuple$viola$lang$uint32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$uint32 dev;
+		viola$lang$uint32 result;
+		dev = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$major(dev, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$makedev$async(viola$collections$Tuple$viola$lang$uint32$viola$lang$uint32 * params, viola$collections$Tuple$viola$lang$uint32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$uint32 major;
+		viola$lang$uint32 minor;
+		viola$lang$uint32 result;
+		major = params->$0;
+		if ($$exc) goto $$_async_err;
+		minor = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$makedev(major, minor, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$makedirs$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 mode;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$makedirs(path, mode, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$minor$async(viola$collections$Tuple$viola$lang$uint32 * params, viola$collections$Tuple$viola$lang$uint32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$uint32 dev;
+		viola$lang$uint32 result;
+		dev = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$minor(dev, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$mkdir$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 mode;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$mkdir(path, mode, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$mkfifo$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 mode;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$mkfifo(path, mode, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$mknod$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 mode;
+		viola$lang$uint32 dev;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		dev = params->$2;
+		if ($$exc) goto $$_async_err;
+		viola$os$mknod(path, mode, dev, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$open$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32 * params, viola$collections$Tuple$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 flags;
+		viola$lang$uint32 mode;
+		viola$lang$int32 fd;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		flags = params->$1;
+		if ($$exc) goto $$_async_err;
+		mode = params->$2;
+		if ($$exc) goto $$_async_err;
+		viola$os$open(path, flags, mode, &fd, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = fd;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$openpty$async(viola$collections$Tuple$ * params, viola$collections$Tuple$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)params;
+		viola$lang$int32 result;
+		viola$os$openpty(&result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$pathconf$async(viola$collections$Tuple$viola$lang$string$viola$lang$int32 * params, viola$collections$Tuple$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$int32 name;
+		viola$lang$int32 result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		name = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$pathconf(path, name, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$pipe$async(viola$collections$Tuple$ * params, viola$collections$Tuple$viola$lang$int32$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)params;
+		viola$lang$int32 readFd;
+		viola$lang$int32 writeFd;
+		viola$os$pipe(&readFd, &writeFd, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = readFd;
+		returns->$1 = writeFd;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$popen$async(viola$collections$Tuple$viola$lang$string$viola$lang$string * params, viola$collections$Tuple$viola$io$file * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * command = NULL;
+		viola$lang$string * mode = NULL;
+		viola$io$file * result = NULL;
+		command = params->$0;
+		if ($$exc) goto $$_async_err;
+		mode = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$popen(command, mode, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$read$async(viola$collections$Tuple$viola$lang$int32$viola$lang$uint32 * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$lang$uint32 nbyte;
+		viola$lang$string * result = NULL;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		nbyte = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$read(fd, nbyte, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$readlink$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$readlink(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$remove$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$remove(path, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$removedirs$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$removedirs(path, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$rename$async(viola$collections$Tuple$viola$lang$string$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * oldPath = NULL;
+		viola$lang$string * newPath = NULL;
+		oldPath = params->$0;
+		if ($$exc) goto $$_async_err;
+		newPath = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$rename(oldPath, newPath, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$renames$async(viola$collections$Tuple$viola$lang$string$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * oldPath = NULL;
+		viola$lang$string * newPath = NULL;
+		oldPath = params->$0;
+		if ($$exc) goto $$_async_err;
+		newPath = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$renames(oldPath, newPath, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$rmdir$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$rmdir(path, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$stat$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$os$Stat * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$os$Stat * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$stat(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$stat_float_times$async(viola$collections$Tuple$viola$lang$bool * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$bool useFloat;
+		useFloat = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$stat_float_times(useFloat, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$statvfs$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$os$StatVFS * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$os$StatVFS * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$statvfs(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$tcgetpgrp$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$lang$int32 result;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$tcgetpgrp(fd, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$tcsetpgrp$async(viola$collections$Tuple$viola$lang$int32$viola$lang$int32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$int32 fd;
+		viola$lang$int32 pgid;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		pgid = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$tcsetpgrp(fd, pgid, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$ttyname$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$lang$string * result = NULL;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$ttyname(fd, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$unlink$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$unlink(path, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$utime$async(viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$string * path = NULL;
+		viola$lang$uint32 atime;
+		viola$lang$uint32 mtime;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		atime = params->$1;
+		if ($$exc) goto $$_async_err;
+		mtime = params->$2;
+		if ($$exc) goto $$_async_err;
+		viola$os$utime(path, atime, mtime, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$write$async(viola$collections$Tuple$viola$lang$int32$viola$lang$string * params, viola$collections$Tuple$viola$lang$uint32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd;
+		viola$lang$string * data = NULL;
+		viola$lang$uint32 result;
+		fd = params->$0;
+		if ($$exc) goto $$_async_err;
+		data = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$write(fd, data, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$sleep$async(viola$collections$Tuple$viola$lang$uint64 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$uint64 milliseconds;
+		milliseconds = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$sleep(milliseconds, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$exit$async(viola$collections$Tuple$viola$lang$int32 * params, viola$collections$Tuple$ * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)returns;
+		viola$lang$int32 code;
+		code = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$exit(code, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$getEnv$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * name = NULL;
+		viola$lang$string * result = NULL;
+		name = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$getEnv(name, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$time$async(viola$collections$Tuple$ * params, viola$collections$Tuple$viola$lang$uint64 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		(void)params;
+		viola$lang$uint64 result;
+		viola$os$time(&result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$system$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$int32 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * command = NULL;
+		viola$lang$int32 result;
+		command = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$system(command, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
 		if ($$exc) goto $$_async_err;
 		goto $$_async_done;
 	} while (0);

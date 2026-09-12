@@ -43,42 +43,10 @@
 #endif
 #endif
 
-/* ================= 编译器生成的类结构体布局 ================= */
-/* 与编译器为os.vla中的wrapper class Stat/StatVFS生成的结构体一致：
-   继承自object的$refCount、$parent位于最前（与父类保持相同的前缀布局），
-   其后为$$vtable、属性（按声明顺序）。
-   本TU不包含生成的os.vla.h，因此自行声明相同布局。 */
-typedef struct viola$os$Stat {
-    viola$lang$uint32 $refCount;
-    viola$lang$ptr $parent;
-    viola$lang$ptr $$vtable;
-    viola$lang$uint32 st_mode;
-    viola$lang$uint64 st_ino;
-    viola$lang$uint64 st_dev;
-    viola$lang$uint64 st_nlink;
-    viola$lang$uint32 st_uid;
-    viola$lang$uint32 st_gid;
-    viola$lang$uint64 st_size;
-    viola$lang$uint64 st_atime;
-    viola$lang$uint64 st_mtime;
-    viola$lang$uint64 st_ctime;
-} viola$os$Stat;
-
-typedef struct viola$os$StatVFS {
-    viola$lang$uint32 $refCount;
-    viola$lang$ptr $parent;
-    viola$lang$ptr $$vtable;
-    viola$lang$uint64 f_bsize;
-    viola$lang$uint64 f_frsize;
-    viola$lang$uint64 f_blocks;
-    viola$lang$uint64 f_bfree;
-    viola$lang$uint64 f_bavail;
-    viola$lang$uint64 f_files;
-    viola$lang$uint64 f_ffree;
-    viola$lang$uint64 f_favail;
-    viola$lang$uint64 f_flag;
-    viola$lang$uint64 f_namemax;
-} viola$os$StatVFS;
+/* ================= wrapper类的结构体布局 ================= */
+/* Stat/StatVFS的结构体定义由运行库头文件runtime.h提供（与编译器按os.vla中的
+   wrapper class声明生成的布局一致），本TU与生成代码共用同一份定义，
+   不再各自声明（见开发疑问记录113）。 */
 
 /* ================= 全局变量（os.vla中的声明） ================= */
 
@@ -273,7 +241,9 @@ typedef struct viola$os$OsRequest {
 
 /* 子线程提交请求并等待主线程执行（主线程直接执行） */
 static void submitOrRun(viola$os$OsRequest *request, viola$threads$Listener *listener) {
-    if (listener != NULL && listener->currentThreadId == 0) {
+    /* 按当前线程判断是否为主线程：执行本任务的线程可能已改写
+       listener->currentThreadId（见开发疑问记录113） */
+    if (listener != NULL && viola$threads$isMainThread()) {
         viola$lang$global_resource_manager$handleRequest(&request->base);
         return;
     }

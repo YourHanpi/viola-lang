@@ -135,7 +135,7 @@ class ConstDef(Definition):
             "#endif",
             "#endif",
             "#endif"
-        ]), self._define_stmt.new_variables))
+        ]), self._define_stmt.new_variables_ordered))
         return "\n\n".join(results)
 
     def optimize(self) -> "Definition":
@@ -157,7 +157,7 @@ class ConstDef(Definition):
     def source(self) -> str:
         """获取常量的源代码文本。"""
         rename_defines: str = "\n".join([
-            f"#define {x.self_name} {x.name}" for x in self._define_stmt.new_variables
+            f"#define {x.self_name} {x.name}" for x in self._define_stmt.new_variables_ordered
         ])
         return rename_defines
 
@@ -415,6 +415,9 @@ class SqDef(Definition):
         new_sq._rets = [r.instantiation(r.name, type_args_with_cls) for r in new_sq._rets]
         new_sq._body._new_variables = [v.instantiation(v.name, type_args_with_cls)
                                        for v in new_sq._body._new_variables]
+        # 以文本形式生成的、依赖类成员类型的代码需按实例化的类重建（析构函数的
+        # 成员释放代码，见开发疑问记录111）
+        new_sq.rebuild_for_class(inst_cls)
         # 异步包装体在finish时以原泛型参数类型构建，实例化后需用具体类型重建
         new_sq._async_body = new_sq._get_async_body()
         return new_sq
@@ -423,6 +426,13 @@ class SqDef(Definition):
         """使用元组形式的类型参数进行泛型实例化。"""
         type_args_dict: dict[GenericArgument, TypeName] = dict(zip(self._decl.type.generic_args, type_args))
         return self.instantiation_full_by_dict(type_args_dict)
+
+    def rebuild_for_class(self, cls: ClassName) -> None:
+        """按实例化后的类重建以文本形式生成的代码。
+
+        默认无操作：只有代码文本中直接内嵌了类成员类型名称的定义需要重建
+        （析构函数的成员释放代码，见开发疑问记录111）。
+        """
 
     def instantiation_full_all(self) -> list["SqDef"]:
         """获取函数的所有泛型实例化结果。"""
@@ -576,7 +586,7 @@ class SqDef(Definition):
             if self._body.tail_recursive_mark is not None else self._body.head_text or "",
             f"\t{EXCEPTION_T_NAME} *$$exc = listener->exception;",
             self._body.text,
-            CleanupBlock(self._src_info, self._symbol_table, self._var_states, list(self._body.new_variables)).text,
+            CleanupBlock(self._src_info, self._symbol_table, self._var_states, self._body.new_variables_ordered).text,
             "}"
         ]
         async_text: list[str] = [
@@ -816,7 +826,7 @@ class ConstructorDef(SqDef):
             lambda stmt: stmt is not self._alloc_stmt and stmt is not self._vtable_stmt and
             stmt is not self._write_back_stmt, self._body._stmt))
         cleanup: str = CleanupBlock(self._src_info, self._symbol_table, self._var_states,
-                                    list(self._body.new_variables)).text
+                                    self._body.new_variables_ordered).text
         return "\n".join(filter(lambda line: line != "", [
             f"void {self.super_init_name}({self._super_init_params_text()}) {{",
             self._body.head_text or "",
@@ -866,9 +876,22 @@ class DestructorDef(SqDef):
             raise CompilerException(f"Name {cls_name} is not a class.", src_info)
         self._this_var: LocalVariableName = LocalVariableName(self._src_info, self._decl.arg_names[0],
                                                               self._decl.arg_types[0])
+        self._free_stmt: Optional[CStmt] = None
         if cls.is_c_part:
             return
-        this_free_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
+        self._free_stmt = CStmt(src_info, self._symbol_table, self._var_states)
+        self._free_stmt.set_text(self._member_free_text(cls))
+        self.add_stmt(self._free_stmt)
+
+    def _member_free_text(self, cls: ClassName) -> str:
+        """生成释放类实例成员属性的代码文本。
+
+        泛型类的方法体在实例化后由SqDef.instantiation重建，但本段代码是
+        在构造时以文本形式生成的，成员类型中的泛型参数不会随之替换
+        （如Array::<T>的成员T[]会残留为T$$array，见开发疑问记录111），
+        故实例化时以实例化后的类重新生成本文本（rebuild_for_class）。
+        """
+        src_info = self._src_info
         # 仅释放实例属性：静态属性是模块级全局变量，不是结构体成员
         properties_to_free: list[VariableName] = list(
             filter(lambda y: y.is_object and not y.is_static, cls.properties.values()))
@@ -907,8 +930,13 @@ class DestructorDef(SqDef):
             "\t}"
             "}"
         ]
-        this_free_stmt.set_text("\n".join(free_text))
-        self.add_stmt(this_free_stmt)
+        return "\n".join(free_text)
+
+    def rebuild_for_class(self, cls: ClassName) -> None:
+        """按实例化后的类重建成员释放代码（泛型类实例化时调用）。"""
+        if self._free_stmt is None:
+            return
+        self._free_stmt.set_text(self._member_free_text(cls))
 
 
 class FnDef(SqDef):
@@ -1233,11 +1261,19 @@ class ClassDef(Definition):
                 filter(lambda x: not x.is_static, self._decl.ordered_properties)
             )
         )
+        # 结构体定义带include guard：wrapper类（如viola.os的Stat/StatVFS、
+        # viola.io的file）的“正式”定义位于运行库头文件（runtime.h）中，
+        # 供运行库翻译单元与生成代码共用；本TU已包含runtime.h时跳过此处定义，
+        # 避免重复定义（见开发疑问记录113）
+        struct_guard: str = "_VIOLA_CLASS_T_" + self._decl.name
         struct_def: list[str] = [
             class_info_text,
-            f"\ntypedef struct {self._decl.name} {{",
+            f"\n#ifndef {struct_guard}",
+            f"#define {struct_guard}",
+            f"typedef struct {self._decl.name} {{",
             properties_text,
-            "} " + self._decl.name + ";"
+            "} " + self._decl.name + ";",
+            "#endif"
         ]
         static_props_text: str = "\n".join(
             map(

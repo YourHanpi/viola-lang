@@ -2294,10 +2294,12 @@ class AttrOp(Expression):
     def _set_expected_type(self) -> None:
         """从父节点推断方法的参数类型信息。
 
-        如果父节点是 CallOp，则从 CallOp 的实际参数类型中提取 arg_types
-        和 kwarg_types，用于后续方法查找。
+        仅当本AttrOp确为父CallOp的被调表达式时，才从该调用的实际参数类型中
+        提取arg_types与kwarg_types用于方法查找：作为调用实参出现的属性访问
+        同样以CallOp为父节点，若一并绑定会把外层调用的实参类型写到实参
+        AttrOp上，使方法查找按错误的参数类型进行（见开发疑问记录116）。
         """
-        if isinstance(self._parent_item, CallOp):
+        if isinstance(self._parent_item, CallOp) and self._parent_item.is_callee(self):
             self._arg_types = list(map(lambda x: x.name, self._parent_item.arg_types))
             self._arg_type_objs = list(self._parent_item.arg_types)
             self._kwarg_types = dict(map(lambda x: (x[0], x[1].name), self._parent_item.kwarg_types.items()))
@@ -2676,6 +2678,15 @@ class CallOp(Expression):
             return func_type.returns[0]
         return TupleTypeName(self._src_info, func_type.returns)
 
+    def is_callee(self, expr: Expression) -> bool:
+        """判断给定表达式是否为本调用的被调表达式。
+
+        被调表达式可能在实参之后才由set_func设置，故调用方需先登记
+        _func_expr再调用AttrOp.bind_parent，使AttrOp能识别自身身份
+        （见开发疑问记录116）。
+        """
+        return self._func_expr is expr
+
     def _bind_method(self, attr_op: "AttrOp") -> None:
         """根据调用参数解析方法并绑定其完整C名称。"""
         # 使用实际的类型对象（泛型实例化后的数组等方法查找需要具体类型）
@@ -2743,6 +2754,9 @@ class CallOp(Expression):
                 self._call_struct = True
             self._func_expr = expr
         elif isinstance(expr, AttrOp):
+            # 先登记被调表达式再绑定父节点：AttrOp只在“确为被调表达式”时
+            # 才从本调用取实参类型（见开发疑问记录116）
+            self._func_expr = expr
             expr.bind_parent(self)
             method = expr.find_method(
                 list(map(lambda x: x.return_type.name, self._arg_list)),

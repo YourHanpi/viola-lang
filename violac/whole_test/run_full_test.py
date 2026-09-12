@@ -54,8 +54,10 @@ def test_one(project: str) -> bool:
         project_dir = os.path.join(PROJECTS_DIR, project)
     output_dir = os.path.join(OUTPUT_ROOT, project)
     entries = sorted(os.listdir(project_dir))
+    # 入口文件：优先main.vla，否则取第一个.vla（限定扩展名，避免把目录中的
+    # 其他文件——如调试时留下的日志——当作入口而报出无关的编译错误）
     main_file = os.path.join(project_dir, "main.vla") if "main.vla" in entries else \
-        os.path.join(project_dir, next(e for e in entries if not e.startswith("__")))
+        os.path.join(project_dir, next(e for e in entries if not e.startswith("__") and e.endswith(".vla")))
     env = dict(os.environ)
     env["VIOLA_HOME"] = VIOLA_LIBS + (";" if os.name == "nt" else ":") + env.get("VIOLA_HOME", "")
     # 所有缓存（含工作区外运行库模块的缓存）都位于工作区的__viola_cache__下，
@@ -68,7 +70,12 @@ def test_one(project: str) -> bool:
         capture_output=True, text=True, timeout=900, env=env
     )
     if r.returncode != 0 or "Critical error" in r.stderr:
-        print(f"FAIL(compile) {project}")
+        print(f"FAIL(compile) {project} (rc={r.returncode})")
+        # 打印首个错误行，便于定位（编译失败的现场只在此处可见）
+        for line in (r.stderr or r.stdout).split("\n"):
+            if "rror" in line or "Exception" in line:
+                print("   ", line.strip()[:200])
+                break
         return False
     # 2. gcc 编译链接
     sources = get_c_sources(output_dir)
