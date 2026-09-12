@@ -21,6 +21,19 @@ void viola$lang$exception$Exception$__new__$_0(viola$lang$string *message,
     *this = exc;
 }
 
+/* 父类构造初始化：在子类已分配的对象上设置message。
+   子类以`super = Exception(message);`调用：对象与其vtable均由子类构造函数
+   负责分配与设置，此处只初始化基类成员（见开发疑问记录107）。 */
+void viola$lang$exception$Exception$__new__super$_0(viola$lang$string *message,
+                                                    viola$lang$exception$Exception *this,
+                                                    viola$threads$Listener *listener) {
+    (void)listener;
+    if (this == NULL) {
+        return;
+    }
+    this->message = message;
+}
+
 /* 获取异常消息：what() -> string。
    message未被设置（子类__new__未调用基类构造）时返回空串，
    避免把未初始化/空指针交给打印路径（见开发疑问记录84）。 */

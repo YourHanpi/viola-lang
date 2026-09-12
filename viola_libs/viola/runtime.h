@@ -159,24 +159,24 @@ typedef struct viola$lang$uint8$$array {
 
 /* ================= viola.io：标准输入输出与文件 ================= */
 /* open()的默认参数全局变量（定义于viola/io/file.c） */
-extern viola$lang$string *viola$io$open$$default$mode;
-extern viola$lang$string *viola$io$open$$default$encoding;
+extern viola$lang$string *viola$io$file$open$$default$mode;
+extern viola$lang$string *viola$io$file$open$$default$encoding;
 /* print()/perror()的默认参数（content = ""，定义于viola/io/print.c） */
-extern viola$lang$string *viola$io$print$$default$text;
-extern viola$lang$string *viola$io$perror$$default$text;
-void viola$io$print(viola$lang$string *content, viola$threads$Listener *listener);
-void viola$io$perror(viola$lang$string *content, viola$threads$Listener *listener);
-void viola$io$input(viola$lang$string **result, viola$threads$Listener *listener);
-void viola$io$open(viola$lang$string *path, viola$lang$string *mode,
+extern viola$lang$string *viola$io$print$print$$default$text;
+extern viola$lang$string *viola$io$print$perror$$default$text;
+void viola$io$print$print(viola$lang$string *content, viola$threads$Listener *listener);
+void viola$io$print$perror(viola$lang$string *content, viola$threads$Listener *listener);
+void viola$io$print$input(viola$lang$string **result, viola$threads$Listener *listener);
+void viola$io$file$open(viola$lang$string *path, viola$lang$string *mode,
                    viola$lang$string *encoding, viola$io$file **f,
                    viola$threads$Listener *listener);
-void viola$io$read(viola$io$file *file, viola$lang$string **result,
+void viola$io$file$read(viola$io$file *file, viola$lang$string **result,
                    viola$threads$Listener *listener);
-void viola$io$readBytes(viola$io$file *file, viola$lang$uint8$$array **result,
+void viola$io$file$readBytes(viola$io$file *file, viola$lang$uint8$$array **result,
                         viola$threads$Listener *listener);
-void viola$io$write(viola$io$file *file, viola$lang$string *content,
+void viola$io$file$write(viola$io$file *file, viola$lang$string *content,
                     viola$threads$Listener *listener);
-void viola$io$writeBytes(viola$io$file *file, viola$lang$uint8$$array *content,
+void viola$io$file$writeBytes(viola$io$file *file, viola$lang$uint8$$array *content,
                          viola$threads$Listener *listener);
 void viola$io$file$__del__$_0(viola$io$file *_this, viola$threads$Listener *listener);
 void viola$io$file$__new__$_0(viola$lang$string *path, viola$lang$string *mode,
@@ -199,6 +199,11 @@ void viola$lang$del(viola$lang$object *_this, viola$threads$Listener *listener);
 void viola$lang$exception$Exception$__new__$_0(viola$lang$string *message,
                                                viola$lang$exception$Exception **this,
                                                viola$threads$Listener *listener);
+/* 父类构造初始化（super = Exception(...)）：在子类已分配的对象上设置message，
+   不重新分配对象、不覆盖子类vtable（见开发疑问记录107） */
+void viola$lang$exception$Exception$__new__super$_0(viola$lang$string *message,
+                                                    viola$lang$exception$Exception *this,
+                                                    viola$threads$Listener *listener);
 void viola$lang$exception$Exception$what$_0(viola$lang$exception$Exception *_this,
                                             viola$lang$string **result,
                                             viola$threads$Listener *listener);

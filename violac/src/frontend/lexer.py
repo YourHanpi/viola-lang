@@ -334,6 +334,7 @@ class Lexer(FSM):
             "async",
             "catch",
             "class",
+            "cname",
             "cpart",
             "elif",
             "else",

@@ -3,34 +3,36 @@
 // 命名空间：viola.io
 // 实现位于viola_libs/viola/io/print.c与viola_libs/viola/io/file.c。
 // 本文件仅为C实现的函数提供Viola声明（分号代替函数体）。
+// 各声明以cname显式指定C名，使C名与实现所在的.c文件路径一致
+// （print.c -> viola$io$print$*，file.c -> viola$io$file$*，见开发疑问记录103）。
 
 import cpart "runtime.h";
 
 // ================= 标准输入输出 =================
 
 // 向标准输出打印字符串（默认参数值由运行库的
-// viola$io$print$$default$text 全局变量提供）
-sq print(string text = "") -> ();
+// viola$io$print$print$$default$text 全局变量提供）
+sq print(string text = "") -> () cname "viola$io$print$print";
 // 向标准错误输出字符串（默认参数值由运行库的
-// viola$io$perror$$default$text 全局变量提供）
-sq perror(string text = "") -> ();
+// viola$io$print$perror$$default$text 全局变量提供）
+sq perror(string text = "") -> () cname "viola$io$print$perror";
 // 从标准输入读取一行（去除末尾换行）
-sq input() -> (string result);
+sq input() -> (string result) cname "viola$io$print$input";
 
 // ================= 文件读写 =================
 
 // 打开文件（mode如"r"/"w"，encoding如"utf-8"）
 // 默认参数值（mode="r"、encoding="utf-8"）由运行库的
-// viola$io$open$$default$mode / viola$io$open$$default$encoding 全局变量提供
-sq open(string path, string mode = "r", string encoding = "utf-8") -> (file f);
+// viola$io$file$open$$default$mode / viola$io$file$open$$default$encoding 全局变量提供
+sq open(string path, string mode = "r", string encoding = "utf-8") -> (file f) cname "viola$io$file$open";
 // 读取文件全部内容
-fn read(file f) -> (string result);
+fn read(file f) -> (string result) cname "viola$io$file$read";
 // 读取文件全部内容为字节数组
-fn readBytes(file f) -> (uint8[] result);
+fn readBytes(file f) -> (uint8[] result) cname "viola$io$file$readBytes";
 // 向文件写入字符串
-sq write(file f, string content) -> ();
+sq write(file f, string content) -> () cname "viola$io$file$write";
 // 向文件写入字节数组
-sq writeBytes(file f, uint8[] content) -> ();
+sq writeBytes(file f, uint8[] content) -> () cname "viola$io$file$writeBytes";
 
 // ================= 文件类型 =================
 

@@ -751,6 +751,29 @@ class GlobalParser:
         return ["MAKE STMT ASSIGN", expr_commands, "CALL SET_VAR_VALUE"] + name_commands + ["CALL FINISH"], []
 
     @_set_loc_command
+    def _parse_super_assign_stmt(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析父类构造调用语句（super = 父类名(参数);，见开发疑问记录107）。
+
+        赋值目标复用AssignStmt的this.super形式，由后端按当前类的父类
+        解析__new__并生成对&_this的构造调用。
+        """
+        self._next()  # 跳过super
+        if not self._match_type("ASSIGN"):
+            self._raise("Unexpected token: " + self._get_current().text)
+            return None
+        self._next()
+        expr_results = self._collect_until(["SEMICOLON"])
+        if expr_results is None:
+            return None
+        expr_commands = self._add_parsing_slice(expr_results)
+        if not self._match_type("SEMICOLON"):
+            self._raise("Unexpected token: " + self._get_current().text)
+            return None
+        self._next()
+        return ["MAKE STMT ASSIGN", expr_commands, "CALL SET_VAR_VALUE",
+                "CALL ADD_VAR_NAME this.super", "CALL FINISH"], []
+
+    @_set_loc_command
     def _parse_block_stmt(self, new_scope: bool) -> Optional[tuple[list[str], list[str]]]:
         """解析块语句（花括号内的语句序列）。"""
         command: list[str] = ["MAKE STMT BLOCK"]
@@ -1168,6 +1191,9 @@ class GlobalParser:
                 # 泛型函数调用语句（如 forEachEach::<T>(...)）
                 return self._parse_op_stmt()
             return self._parse_decl_stmt()
+        if GlobalParser._buffer_match_types(token_buffer[:2], ["SUPER", "ASSIGN"]):
+            # 父类构造调用语句（super = 父类名(...);，见开发疑问记录107）
+            return self._parse_super_assign_stmt()
         if GlobalParser._buffer_match_types(token_buffer[:2], ["IDENTIFIER", "ASSIGN"]) or \
                 GlobalParser._buffer_match_types(token_buffer[:2], ["IDENTIFIER", "COMMA"]) or \
                 GlobalParser._buffer_match_types(token_buffer[:2], ["THIS", "DOT"]):
@@ -1512,7 +1538,29 @@ class GlobalParser:
             self._raise("Unexpected token: " + self._get_current().text)
             return None
         self._next()
+        if not is_closure:
+            # 显式C名（cname "..."）：使C名可独立于.vla所在命名空间，
+            # 从而按计划的前缀规则与.c文件路径一致（见开发疑问记录103）
+            symbol.append(self._parse_explicit_c_name(is_method))
         return command, symbol
+
+    def _parse_explicit_c_name(self, is_method: bool) -> str:
+        """解析函数声明末尾的可选显式C名（cname "..."），无则返回空串。"""
+        if not self._match_type("CNAME"):
+            return ""
+        if is_method:
+            self._raise("cname is only allowed on function declarations.")
+            return ""
+        self._next()
+        if not self._match_type("STRING"):
+            self._raise("Unexpected token: " + self._get_current().text)
+            return ""
+        c_name: str = self._get_current().text
+        # 字符串记号含引号
+        if len(c_name) > 1 and c_name[0] == c_name[-1]:
+            c_name = c_name[1:-1]
+        self._next()
+        return c_name
 
     def _parse_id_list(self) -> Optional[list[str]]:
         """

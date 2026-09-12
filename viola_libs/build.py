@@ -29,6 +29,8 @@ RUNTIME_SOURCES = [
     os.path.join("viola", "io", "print.c"),
     os.path.join("viola", "io", "file.c"),
     os.path.join("viola", "math.c"),
+    # 原生函数的异步包装（由build_tools/lib_tools/gen_async_wrappers.py生成，见开发疑问记录106）
+    os.path.join("viola", "native_async.c"),
     os.path.join("viola", "os.c"),
     os.path.join("viola", "os", "path.c"),
     os.path.join("viola", "stat.c"),

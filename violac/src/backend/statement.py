@@ -27,6 +27,11 @@ from enum import Enum
 from typing import Optional
 
 LISTENER_WAIT_FUNC = "viola$threads$waitListener"
+# 构造函数体中代表待构造对象的局部变量名（见ConstructorDef），
+# 父类构造调用（super = 父类名(...)）需要在该对象上初始化父类成员
+THIS_OBJ_NAME: str = "_thisObj"
+# __new__到父类构造初始化函数（$__new__super）的名称映射
+SUPER_NEW_SUFFIX: str = "$__new__super"
 MARK_T: str = "viola$threads$Mark"
 STACK_A_T: str = "viola$threads$StackA"
 STACK_B_T: str = "viola$threads$StackB"
@@ -478,6 +483,18 @@ class DeclStmt(Statement):
     def finish(self) -> None:
         """完成变量声明，进行类型检查和收包处理。"""
         self._is_finished = True
+        # 声明即初始化：把此处仍为“已声明”的变量登记为“已赋值”，
+        # 使嵌套块内对已初始化变量的赋值能被重复赋值检查拒绝。
+        # 前端命令顺序为SET_VAR_VALUE先于ADD_VAR，set_var_value被调用时
+        # _var尚为空，无法在那里登记（见开发疑问记录104）
+        if self._var_value is not None:
+            to_assign: list[VariableName] = list(filter(
+                lambda var: var.raw_name != "_" and var in self._var_states and
+                self._var_states[var] == VariableState.DECLARED, self._var))
+            if self._is_async:
+                self._var_states.set_async_assigned(to_assign)
+            else:
+                self._var_states.set_assigned(to_assign)
         if self._var_value is None:
             return
         expr_type = self._var_value.return_type
@@ -937,13 +954,21 @@ class AssignStmt(Statement):
     def new_variables(self) -> set[VariableName]:
         return set(self._var)
 
-    def optimize(self) -> "Statement":
+    def optimize(self, foldable: Optional[set[VariableName]] = None) -> "Statement":
+        """
+        :param foldable: 允许被常量折叠移除赋值语句的变量集合（本块内定义的变量）。
+        为None时不做限制。
+        """
         if self._var_value is not None:
             self._var_value = self._var_value.optimize()
             # 返回值变量不参与常量折叠：返回槽位在C层是指针形参，
-            # 折叠会删除赋值语句，使函数返回未初始化/旧值
+            # 折叠会删除赋值语句，使函数返回未初始化/旧值。
+            # 本块外定义的变量同样只登记常量、不删除语句：常量表随块结束丢弃，
+            # 删除语句会静默丢失本块对该变量的赋值（见开发疑问记录104）
             if self._var_value.is_const and len(self._var) == 1 and not self._var[0].is_return:
                 self._const_vars[self._var[0]] = self._var_value
+                if foldable is not None and self._var[0] not in foldable:
+                    return self
                 return _StmtList(self._src_info, self._symbol_table, self._var_states, [], self._const_vars)
         if isinstance(self._var_value, UnpackExpr):
             to_unpack = self._var_value.to_unpack
@@ -1020,7 +1045,8 @@ class AssignStmt(Statement):
             parent = self._this_cls.parent
             if not isinstance(self._var_value, CallOp):
                 raise CompilerException("this.super requires a constructor call.", self._src_info)
-            # 使用父类实际注册的__new__方法的C名称
+            # 使用父类实际注册的__new__方法的C名称，并改写为父类构造初始化函数：
+            # 子类对象已由本构造函数分配，super只在其上初始化父类成员（开发疑问记录107）
             parent_new_name = None
             for (m_name, _), m in parent.methods.items():
                 if m_name == "__new__" and m.cls.name == parent.name:
@@ -1028,10 +1054,11 @@ class AssignStmt(Statement):
                     break
             if parent_new_name is None:
                 raise CompilerException("Parent class has no constructor.", self._src_info)
+            super_new_name: str = parent_new_name.replace("$__new__", SUPER_NEW_SUFFIX, 1)
             args: str = ", ".join(map(lambda a: a.text, self._var_value._arg_list))
             if args != "":
                 args += ", "
-            return f"{parent_new_name}({args}&_this, listener);"
+            return f"{super_new_name}({args}({parent.c_calling_name}){THIS_OBJ_NAME}, listener);"
         if self._var_value is None:
             return ""
         if len(self._var) == 1:
@@ -2538,8 +2565,16 @@ class BlockStmt(Statement):
 
     def optimize(self) -> "BlockStmt":
         const_vars: dict[VariableName, Expression] = {}
+        # 只有本块内定义的变量才允许折叠掉赋值语句：常量表随本块结束而丢弃，
+        # 折叠本块外变量的赋值会使其被静默丢弃（见开发疑问记录104）
+        foldable: set[VariableName] = set(
+            filter(lambda var: var not in self._outer_variables, self._inner_variables))
         for i, stmt in enumerate(self._stmt):
-            stmt = stmt.substitute(const_vars).optimize()
+            stmt = stmt.substitute(const_vars)
+            if isinstance(stmt, AssignStmt):
+                stmt = stmt.optimize(foldable)
+            else:
+                stmt = stmt.optimize()
             const_vars = stmt.update_const_vars(const_vars)
             self._stmt[i] = stmt
         return self
@@ -2669,6 +2704,9 @@ class FnBlockStmt(BlockStmt):
         if isinstance(stmt, ReturnStmt):
             # fn函数按需执行，求出所有返回值后自动退出，不允许return
             raise CompilerException("fn functions can not use the return statement.", stmt.src_info)
+        if isinstance(stmt, ThrowStmt):
+            # fn函数按需执行，不允许抛出异常（throw会被依赖排序丢弃，见开发疑问记录105）
+            raise CompilerException("fn functions can not use the throw statement.", stmt.src_info)
         if isinstance(stmt, CondStmt):
             if stmt.cond_kw in (_CondKw.ELIF, _CondKw.ELSE):
                 if len(self._cond_stmt_buffer) == 0:
@@ -2702,7 +2740,7 @@ class FnBlockStmt(BlockStmt):
             new_stmt.finish()
             self._cond_stmt_buffer.clear()
             self.add_stmt(new_stmt)
-        if isinstance(stmt, OpStmt | ReturnStmt | ThrowStmt | CStmt):
+        if isinstance(stmt, OpStmt | ReturnStmt | CStmt):
             unreachable_warning(
                 "Function call without return will be depreciated in any function defined with keyword \"fn\". Try to use \"sq\" for instead.",
                 stmt.src_info

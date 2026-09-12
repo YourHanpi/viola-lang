@@ -2,7 +2,7 @@
 from .compiling_item import CompilingItem
 from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp, ClassRef, TypeRef
 from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, ReturnStmt, \
-    STACK_B_POP_FUNC, STACK_B_PUSH_FUNC, CleanupBlock
+    STACK_B_POP_FUNC, STACK_B_PUSH_FUNC, CleanupBlock, THIS_OBJ_NAME, SUPER_NEW_SUFFIX
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
     ClassName, MethodName, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, TypeName, EXCEPTION_T_NAME, \
     EnumName, GlobalVariableName, GenericArgument, \
@@ -16,7 +16,9 @@ import os
 from typing import Optional
 
 TYPE_INFO_T: str = "viola$dynamic$TypeInfo"
-PERROR_FUNC_NAME: str = "viola$io$perror"
+# perror的Viola名（查找符号表用）与显式C名（io.vla以cname声明，见开发疑问记录103）
+PERROR_VIOLA_NAME: str = "perror"
+PERROR_FUNC_NAME: str = "viola$io$print$perror"
 
 
 class Definition(CompilingItem, ABC):
@@ -383,14 +385,12 @@ class SqDef(Definition):
     def header_no_wrap(self) -> str:
         """获取函数在头文件中未经包装的声明文本（不含条件编译）。"""
         self._decl: FunctionName
-        if self._is_native:
-            # 原生函数只输出同步声明（运行库未提供异步变体）
-            text: list[str] = [self._decl.as_declare() + ";"]
-        else:
-            text: list[str] = [
-                self._decl.as_declare() + ";",
-                self._decl.as_async().as_declare() + ";"
-            ]
+        # 异步包装函数的声明：原生函数的$async实现由运行库提供
+        # （见build_tools/lib_tools/gen_async_wrappers.py与开发疑问记录106）
+        text: list[str] = [
+            self._decl.as_declare() + ";",
+            self._decl.as_async().as_declare() + ";"
+        ]
         # 默认参数全局变量的外部声明（其他模块调用默认参数时引用）
         text += [f"extern {v.type_name_pair_calling};" for v in self._decl.default_params.values()]
         return "\n".join(text)
@@ -408,6 +408,13 @@ class SqDef(Definition):
             new_sq._method_decl.as_function().name, type_args_with_cls
         )
         new_sq._body = new_sq._body.instantiation(type_args_with_cls)
+        # 参数与返回值变量的类型同样需要实例化（供清理代码等使用）；
+        # 类方法路径原先遗漏，导致方法体内引用泛型类自身实例的返回值在清理代码中
+        # 仍使用伪实例名（如Box__0$__del__$_0），链接失败（见开发疑问记录102）
+        new_sq._args = [a.instantiation(a.name, type_args_with_cls) for a in new_sq._args]
+        new_sq._rets = [r.instantiation(r.name, type_args_with_cls) for r in new_sq._rets]
+        new_sq._body._new_variables = [v.instantiation(v.name, type_args_with_cls)
+                                       for v in new_sq._body._new_variables]
         # 异步包装体在finish时以原泛型参数类型构建，实例化后需用具体类型重建
         new_sq._async_body = new_sq._get_async_body()
         return new_sq
@@ -678,12 +685,13 @@ class SqDef(Definition):
         # noinspection PyTypeChecker
         try:
             catch_inner_print_func: VariableRef = VariableRef(self._src_info, self._symbol_table, self._symbol_table[
-                PERROR_FUNC_NAME, (StringTypeName,)
+                PERROR_VIOLA_NAME, (StringTypeName,)
             ])
         except CompilerException:
             # viola.io的内置绑定已移除（开发疑问记录第40条），此处直接构造
-            # perror的原生函数符号（实现位于viola_libs/viola/io/print.c）
-            perror_func = FunctionName(self._src_info, VIOLA_IO, "perror",
+            # perror的原生函数符号（实现位于viola_libs/viola/io/print.c）。
+            # 显式C名与io.vla声明中的cname一致（见开发疑问记录103）
+            perror_func = FunctionName(self._src_info, [], PERROR_FUNC_NAME,
                                        FunctionTypeName(self._src_info, [StringTypeName], []),
                                        ["text"], [], True, False, True)
             catch_inner_print_func = VariableRef(self._src_info, self._symbol_table, perror_func)
@@ -722,9 +730,13 @@ class ConstructorDef(SqDef):
             raise CompilerException("Constructor must return exactly one value.", self._src_info)
         if self._decl.ret_types[0] != cls:
             raise CompilerException("Constructor must return a value of the same type as the class.", self._src_info)
-        this_name: str = "_thisObj"
+        this_name: str = THIS_OBJ_NAME
         this_type: ClassName = cls
         self._this_var: LocalVariableName = LocalVariableName(self._src_info, this_name, this_type)
+        # 父类构造初始化函数（$__new__super）需要排除以下编译器生成语句
+        self._alloc_stmt: Optional[CStmt] = None
+        self._vtable_stmt: Optional[CStmt] = None
+        self._write_back_stmt: Optional[CStmt] = None
         if not self._is_native:
             # 原生构造函数（声明文件中声明的内置类构造）由运行库实现，
             # 不生成分配与vtable初始化代码
@@ -736,6 +748,7 @@ class ConstructorDef(SqDef):
                 f"{cls.c_calling_name} {self._this_var.name} = "
                 f"({cls.c_calling_name})calloc(1, sizeof({cls.c_alloc_name}));")
             self.add_stmt(this_alloc_stmt)
+            self._alloc_stmt = this_alloc_stmt
             # 初始化实例的TypeInfo指针，供异常捕获与动态类型转换使用
             this_vtable_stmt: CStmt = CStmt(src_info, self._symbol_table, self._var_states)
             this_vtable_stmt.set_text(
@@ -743,6 +756,7 @@ class ConstructorDef(SqDef):
                 f"{self._this_var.name}->$parent = NULL;\n"
                 f"{self._this_var.name}->$$vtable = (void *)&{cls.name}$$vtable;")
             self.add_stmt(this_vtable_stmt)
+            self._vtable_stmt = this_vtable_stmt
 
     def finish(self) -> None:
         """完成构造函数，将局部this写回输出参数。"""
@@ -750,6 +764,7 @@ class ConstructorDef(SqDef):
             write_back_stmt: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
             write_back_stmt.set_text(f"*_this = {self._this_var.name};")
             self.add_stmt(write_back_stmt)
+            self._write_back_stmt = write_back_stmt
         super().finish()
 
     def add_stmt(self, stmt: Statement) -> None:
@@ -764,6 +779,52 @@ class ConstructorDef(SqDef):
     def this_var(self) -> LocalVariableName:
         """获取构造函数中表示当前实例的 this 变量。"""
         return self._this_var
+
+    @property
+    def super_init_name(self) -> str:
+        """获取父类构造初始化函数（$__new__super）的C名称。"""
+        return self._decl.name.replace("$__new__", SUPER_NEW_SUFFIX, 1)
+
+    @property
+    def super_init_declare(self) -> Optional[str]:
+        """获取父类构造初始化函数的C声明。"""
+        if self._is_native or self._alloc_stmt is None:
+            return None
+        return f"void {self.super_init_name}({self._super_init_params_text()});"
+
+    def _super_init_params_text(self) -> str:
+        """获取父类构造初始化函数的形参表：本类构造实参 + 待初始化的对象 + listener。"""
+        # 类型取自构造函数的返回类型（即本类）：泛型类的构造函数体内
+        # _this_var的类型仍是泛型模板，实例化后需用实例类名
+        cls: ClassName = self._decl.type.returns[0]
+        args_text: str = ", ".join(map(
+            lambda t, x: f"{t.c_calling_name} {x}", self._decl.type.args, self._decl.arg_names))
+        return ", ".join(filter(lambda x: x != "", [
+            args_text, f"{cls.c_calling_name}{self._this_var.name}", f"{LISTENER_T} *listener"]))
+
+    @property
+    def super_init_source(self) -> Optional[str]:
+        """获取父类构造初始化函数的C源代码。
+
+        供子类以`super = 父类名(...)`调用：与__new__的区别是不分配对象、
+        不设置vtable、不写回_this，直接在调用方已分配并已设置子类vtable的
+        对象上执行本类构造体，从而初始化父类成员（见开发疑问记录107）。
+        """
+        if self._is_native or self._alloc_stmt is None:
+            return None
+        body_stmts: list[Statement] = list(filter(
+            lambda stmt: stmt is not self._alloc_stmt and stmt is not self._vtable_stmt and
+            stmt is not self._write_back_stmt, self._body._stmt))
+        cleanup: str = CleanupBlock(self._src_info, self._symbol_table, self._var_states,
+                                    list(self._body.new_variables)).text
+        return "\n".join(filter(lambda line: line != "", [
+            f"void {self.super_init_name}({self._super_init_params_text()}) {{",
+            self._body.head_text or "",
+            f"\t{EXCEPTION_T_NAME} *$$exc = listener->exception;",
+            "\n".join(map(lambda stmt: stmt.text, body_stmts)),
+            cleanup,
+            "}"
+        ]))
 
     def instantiation(self, cls_decl: ClassName, type_args: dict[GenericArgument, TypeName]) -> "ConstructorDef":
         """实例化构造函数：重建分配语句与vtable初始化语句（使用实例类的C名称）。"""
@@ -780,6 +841,9 @@ class ConstructorDef(SqDef):
             f"{new_def._this_var.name}->$$vtable = (void *)&{inst_cls.name}$$vtable;")
         new_def._body._stmt[0] = this_alloc_stmt
         new_def._body._stmt[1] = this_vtable_stmt
+        # 同步更新父类构造初始化函数的排除引用（其体由_body语句生成）
+        new_def._alloc_stmt = this_alloc_stmt
+        new_def._vtable_stmt = this_vtable_stmt
         return new_def
 
 
@@ -1193,6 +1257,10 @@ class ClassDef(Definition):
             result_def = struct_def
         result_def.append(static_props_text)
         methods_def: list[str] = list(map(lambda x: x.header_no_wrap, self._methods.values()))
+        # 父类构造初始化函数声明：供其他模块的子类调用（super = 本类名(...)）
+        methods_def.extend(filter(lambda x: x is not None, map(
+            lambda m: m.super_init_declare if isinstance(m, ConstructorDef) else None,
+            self._methods.values())))
         return "\n".join([*result_def, "\n", *methods_def])
 
     def instantiation(self, type_args: list[TypeName]) -> "ClassDef":
@@ -1259,6 +1327,10 @@ class ClassDef(Definition):
             # 原生绑定类：实现由运行库提供，不生成任何C代码
             return f"// native class {self._decl.raw_name}"
         methods_def: list[str] = list(map(lambda x: x.source, self._methods.values()))
+        # 父类构造初始化函数：供子类以super = 本类名(...)在已分配对象上初始化本类成员
+        methods_def.extend(filter(lambda x: x is not None, map(
+            lambda m: m.super_init_source if isinstance(m, ConstructorDef) else None,
+            self._methods.values())))
         rename_define: str = f"#define {self._decl.self_name} {self._decl.name}"
         if self._del_super_body is not None:
             # wrapper类的默认成员清理函数（由del(super)调用）

@@ -196,7 +196,7 @@ void viola$io$registerFileHandlers(void) {
 void viola$io$file$__new__$_0(viola$lang$string *path, viola$lang$string *mode,
                               viola$lang$string *encoding, viola$io$file **this,
                               viola$threads$Listener *listener) {
-    viola$io$open(path, mode, encoding, this, listener);
+    viola$io$file$open(path, mode, encoding, this, listener);
 }
 
 /* open()的默认参数全局变量（编译器生成的默认参数引用指向这里）：
@@ -208,11 +208,11 @@ static viola$lang$string _viola_io_default_mode = {
 static viola$lang$string _viola_io_default_encoding = {
     1, NULL, 5, (viola$lang$uint16 *)&(viola$lang$uint16[]){ 'u', 't', 'f', '-', '8' }
 };
-viola$lang$string *viola$io$open$$default$mode = &_viola_io_default_mode;
-viola$lang$string *viola$io$open$$default$encoding = &_viola_io_default_encoding;
+viola$lang$string *viola$io$file$open$$default$mode = &_viola_io_default_mode;
+viola$lang$string *viola$io$file$open$$default$encoding = &_viola_io_default_encoding;
 
 /* open(path, mode, encoding) -> file */
-void viola$io$open(viola$lang$string *path, viola$lang$string *mode,
+void viola$io$file$open(viola$lang$string *path, viola$lang$string *mode,
                    viola$lang$string *encoding, viola$io$file **f,
                    viola$threads$Listener *listener) {
     (void)encoding;
@@ -227,7 +227,7 @@ void viola$io$open(viola$lang$string *path, viola$lang$string *mode,
 }
 
 /* read(file) -> string */
-void viola$io$read(viola$io$file *file, viola$lang$string **result,
+void viola$io$file$read(viola$io$file *file, viola$lang$string **result,
                    viola$threads$Listener *listener) {
     viola$io$FileRequest *req = (viola$io$FileRequest *)malloc(sizeof(viola$io$FileRequest));
     memset(req, 0, sizeof(viola$io$FileRequest));
@@ -239,7 +239,7 @@ void viola$io$read(viola$io$file *file, viola$lang$string **result,
 }
 
 /* readBytes(file) -> uint8[] */
-void viola$io$readBytes(viola$io$file *file, viola$lang$uint8$$array **result,
+void viola$io$file$readBytes(viola$io$file *file, viola$lang$uint8$$array **result,
                         viola$threads$Listener *listener) {
     viola$lang$uint64 resultLength = 0;
     viola$io$FileRequest *req = (viola$io$FileRequest *)malloc(sizeof(viola$io$FileRequest));
@@ -261,7 +261,7 @@ void viola$io$readBytes(viola$io$file *file, viola$lang$uint8$$array **result,
 }
 
 /* write(file, content) -> () */
-void viola$io$write(viola$io$file *file, viola$lang$string *content,
+void viola$io$file$write(viola$io$file *file, viola$lang$string *content,
                     viola$threads$Listener *listener) {
     viola$io$FileRequest *req = (viola$io$FileRequest *)malloc(sizeof(viola$io$FileRequest));
     memset(req, 0, sizeof(viola$io$FileRequest));
@@ -273,7 +273,7 @@ void viola$io$write(viola$io$file *file, viola$lang$string *content,
 }
 
 /* writeBytes(file, content: uint8[]) -> () */
-void viola$io$writeBytes(viola$io$file *file, viola$lang$uint8$$array *content,
+void viola$io$file$writeBytes(viola$io$file *file, viola$lang$uint8$$array *content,
                          viola$threads$Listener *listener) {
     viola$io$FileRequest *req = (viola$io$FileRequest *)malloc(sizeof(viola$io$FileRequest));
     memset(req, 0, sizeof(viola$io$FileRequest));

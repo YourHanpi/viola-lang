@@ -547,7 +547,17 @@ class VariableName(NamedSymbol):
         if isinstance(self._type, ArrayTypeName):
             # 数组的C名称使用$$array形式
             return f"{self._type.c_alloc_name}$__del__$_0({self.name}, listener); {self.name} = NULL;"
-        return f"{self._type.name}$__del__$_0({self.name}, listener); {self.name} = NULL;"
+        # 泛型实例化的类其析构方法名带额外的重载序号（如Box__1$__del__$_0$_0），
+        # 按类型实际注册的析构方法取名，避免与定义不一致（见开发疑问记录102）
+        del_name: Optional[str] = None
+        if isinstance(self._type, ClassName):
+            del_method = next(
+                (m for (n, _), m in self._type.methods.items() if n == "__del__"), None)
+            if del_method is not None:
+                del_name = del_method.name
+        if del_name is None:
+            del_name = f"{self._type.name}$__del__$_0"
+        return f"{del_name}({self.name}, listener); {self.name} = NULL;"
 
     def instantiation(self, new_name: str, t: dict["GenericArgument", TypeName]) -> "VariableName":
         """
@@ -779,6 +789,12 @@ class ClassName(TypeName):
         self._export: bool = False
         # 模块级访问修饰符（0.1起，默认public）
         self._modifier: Modifier = Modifier.PUBLIC
+        # 泛型实例的来源信息：用于在泛型类的成员签名中出现"本类/其他泛型类
+        # 以泛型参数实例化"的类型（如Array<T>中的Array::<T>）时，在所属泛型类
+        # 实例化后替换为具体实例（见开发疑问记录102）
+        self._generic_origin: Optional["ClassName"] = None
+        self._generic_actual_args: tuple[TypeName, ...] = ()
+        self._generic_table: Optional["GenericTable"] = None
 
     @property
     def modifier(self) -> Modifier:
@@ -867,7 +883,32 @@ class ClassName(TypeName):
         key = GenericArgument(self._src_info, self.name)
         if key in real_types:
             return real_types[key]
+        if self._generic_origin is not None and self._generic_table is not None:
+            # 泛型实例（可能是类型实参仍为泛型参数的伪实例）：
+            # 先替换类型实参，再解析为具体实例
+            new_args: tuple[TypeName, ...] = tuple(
+                arg.instantiation(real_types) for arg in self._generic_actual_args)
+            if any(isinstance(arg, GenericArgument) for arg in new_args):
+                # 类型实参尚未完全确定：保持伪实例，待所属泛型类实例化后再替换
+                return self
+            origin_key = GenericArgument(self._src_info, self._generic_origin.name)
+            if origin_key in real_types:
+                # 本类自身的实例（如Array<T>内签名中的Array::<T>）：
+                # 直接取本次实例化的目标类，避免重入实例化
+                return real_types[origin_key]
+            return self._generic_table.get_cls_instance(self._generic_origin, new_args)
         return self
+
+    def mark_generic_instance(self, origin: "ClassName", actual_args: tuple[TypeName, ...],
+                              generic_table: "GenericTable") -> None:
+        """标记为泛型实例，记录其来源泛型类与类型实参。
+
+        用于成员签名中引用泛型类（含本类）自身实例的类型替换，
+        以及尚未实例化的伪实例（类型实参仍为泛型参数）的后续解析。
+        """
+        self._generic_origin = origin
+        self._generic_actual_args = actual_args
+        self._generic_table = generic_table
 
     @property
     def generic_args(self) -> Optional[list[GenericArgument]]:
@@ -920,11 +961,15 @@ class ClassName(TypeName):
         """
         return name in map(lambda x: x[0], self._methods.keys())
 
-    def instantiation_full(self, new_name: str, args: list[TypeName]) -> "ClassName":
+    def instantiation_full(self, new_name: str, args: list[TypeName],
+                           on_shell: Optional[Callable[["ClassName"], None]] = None) -> "ClassName":
         """
         完全实例化，也就是将所有泛型参数都替换为实际类型。
         new_name: 新的类名。
         args: 泛型参数的实参。
+        on_shell: 可选的壳回调；在成员填充前以新实例调用，
+            使调用方可以先登记该实例（打破成员签名中的自引用递归，
+            见开发疑问记录102）。
         """
         if self.name == "viola$lang$Pointer":
             # 内置指针类型：实例化为原始指针
@@ -941,6 +986,8 @@ class ClassName(TypeName):
                                       self._is_abstract, False, None)
         # 将原类自身加入替换字典，使方法中 this 的类型指向新的实例化类
         generic_dict[GenericArgument(self._src_info, self.name)] = result
+        if on_shell is not None:
+            on_shell(result)
         for name, prop in self._properties.items():
             # $refCount与$parent同样需要出现在实例的结构体布局中
             result.add_property_object(name, prop.instantiation("", generic_dict))
@@ -2205,7 +2252,8 @@ class MethodName(PropertyVariableName):
 
     def __init__(self, src_info: SourceInfo, cls: ClassName, name: str, t: FunctionTypeName, is_abstract: bool,
                  is_static: bool, arg_names: list[str], ret_names: list[str], modifier: Modifier, export: bool,
-                 is_native: bool = False, is_final: bool = False) -> None:
+                 is_native: bool = False, is_final: bool = False,
+                 own_generic_args: Optional[list[str]] = None) -> None:
         """
         创建方法名称。
         src_info: 源代码信息。
@@ -2220,9 +2268,16 @@ class MethodName(PropertyVariableName):
         modifier: 访问权限。
         export: 是否导出。
         is_native: 是否为运行库提供的原生方法。
+        own_generic_args: 方法自身声明的泛型参数（不含所在泛型类的泛型参数）；
+            缺省时按函数类型中的泛型参数推断。
         """
         cls_generic_args: list[str] = cls.generic_args_str if cls.generic_args_str is not None else []
         t_generic_args: list[str] = t.generic_args_str if t.generic_args_str is not None else []
+        # 方法自身声明的泛型参数：泛型类中的所有方法都会携带类的泛型参数，
+        # 若以函数类型中的泛型参数判定，会把它们误当作泛型方法
+        # （导致方法按空实参表登记而无法按参数类型查找，见开发疑问记录102）
+        self._own_generic_args: list[str] = list(own_generic_args) if own_generic_args is not None \
+            else list(t_generic_args)
         is_static = is_static or name == "__new__" or name.startswith("__new__$")
         if not is_static:
             arg_types: list[TypeName] = [cls] + t.args
@@ -2249,7 +2304,7 @@ class MethodName(PropertyVariableName):
         return MethodName(self._src_info, self._cls, self._self_name + "$async",
                           AsyncFuncTypeName.from_function_type_name(self._type), self._is_abstract,
                           self._is_static, self._function_name.arg_names, self._function_name.ret_names, self._modifier,
-                          self._function_name.export)
+                          self._function_name.export, own_generic_args=self._own_generic_args)
 
     def as_function(self) -> FunctionName:
         """
@@ -2368,9 +2423,12 @@ class MethodName(PropertyVariableName):
     @property
     def is_generic(self) -> bool:
         """
-        获取该方法是否为泛型方法。
+        获取该方法是否为泛型方法（自身声明了泛型参数）。
+
+        注意：泛型类的方法类型中同样带有该类的泛型参数，但那不表示方法
+        自身是泛型方法（见开发疑问记录102）。
         """
-        return self._type.is_generic
+        return len(self._own_generic_args) > 0
 
     @property
     def method_name(self) -> str:
@@ -2384,7 +2442,8 @@ class MethodName(PropertyVariableName):
         用另一个函数声明重建方法。
         """
         return MethodName(self._src_info, self._cls, self._self_name, func.type, self._is_abstract, self._is_static,
-                          func.arg_names, func.ret_names, self._modifier, func.export)
+                          func.arg_names, func.ret_names, self._modifier, func.export,
+                          own_generic_args=self._own_generic_args)
 
     def set_cls(self, cls: ClassName, overloaded_times: int) -> "MethodName":
         """
@@ -2401,7 +2460,8 @@ class MethodName(PropertyVariableName):
                           self._function_name.arg_names if self._is_static else self._function_name.arg_names[1:],
                           self._function_name.ret_names, self._modifier, self._function_name.export,
                           self._function_name.is_native,
-                          self._is_final)
+                          self._is_final,
+                          own_generic_args=self._own_generic_args)
 
     def set_default_params(self, default_param_names: list[str]) -> None:
         """
@@ -2738,14 +2798,22 @@ class GenericTable:
         """
         添加一个已实例化的泛型类。
         """
-        if class_name in self._class_instances:
-            if t in self._class_instances[class_name]:
-                raise InternalCompilerException("Class already exists.", self._source_info)
-            self._class_instances[class_name][t] = class_name.instantiation_full(
-                f"{class_name.self_name}__{len(self._class_instances[class_name])}", list(t)
-            )
-        else:
+        if class_name not in self._class_instances:
             raise InternalCompilerException("Class does not exist.", self._source_info)
+        if t in self._class_instances[class_name]:
+            raise InternalCompilerException("Class already exists.", self._source_info)
+        new_name: str = f"{class_name.self_name}__{len(self._class_instances[class_name])}"
+
+        def register_shell(shell: ClassName) -> None:
+            # 先登记实例再填充成员：成员签名中对本实例的引用
+            # （如Array<T>方法签名中的Array::<T>）可解析到同一对象
+            shell.mark_generic_instance(class_name, t, self)
+            self._class_instances[class_name][t] = shell
+
+        result = class_name.instantiation_full(new_name, list(t), register_shell)
+        if t not in self._class_instances[class_name]:
+            # 未触发壳回调（如内置指针类型的实例化返回指针类型而非类）
+            self._class_instances[class_name][t] = result
 
     def add_func_def(self, function_name: FunctionName) -> None:
         """
@@ -3546,9 +3614,16 @@ class SymbolTable:
             name = name.strip()
             if (name, None) in self.symbols:
                 return self.symbols[name, None]
-            name = self.clean_namespace(name)
-            if (name, None) in self.symbols:
-                return self.symbols[name, None]
+            cleaned_name: str = self.clean_namespace(name)
+            if (cleaned_name, None) in self.symbols:
+                return self.symbols[cleaned_name, None]
+            # 未限定的类名（如导入后使用的Array）：按自身名唯一匹配已注册的类。
+            # 导入的符号按限定名注册（如viola.util.array.Array），仅当匹配唯一时
+            # 才解析，避免歧义（见开发疑问记录102）
+            matches: list[TypeName] = [v for v in self.symbols.values()
+                                       if isinstance(v, ClassName) and v.self_name == name]
+            if len(matches) == 1:
+                return matches[0]
             return None
 
         self._type_name_parser: _TypeNameParser = _TypeNameParser(__real_type_getter, self._generic_table)
@@ -3798,12 +3873,16 @@ class SymbolTable:
 
             泛型类的方法查找可能使用该类的泛型参数名（如Array::<T>的T）；
             此时泛型参数不在符号表中（类声明结束后已被移除），
-            按泛型参数构造类型名即可。
+            按泛型参数构造类型名即可。泛型类的实例上同理：成员签名中的
+            泛型参数名按实例来源的泛型类（模板）的参数名解析（开发疑问记录102）。
             """
             try:
                 return self[type_name, None]
             except CompilerException:
                 generic_names: Optional[list[str]] = cls.generic_args_str
+                if generic_names is None and cls._generic_origin is not None:
+                    # 实例化的泛型类：退回到模板的泛型参数名
+                    generic_names = cls._generic_origin.generic_args_str
                 if generic_names is not None and type_name in generic_names:
                     return GenericArgument(self._src_info, type_name)
                 raise
@@ -4004,6 +4083,14 @@ class SymbolTable:
             raise CompilerException(f"Type {t.name} already exists.", self._src_info)
         self.add(t, item[0], None)
 
+    @staticmethod
+    def _is_valid_c_name(name: str) -> bool:
+        """检查是否为合法的显式C名（C标识符，允许$作为命名空间分隔符）。"""
+        if name == "":
+            return False
+        return all(char.isalnum() or char == "_" or char == "$" for char in name) and \
+            not name[0].isdigit()
+
     def _read_func_decl(self, item: list[str]) -> None:
         """
         读取函数。记载格式如下：
@@ -4019,6 +4106,11 @@ class SymbolTable:
         name_parts: list[str] = item[0].split(" ")[1:]
         export: bool = "export" in name_parts
         is_native: bool = "native" in name_parts
+        # 显式C名（cname "..."）：声明可脱离.vla命名空间指定C名称，
+        # 使C名与实现所在的.c文件路径一致（见开发疑问记录103）
+        explicit_c_name: str = item[5] if len(item) > 5 else ""
+        if not self._is_valid_c_name(explicit_c_name):
+            explicit_c_name = ""
         if "%" in item[1]:
             generic_args: list[str] = []
             item_args: list[str] = item[1].split("%")
@@ -4068,7 +4160,15 @@ class SymbolTable:
         if item_name not in self._func_overload_times:
             self._func_overload_times[item_name] = 0
         func_namespace, func_self_name = SymbolTable._split_qualified_name(item_name)
-        if len(func_namespace) == 0:
+        if explicit_c_name != "":
+            if not is_native:
+                raise CompilerException(
+                    f"cname is only allowed on native function declarations ({item_name}).", self._src_info)
+            # 显式C名：以空命名空间构造，使C名与默认参数全局变量名
+            # 均直接使用该名称（如viola$io$file$open$$default$mode）
+            func_namespace = []
+            func_self_name = explicit_c_name
+        elif len(func_namespace) == 0:
             # 未限定的函数名使用本模块的命名空间
             func_namespace = self._namespace
         if is_native:

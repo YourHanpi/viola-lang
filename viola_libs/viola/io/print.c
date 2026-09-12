@@ -22,23 +22,23 @@ static void writeStringToStream(FILE *stream, viola$lang$string *content) {
 /* print()/perror()的默认参数全局变量（编译器生成的默认参数引用指向这里）：
  * content = ""（空字符串）。引用计数为1使清理代码不会释放该静态对象。 */
 static viola$lang$string _viola_io_default_text = {1, NULL, 0, NULL};
-viola$lang$string *viola$io$print$$default$text = &_viola_io_default_text;
-viola$lang$string *viola$io$perror$$default$text = &_viola_io_default_text;
+viola$lang$string *viola$io$print$print$$default$text = &_viola_io_default_text;
+viola$lang$string *viola$io$print$perror$$default$text = &_viola_io_default_text;
 
 /* print(string content) -> () */
-void viola$io$print(viola$lang$string *content, viola$threads$Listener *listener) {
+void viola$io$print$print(viola$lang$string *content, viola$threads$Listener *listener) {
     (void)listener;
     writeStringToStream(stdout, content);
 }
 
 /* perror(string content) -> () */
-void viola$io$perror(viola$lang$string *content, viola$threads$Listener *listener) {
+void viola$io$print$perror(viola$lang$string *content, viola$threads$Listener *listener) {
     (void)listener;
     writeStringToStream(stderr, content);
 }
 
 /* input() -> string：从标准输入读取一行（去除末尾换行） */
-void viola$io$input(viola$lang$string **result, viola$threads$Listener *listener) {
+void viola$io$print$input(viola$lang$string **result, viola$threads$Listener *listener) {
     (void)listener;
     size_t cap = 256;
     size_t len = 0;
