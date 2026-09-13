@@ -1211,6 +1211,9 @@ class OpStmt(Statement):
     def as_async(self) -> "Statement":
         new_stmt = super().as_async()
         new_stmt._expr = self._expr.as_async()
+        # 语句形式的异步调用没有赋值目标：被调函数有返回值时按返回值类型
+        # 建立丢弃目标，使调用方分配返回元组（见开发疑问记录138）
+        new_stmt._expr.set_discard_returns()
         return new_stmt
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
@@ -2593,6 +2596,10 @@ class BlockStmt(Statement):
                 wait_text = "\n".join([
                     # 等待异步任务完成并取回其未捕获的异常，供本函数感知
                     f"$$exc = {LISTENER_WAIT_FUNC}({listener_name});",
+                    # 取回的任务异常与throw语句一样发布到本函数的listener：
+                    # 本函数若不捕获而退出，调用方据此感知（同步被调函数抛出时
+                    # 由其throw语句发布，见开发疑问记录139）
+                    "if ($$exc != NULL) { listener->exception = $$exc; }",
                     f"free({listener_name}$$_call);",
                     # 置空调用结构体：块的清理路径与退出路径据此判断该监听器是否
                     # 已被等待（取回的异常会使本语句跳到清理标签，不置空则清理
@@ -2730,6 +2737,9 @@ class BlockStmt(Statement):
             restores_of[listener] = restores
             wait_text = "\n".join(
                 [f"$$exc = {LISTENER_WAIT_FUNC}({listener});",
+                 # 取回的任务异常与throw语句一样发布到本函数的listener：
+                 # 本函数若不捕获而退出，调用方据此感知（见开发疑问记录139）
+                 "if ($$exc != NULL) { listener->exception = $$exc; }",
                  # 任务已完成，调用结构体不再被引用：释放之（与
                  # BlockStmt.add_stmt的等待路径一致，避免语句形式的异步调用
                  # 在循环中每次泄漏一个结构体）
@@ -2759,7 +2769,9 @@ class BlockStmt(Statement):
                 f"\t{EXCEPTION_T} *$$waited_exc = {LISTENER_WAIT_FUNC}({listener});",
                 f"\tfree({listener}$$_call);",
                 f"\t{listener}$$_call = NULL;",
-                "\tif ($$exc == NULL) { $$exc = $$waited_exc; }",
+                # 取回的任务异常同样发布到本函数的listener，使其在
+                # "本函数未捕获而退出"时被调用方感知（见开发疑问记录139）
+                "\tif ($$exc == NULL && $$waited_exc != NULL) { $$exc = $$waited_exc; listener->exception = $$exc; }",
                 "}"] + restores)
         # 块内的return/throw会直接退出函数，绕过块末尾的等待语句（return是C的
         # return，既不经过块末尾的等待，也不经过本块的清理路径），故把同一等待

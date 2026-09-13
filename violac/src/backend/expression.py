@@ -47,6 +47,14 @@ class Expression(CompilingItem, ABC):
         """
         pass
 
+    def set_discard_returns(self) -> None:
+        """为丢弃返回值的异步调用建立返回值目标（见开发疑问记录138）。
+
+        仅异步调用（CallOp）需要：其返回值由工作线程写入调用方分配的返回
+        元组，没有返回值目标时入队的rets为NULL。其余表达式无此问题。
+        """
+        pass
+
     @abstractmethod
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         """将表达式内联化，用于函数内联展开。
@@ -2344,6 +2352,9 @@ class CallOp(Expression):
         self._call_struct: bool = False
         self._closure_args: Optional[ClosureCallArgs] = None
         self._inline_mapping: dict[str, str] = {}
+        # 语句形式的异步调用（async f();）的丢弃用返回值目标的声明
+        # （见set_discard_returns与开发疑问记录138）
+        self._discard_ret_decls: list[str] = []
 
     def add_arg(self, expr: Expression, arg_name: Optional[str]) -> None:
         """添加一个调用参数。
@@ -2387,6 +2398,50 @@ class CallOp(Expression):
             result._returns_tuple.add_value(ret)
         result._returns_tuple.finish()
         return result
+
+    def set_discard_returns(self) -> None:
+        """为语句形式的异步调用建立丢弃用的返回值目标（见开发疑问记录138）。
+
+        async f();作为语句时不产生赋值目标：调用方原先以rets=NULL入队，而
+        被调函数的$async包装会把返回值写入returns->$i（工作线程中解引用
+        NULL，进程崩溃）。有返回值的函数因此按返回值类型建立一组丢弃变量
+        作为返回值目标——结果照常经返回元组取回后丢弃，与同步的表达式语句
+        （f();）一致。
+
+        丢弃变量不登记符号表（与赋值目标为_的丢弃变量一致），其声明由
+        head_text输出；返回值对象不额外释放，与同形式的同步语句调用
+        （其惰性返回值临时变量同样不释放）及开发疑问记录125的现状一致。
+        """
+        if not self._is_async or len(self._returns_list) > 0:
+            # 已有返回值目标（赋值形式）或非异步调用：无需处理
+            return
+        ret_types: list[TypeName] = self._callee_return_types
+        if len(ret_types) == 0:
+            # 无返回值的函数：rets保持NULL（见开发疑问记录121）
+            return
+        discards: list[LocalVariableName] = []
+        for ret_type in ret_types:
+            discard: LocalVariableName = LocalVariableName(
+                self._src_info, "$_discard$" + str(self._symbol_table.get_counter()), ret_type)
+            discards.append(discard)
+            # 返回元组的成员先被$async包装读入其返回值局部变量，故显式给初值
+            # （对象为NULL、其余为0），避免读未初始化的栈值
+            zero: str = "NULL" if discard.is_object else "0"
+            self._discard_ret_decls.append(f"{discard.type_name_pair_calling} = {zero};")
+        # unpack=False：返回值目标为丢弃变量，无人读取其值，不需要解包
+        self.set_returns(discards, unpack=False)
+
+    @property
+    def _callee_return_types(self) -> list[TypeName]:
+        """获取被调函数的返回值类型列表（按返回值顺序）。"""
+        if isinstance(self._func, FunctionName):
+            return list(self._func.type.returns)
+        if self._func_expr is not None:
+            # noinspection PyTypeChecker
+            func_type: TypeName = self._func_expr.return_type
+            if isinstance(func_type, FunctionTypeName):
+                return list(func_type.returns)
+        return []
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         new_expr: CallOp = copy(self)
@@ -2471,7 +2526,9 @@ class CallOp(Expression):
             # （如异步调用经waitListener取回的异常），无条件赋值会将其丢弃
             call += "\nif ($$exc == NULL) { $$exc = listener->exception; }"
         result.append(call)
-        if len(self._returns_list) > 1:
+        if len(self._returns_list) > 1 and self._unpack_expr is not None:
+            # 多返回值的异步调用需要把返回元组的成员解包到各目标变量；
+            # 丢弃用返回值目标（set_discard_returns，无_unpack_expr）无人读取，不解包
             if self._is_async:
                 result.append(self._unpack_expr.front_text)
         return "\n".join(result)
@@ -2562,13 +2619,16 @@ class CallOp(Expression):
             results: list[str] = [self._returns_tuple.head_text]
         else:
             results = []
+        # 丢弃用返回值目标（语句形式的异步调用，见set_discard_returns）：
+        # 其声明不在符号表中，由本表达式输出（需先于返回元组的填充代码）
+        results = self._discard_ret_decls + results
         results.extend(filter(lambda x: x is not None, map(lambda x: x.head_text, self._arg_list)))
         results.extend(filter(lambda x: x is not None, map(lambda x: x.head_text, self._kwarg_dict.values())))
         if self._func_expr.head_text is not None and not isinstance(self._func, FunctionName):
             results.append(self._func_expr.head_text)
         if self._lazy_ret_decl is not None:
             results.append(self._lazy_ret_decl)
-        if self._args_tuple is not None and self._args_tuple.head_text is not None and not self._call_struct:
+        if self._args_tuple is not None and self._args_tuple.head_text is not None and self._has_args_tuple:
             # 异步调用时实参打包进参数元组的临时变量（结构体调用使用_closure_args）
             results.append(self._args_tuple.head_text)
         # 结构体调用的实参元组由_ensure_closure_args在front_text中按需创建，
@@ -2664,7 +2724,10 @@ class CallOp(Expression):
     @property
     def release_text(self) -> Optional[str]:
         result: list[Optional[str]] = [
-            self._args_tuple.release_text if self._args_tuple is not None else None,
+            # 实参元组仅在真正分配时释放：无实参的异步调用以args=NULL入队，
+            # 其元组从未分配，对NULL解引用会崩溃（语句形式的表达式语句会输出
+            # 本释放代码，见开发疑问记录138的附带发现）
+            self._args_tuple.release_text if self._args_tuple is not None and self._has_args_tuple else None,
             self._closure_args.release_text if self._closure_args is not None else None,
             self._unpack_expr.release_text if self._unpack_expr is not None else None,
             # 返回元组仅由异步调用分配，同步调用不释放
@@ -2672,6 +2735,17 @@ class CallOp(Expression):
         ]
         result_str: str = "\n".join(filter(lambda x: x is not None, result))
         return result_str if result_str != "" else None
+
+    @property
+    def _has_args_tuple(self) -> bool:
+        """实参是否经参数元组（_args_tuple）传递。
+
+        无实参的调用以args=NULL入队（元组不分配）；结构体调用（闭包/函数值）
+        的实参由ClosureCallArgs打包（其余临时变量），不使用_args_tuple。
+        两种情形下_args_tuple的声明与释放都不能生成（前者元组未分配，
+        后者其临时变量从未声明，见开发疑问记录138的附带发现）。
+        """
+        return not self._call_struct and len(self._arg_list) + len(self._kwarg_dict) > 0
 
     @property
     def _has_return_values(self) -> bool:
@@ -2826,7 +2900,14 @@ class CallOp(Expression):
         if self._returns_tuple is not None:
             self._returns_tuple.finish()
 
-    def set_returns(self, returns: Optional[list[VariableName]]) -> bool:
+    def set_returns(self, returns: Optional[list[VariableName]], unpack: bool = True) -> bool:
+        """设置异步调用的返回值目标（异步调用由调用方分配返回元组）。
+
+        unpack=False用于丢弃用返回值目标（见set_discard_returns）：其值无人
+        读取，不需要多返回值解包（UnpackExpr.front_text会取被解包表达式即本
+        调用的front_text，二者互相引用，对丢弃目标也不可到达，见开发疑问
+        记录140）。
+        """
         if returns is not None and self._returns_list == returns:
             # 幂等：已设置相同的返回值目标，避免重复创建临时元组变量
             return True
@@ -2835,7 +2916,7 @@ class CallOp(Expression):
         for ret in self._returns_list:
             self._returns_tuple.add_value(VariableRef(self._src_info, self._symbol_table, ret))
         self._returns_tuple.finish()
-        if len(returns) > 1:
+        if len(returns) > 1 and unpack:
             self._unpack_expr = UnpackExpr(self._src_info, self._symbol_table, self)
             self._unpack_expr.set_returns(returns)
         return True
@@ -2863,6 +2944,9 @@ class CallOp(Expression):
         if len(return_types.types) == 0:
             return "NULL"
         if not self._is_async:
+            return self._returns_tuple.text
+        if self._unpack_expr is None:
+            # 丢弃用返回值目标（多返回值）：无人解包，返回元组自身即承载
             return self._returns_tuple.text
         return self._unpack_expr.text
 

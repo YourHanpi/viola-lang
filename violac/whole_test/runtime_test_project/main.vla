@@ -130,6 +130,67 @@ sq triggerVoidThrowingAsync(int[] numbers) -> () {
     async throwerVoid(numbers);
 }
 
+// 同上的提前return形式：退出路径上的等待同样应把取回的任务异常发布给调用方
+// （见开发疑问记录139）
+sq triggerVoidThrowingAsyncEarlyReturn(int[] numbers) -> () {
+    async throwerVoid(numbers);
+    return;
+}
+
+// 有返回值的函数：以语句形式异步调用时返回值无处可取，但调用方仍须分配
+// 返回元组——$async包装会把返回值写入returns->$i（见开发疑问记录138）
+sq writeMarkerReturning(string path, string text) -> (int result) {
+    file markerFile = open(path, "w", "utf-8");
+    write(markerFile, text);
+    result = text.length();
+}
+
+sq triggerVoidAsyncReturning(string path, string text) -> () {
+    async writeMarkerReturning(path, text);
+}
+
+// 无实参的语句形式异步调用：调用以args=NULL入队，实参元组未分配，不得对其
+// 生成释放判断（见开发疑问记录138的附带发现）
+sq writeNoArgMarker() -> () {
+    writeMarkerTo("void_async_noarg_marker.txt", "no-arg\n");
+}
+
+sq triggerVoidAsyncNoArg() -> () {
+    async writeNoArgMarker();
+}
+
+// 函数值（闭包）的语句形式异步调用：实参由ClosureCallArgs打包、返回值需丢弃
+// 目标，不得引用未声明的实参元组临时变量（见开发疑问记录138的附带发现）
+sq triggerVoidAsyncFuncValue(int[] numbers) -> () {
+    (int) -> (int) f = doubleValue;
+    async f(numbers[0]);
+}
+
+// 多返回值的函数以语句形式异步调用：每个返回值各有一个丢弃目标，
+// 返回元组的成员数与之一一对应（不做解包）
+sq writeEchoMarker(string path, string text) -> (int count, string echoed) {
+    writeMarkerTo(path, text);
+    count = text.length();
+    echoed = text;
+}
+
+sq triggerVoidAsyncMultiReturn(string path, string text) -> () {
+    async writeEchoMarker(path, text);
+}
+
+// 按变量等待的异步调用（变量首次使用处的等待）取回的任务异常同样应发布给
+// 调用方（见开发疑问记录139）：fn函数必须以返回值表达结果，故用越界读
+fn throwingFib(int[] a) -> (int result) {
+    result = a[7];
+}
+
+sq triggerAsyncVarThrowing(int[] numbers) -> () {
+    async int marker = throwingFib(numbers);
+    if (marker > 0) {
+        writeMarkerTo("void_async_var_throwing_marker.txt", "no-exception\n");
+    }
+}
+
 // =>更新表达式的源对象为函数调用：源表达式的返回值应物化到临时变量后再复制
 // （原先生成memcpy(t, NULL, ...)，见开发疑问记录137）
 fn makeNumbers(int n) -> (int[] result) {
@@ -393,11 +454,62 @@ sq main() -> () {
     // 变量在异常之前未被使用，等待语句位于块末尾而被绕过，任务原先无人等待
     // （见开发疑问记录136）
     triggerAsyncVarCalledThrow(numbers);
+    // 按变量等待的异步调用其任务抛出异常时，等待取回的异常同样应传播到调用方
+    // （见开发疑问记录139）
+    try {
+        triggerAsyncVarThrowing(numbers);
+        check(false, "async var task exception propagates");
+    } catch Exception e {
+        check(true, "async var task exception propagates");
+    }
 
-    // 语句形式的异步调用其任务自身抛出异常时不应崩溃：块末尾的等待取回该异常后
-    // 会跳到清理标签，该路径上不得对已释放的监听器重复等待（见开发疑问记录136）
-    triggerVoidThrowingAsync(numbers);
-    check(true, "async task exception does not crash");
+    // 语句形式的异步调用其任务自身抛出异常：等待取回的异常应传播到调用方，
+    // 故此处应进入catch（原先只记入被调函数的$$exc，调用方捕获不到，
+    // 见开发疑问记录139）；同时块末尾的等待取回该异常后会跳到清理标签，
+    // 该路径上不得对已释放的监听器重复等待（见开发疑问记录136）
+    try {
+        triggerVoidThrowingAsync(numbers);
+        check(false, "async task exception propagates");
+    } catch Exception e {
+        check(true, "async task exception propagates");
+    }
+    // 提前return的退出路径上同样应等待并把异常发布给调用方
+    try {
+        triggerVoidThrowingAsyncEarlyReturn(numbers);
+        check(false, "async task exception crosses exit path");
+    } catch Exception e {
+        check(true, "async task exception crosses exit path");
+    }
+
+    // 语句形式异步调用"有返回值的函数"：返回值被丢弃，但不得崩溃
+    // （原先以rets=NULL入队，工作线程向NULL返回元组写入，见开发疑问记录138）
+    string returningPath = "void_async_returning_marker.txt";
+    file returningSetup = open(returningPath, "w", "utf-8");
+    write(returningSetup, "pending\n");
+    triggerVoidAsyncReturning(returningPath, "returning-awaited\n");
+    file returningRead = open(returningPath, "r", "utf-8");
+    string returningText = read(returningRead);
+    check(returningText == "returning-awaited\n", "void async returning function");
+    // 原生函数的$async包装同样写入返回元组，故同样需要调用方分配
+    async viola.os.getcwd();
+    async viola.os.path.basename(cwdText);
+    check(true, "void async returning native function");
+    // 无实参的语句形式异步调用：实参元组不分配，不得对其做释放判断
+    triggerVoidAsyncNoArg();
+    file noArgReadFile = open("void_async_noarg_marker.txt", "r", "utf-8");
+    string noArgText = read(noArgReadFile);
+    check(noArgText == "no-arg\n", "void async no-arg statement");
+    // 函数值（闭包）的语句形式异步调用：返回值丢弃、实参经ClosureCallArgs传递
+    triggerVoidAsyncFuncValue(numbers);
+    check(true, "void async function value statement");
+    // 多返回值的语句形式异步调用：各返回值均为丢弃目标
+    string echoPath = "void_async_multi_return_marker.txt";
+    file echoSetup = open(echoPath, "w", "utf-8");
+    write(echoSetup, "pending\n");
+    triggerVoidAsyncMultiReturn(echoPath, "multi-awaited\n");
+    file echoRead = open(echoPath, "r", "utf-8");
+    string echoText = read(echoRead);
+    check(echoText == "multi-awaited\n", "void async multi-return statement");
 
     // =>更新表达式的源对象为函数调用：源表达式的返回值先物化到临时变量再复制
     // （原先生成memcpy(t, NULL, ...)，见开发疑问记录137）
