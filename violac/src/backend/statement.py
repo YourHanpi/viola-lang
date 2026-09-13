@@ -25,8 +25,11 @@ from abc import ABC, abstractmethod
 from copy import copy
 from enum import Enum
 from typing import Optional
+import re
 
 LISTENER_WAIT_FUNC = "viola$threads$waitListener"
+# 调试标记占位名（$$_MARK_<符号表序号>_<符号表内编号>，见symbol.get_mark_counter）
+_MARK_PLACEHOLDER_PATTERN: re.Pattern[str] = re.compile(r"\$\$_MARK_\d+_\d+")
 # 构造函数体中代表待构造对象的局部变量名（见ConstructorDef），
 # 父类构造调用（super = 父类名(...)）需要在该对象上初始化父类成员
 THIS_OBJ_NAME: str = "_thisObj"
@@ -116,6 +119,28 @@ class _Mark:
     def set_as_const_def(self) -> None:
         """将当前标记设置为常量定义标记。"""
         self._is_const_def = True
+
+
+def renumber_marks(text: str) -> str:
+    """
+    将生成代码中的调试标记占位名按出现顺序重编号为 $$_MARK_0..$$_MARK_N。
+
+    标记的占位名含符号表序号（见symbol.get_mark_counter），从而在进程内唯一；
+    但标记是生成代码中的文件级静态变量，一个编译单元（.c）内只需互不相同，
+    故写出时按编译单元统一重编号：编号只取决于标记在该文件中的出现顺序，
+    与并行编译的线程交错无关（见开发疑问记录117、123）。
+    :param text: 编译单元的代码文本。
+    :return: 重编号后的文本。
+    """
+    mapping: dict[str, str] = {}
+
+    def replace(match: "re.Match[str]") -> str:
+        name: str = match.group(0)
+        if name not in mapping:
+            mapping[name] = f"$$_MARK_{len(mapping)}"
+        return mapping[name]
+
+    return _MARK_PLACEHOLDER_PATTERN.sub(replace, text)
 
 
 class Statement(CompilingItem, ABC):
@@ -244,6 +269,16 @@ class Statement(CompilingItem, ABC):
         在waitListener之后需要把元组成员复制回赋值目标（见CallOp.restore_text）。
         """
         return {}
+
+    @property
+    def deferred_listeners(self) -> list[str]:
+        """获取本语句创建、且在所在块结束时等待的监听器名。
+
+        语句形式的异步调用（async f();，无赋值目标）没有可据以确定等待位置的
+        变量，其结果也无处可取，故登记为"块结束时等待"：否则任务入队后无人等待，
+        函数可能在任务执行前结束（见开发疑问记录122）。
+        """
+        return []
 
     @property
     @abstractmethod
@@ -1220,6 +1255,17 @@ class OpStmt(Statement):
     @property
     def new_listeners(self) -> dict[VariableName, str]:
         return {}
+
+    @property
+    def deferred_listeners(self) -> list[str]:
+        """语句形式的异步调用：登记为在所在块结束时等待其完成。
+
+        async f();作为语句时不产生赋值目标，监听器无处登记（原先
+        new_listeners返回空），入队的任务因而无人等待，函数可能在任务
+        执行前结束（见开发疑问记录122）。
+        """
+        listener: Optional[str] = self._expr.listener_name
+        return [listener] if listener is not None else []
 
     @property
     def new_variables(self) -> set[VariableName]:
@@ -2468,6 +2514,9 @@ class BlockStmt(Statement):
         self._outer_variables: dict[VariableName, VariableState] = var_states.state.copy()
         self._inner_variables: dict[VariableName, VariableState] = {}
         self._listeners: dict[VariableName, str] = {}
+        # 无等待触发变量的监听器（语句形式的异步调用），按登记顺序在本块
+        # 结束时等待（见Statement.deferred_listeners与开发疑问记录122）
+        self._deferred_listeners: list[str] = []
         # 监听器名 -> 异步返回值复制回目标变量的代码（waitListener之后执行）
         self._listener_restores: dict[str, list[str]] = {}
         self._input_variables: set[VariableName] = set()
@@ -2550,6 +2599,7 @@ class BlockStmt(Statement):
                     self._inner_variables[var] = VariableState.ASSIGNED
                 del self._listeners[var]
         self._listeners.update(stmt.new_listeners)
+        self._deferred_listeners += stmt.deferred_listeners
         self._listener_restores.update(stmt.restore_listeners)
         self._stmt.append(stmt)
         self._input_variables |= stmt.input_variables
@@ -2648,10 +2698,16 @@ class BlockStmt(Statement):
             new_stmt_list.append(stmt)
         new_stmt_list.reverse()
         self._stmt = new_stmt_list
-        for listener in self._listeners.values():
+        # 按监听器名去重：同一监听器被等待两次会重复waitListener并重复free其调用
+        # 结构体（as_async/as_inline的块副本与本体共享_listeners/_deferred_listeners）
+        for listener in dict.fromkeys(list(self._listeners.values()) + self._deferred_listeners):
             wait_stmt = CStmt(self.src_info, self._symbol_table, self._var_states)
             wait_text = "\n".join(
-                [f"$$exc = {LISTENER_WAIT_FUNC}({listener});"] + self._listener_restores.pop(listener, []))
+                [f"$$exc = {LISTENER_WAIT_FUNC}({listener});",
+                 # 任务已完成，调用结构体不再被引用：释放之（与
+                 # BlockStmt.add_stmt的等待路径一致，避免语句形式的异步调用
+                 # 在循环中每次泄漏一个结构体）
+                 f"free({listener}$$_call);"] + self._listener_restores.pop(listener, []))
             wait_stmt.set_text(wait_text)
             # 等待语句在finish中追加，未经过上面统一设置跳转标记的循环；
             # 若不设置，取回异常后会跳到函数级$$cleanup，绕过本块所属try的

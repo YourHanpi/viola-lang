@@ -13,7 +13,44 @@ LOG_DIR: str = "__log__"
 
 import hashlib
 import os
+import threading
 import time
+
+
+def write_text_atomic(path: str, text: str) -> None:
+    """
+    原子写出文本文件：先写同目录下的临时文件，再改名到目标路径。
+
+    并发读取缓存文件时（见开发疑问记录128），若直接以"w"打开目标文件，
+    文件在写入期间会先被截断，读者可能读到写了一半的内容。改为"写临时
+    文件+改名"后，目标文件在任何时刻都是一个完整版本。
+
+    编码与换行符沿用原直接写出的行为（不显式指定），以保证缓存文件
+    的字节内容与改动前一致。
+    :param path: 目标文件路径。
+    :param text: 要写入的文本。
+    """
+    temp_path: str = f"{path}.tmp${os.getpid()}${threading.get_ident()}"
+    try:
+        with open(temp_path, "w") as file:
+            file.write(text)
+        for _ in range(50):
+            try:
+                os.replace(temp_path, path)
+                return
+            except OSError:
+                # 目标文件可能正被读者/其他进程打开（Windows下改名会被拒绝），
+                # 稍后重试
+                time.sleep(0.02)
+        # 长时间无法改名（如目标被其他进程独占）：退化为直接写出，
+        # 与改动前行为一致，避免此处直接失败
+        with open(path, "w") as file:
+            file.write(text)
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
 
 def get_cache_path(workspace: str, src_path: str) -> str:

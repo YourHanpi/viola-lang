@@ -175,6 +175,7 @@ class ExprParser(GlobalParser):
         if not self._set_file_lock(cache_path):
             # 该文件正在被其他线程解析，重新入队等待
             return TaskResult(TaskResultState.DELAYED, [["violac", "parse-expr", file_path]])
+        self._held_locks.add(cache_path)
         try:
             if os.path.exists(cache_file_path) and os.path.exists(global_command_path) and \
                     os.path.getmtime(cache_file_path) >= os.path.getmtime(global_command_path):
@@ -193,6 +194,7 @@ class ExprParser(GlobalParser):
             self._logger.info(f"Successfully parsed expressions from {file_path}")
             return TaskResult(TaskResultState.SUCCESS, [["violac", "run-vm", file_path]])
         finally:
+            self._held_locks.discard(cache_path)
             self._remove_file_lock(cache_path)
 
     def parse_single_expr(self, expr_tokens: list[Token]) -> Optional[list[str]]:

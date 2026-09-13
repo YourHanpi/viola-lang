@@ -48,6 +48,27 @@ void viola$lang$exception$Exception$what$_0(viola$lang$exception$Exception *_thi
     *result = _this->message;
 }
 
+/* 数组下标越界：构造IndexError并上报到listener。
+   生成的数组方法在越界时调用本函数后立即返回，调用方在同步调用之后
+   读取listener->exception，异常由此传播到Viola层的try/catch
+   （见开发疑问记录124与VIOLA_ARRAY_BOUNDS_CHECK）。 */
+void viola$lang$exception$indexError(viola$lang$uint64 index, viola$lang$uint64 size,
+                                     viola$threads$Listener *listener) {
+    char buffer[128];
+    viola$lang$string *message = NULL;
+    viola$lang$exception$Exception *exc = NULL;
+    if (listener == NULL) {
+        /* 无监听器可上报（正常路径不会发生）：调用方仍会立即返回，
+           不进行越界访问 */
+        return;
+    }
+    snprintf(buffer, sizeof(buffer), "array index out of range: %llu (size: %llu)",
+             (unsigned long long)index, (unsigned long long)size);
+    message = viola$lang$string$fromCharString(buffer);
+    viola$lang$exception$Exception$__new__$_0(message, &exc, listener);
+    listener->exception = exc;
+}
+
 /* 析构异常 */
 void viola$lang$exception$Exception$__del__$_0(viola$lang$exception$Exception *_this,
                                                viola$threads$Listener *listener) {

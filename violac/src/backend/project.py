@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
 from .definition import Definition, GlobalDef, FromImportDef
-from .statement import CStmt
+from .statement import CStmt, renumber_marks
 from .symbol import NamespaceName, TypeName, ArrayTypeName, SymbolTable, StringTypeName, VariableStateTable, \
     type_def_class_names
 from utils import SourceInfo, InternalCompilerException, COMPILER_PARAMS, VIOLA_INIT
@@ -122,11 +122,13 @@ class SourceFile(CompilingItem):
         type_defs: list[str] = forward_decls + SymbolTable.type_def_texts()
         if not os.path.exists(os.path.dirname(self._dst_code_path)):
             os.makedirs(os.path.dirname(self._dst_code_path), exist_ok=True)
+        code_text: str = f"#define _VIOLA_IMPORT_{'$'.join(map(lambda x: x.name, self._namespace))}$__all__ 1\n" \
+            + f"#include \"{os.path.basename(self._dst_header_path)}\"\n\n" \
+            + "\n".join(outer_texts) + "\n" \
+            + "\n\n".join(sources)
         with open(self._dst_code_path, "w", encoding=COMPILER_PARAMS["encoding"]) as f:
-            f.write(f"#define _VIOLA_IMPORT_{'$'.join(map(lambda x: x.name, self._namespace))}$__all__ 1\n")
-            f.write(f"#include \"{os.path.basename(self._dst_header_path)}\"\n\n")
-            f.write("\n".join(outer_texts) + "\n")
-            f.write("\n\n".join(sources))
+            # 调试标记的占位名按本编译单元统一重编号（见开发疑问记录123）
+            f.write(renumber_marks(code_text))
         with open(self._dst_header_path, "w", encoding=COMPILER_PARAMS["encoding"]) as f:
             f.write("\n\n".join(type_defs + headers))
 
@@ -292,7 +294,8 @@ class _MainFile:
         if self._text == "":
             raise InternalCompilerException("Main file is not finished", self._src_info)
         with open(self._dst_path, "w", encoding=COMPILER_PARAMS["encoding"]) as f:
-            f.write(self._text)
+            # 主入口也是一个编译单元，同样按本单元重编号调试标记（见开发疑问记录123）
+            f.write(renumber_marks(self._text))
 
 
 class Project:

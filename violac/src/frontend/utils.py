@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from utils import COMPILER_PARAMS, SourceInfo, VIOLA_INIT, Token
-from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, EXPR_TOKENS_POSTFIX, IMPORTS_POSTFIX
+from utils.file_marks import COMMAND_POSTFIX, GLOBAL_COMMAND_POSTFIX, SYMBOL_TABLE_POSTFIX, EXPR_TOKENS_POSTFIX, IMPORTS_POSTFIX, write_text_atomic
 
 from abc import ABC, abstractmethod
 import os
@@ -422,15 +422,16 @@ class ParsingResult:
                 f.write(str(cmd) if not isinstance(cmd, str) else cmd)
                 if not (isinstance(cmd, str) and cmd.endswith('\n')):
                     f.write('\n')
-        with open(path + SYMBOL_TABLE_POSTFIX, "w") as f:
-            f.write((src_path if src_path != "" else path) + "\n")
-            f.write((workspace if workspace != "" else os.path.dirname(path)) + "\n")
-            f.write("---\n")
-            for sym in self._symbol:
-                s = str(sym) if not isinstance(sym, str) else sym
-                f.write(s)
-                if not s.endswith('\n'):
-                    f.write('\n')
+        # 符号表原子写出：并发读取该缓存时不会读到写了一半的内容
+        # （见开发疑问记录128与file_marks.write_text_atomic）
+        symbol_text: list[str] = [(src_path if src_path != "" else path) + "\n",
+                                  (workspace if workspace != "" else os.path.dirname(path)) + "\n", "---\n"]
+        for sym in self._symbol:
+            s = str(sym) if not isinstance(sym, str) else sym
+            symbol_text.append(s)
+            if not s.endswith('\n'):
+                symbol_text.append('\n')
+        write_text_atomic(path + SYMBOL_TABLE_POSTFIX, "".join(symbol_text))
         if self._from_global_parser:
             TokenStreamIO.write_lists(path + EXPR_TOKENS_POSTFIX, self._expr_tokens)
         if self._imports:

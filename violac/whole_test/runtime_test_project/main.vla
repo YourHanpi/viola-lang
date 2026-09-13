@@ -43,6 +43,18 @@ fn thrower(double[] a, double[] b) -> (double result) {
     result = dist(a, b);
 }
 
+// 无返回值函数：以语句形式异步调用（async writeMarker(...);）时，
+// 应在所在函数返回前被等待（见开发疑问记录122）
+sq writeMarker(string text) -> () {
+    file markerFile = open("void_async_marker.txt", "w", "utf-8");
+    write(markerFile, text);
+}
+
+// 在函数体内以语句形式发起异步调用：函数返回前应等待其完成
+sq triggerVoidAsync(string text) -> () {
+    async writeMarker(text);
+}
+
 // 断言：条件不成立时打印并以致非零退出码结束（供测试脚本判定）
 sq check(bool condition, string label) -> () {
     if (condition) {
@@ -146,6 +158,15 @@ sq main() -> () {
     int reduced = functools.reduce::<int>([1, 2, 3, 4, 5, 6], sumChunk, 2);
     check(reduced == 21, "functools.reduce");
 
+    // 数组越界检查：越界读应上报IndexError并可被catch捕获
+    // （由VIOLA_ARRAY_BOUNDS_CHECK控制，默认开启，见开发疑问记录124）
+    try {
+        int outOfRange = numbers[4];
+        check(false, "array bounds check");
+    } catch Exception e {
+        check(true, "array bounds check");
+    }
+
     // functools：map/filter（异步：每个元素的调用放入任务队列；map不保证顺序）
     int[] mappedAsync = functools.map::<int, int>(numbers, doubleValue, true);
     int asyncMapSum = mappedAsync[0] + mappedAsync[1] + mappedAsync[2] + mappedAsync[3];
@@ -180,6 +201,14 @@ sq main() -> () {
     async string contentAsync = read(asyncReadFile);
     string contentSync = contentAsync;
     check(contentSync == "line1\nline2\n", "io.read async");
+
+    // 语句形式的异步调用（无赋值目标）应在所在函数返回前被等待：任务入队后
+    // 若无人等待，函数可能在任务执行前结束（见开发疑问记录122）。
+    // triggerVoidAsync在其函数末尾等待该任务，故此处读取标记文件时写入已完成
+    triggerVoidAsync("awaited\n");
+    file markerReadFile = open("void_async_marker.txt", "r", "utf-8");
+    string markerText = read(markerReadFile);
+    check(markerText == "awaited\n", "void async statement waits");
 
     print("0.1 runtime library test completed\n");
 }

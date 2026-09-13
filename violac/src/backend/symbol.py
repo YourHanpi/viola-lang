@@ -1172,6 +1172,24 @@ _GENERIC_INSTANCE_INDEXES: dict[str, dict[tuple[str, ...], int]] = {}
 #    遍历中集合被修改会抛RuntimeError，使编译偶发失败。
 _GENERIC_REGISTRY_LOCK: threading.Lock = threading.Lock()
 
+# 符号表在调试标记占位名中的区分序号。
+# 标记名中的编号按符号表（即按模块）分配，以保证生成产物与编译线程的调度
+# 无关（见开发疑问记录117）；但一个编译单元中可能混入由其他符号表生成的
+# 标记（例如泛型实例以调用方的符号表生成、却写入了定义方的文件），两个
+# 符号表的编号会重名。故占位名中加入符号表序号使其在进程内唯一，写出时
+# 再按编译单元统一重编号（见开发疑问记录123）。
+_MARK_TABLE_INDEXES_LOCK: threading.Lock = threading.Lock()
+_MARK_TABLE_INDEXES: int = 0
+
+
+def _next_mark_table_index() -> int:
+    """分配一个进程内唯一的符号表序号（用于调试标记占位名）。"""
+    global _MARK_TABLE_INDEXES
+    with _MARK_TABLE_INDEXES_LOCK:
+        result: int = _MARK_TABLE_INDEXES
+        _MARK_TABLE_INDEXES += 1
+        return result
+
 
 def _generic_instance_index(symbol_c_name: str, arg_names: tuple[str, ...]) -> int:
     """获取泛型实例的C名序号（同一进程内对同一实例始终返回同一序号）。"""
@@ -3437,6 +3455,32 @@ class SymbolTable:
             "#endif"
         ])
 
+    @staticmethod
+    def _array_bounds_check_text(index_var: str, extra: Optional[list[str]] = None) -> str:
+        """
+        获取数组下标越界检查的C代码。
+
+        数组的__getitem__/__setitem__原先直接读写data[index]，越界时静默读取
+        相邻堆内存（见开发疑问记录124）。检查由运行库的VIOLA_ARRAY_BOUNDS_CHECK
+        宏控制，默认开启，越界时上报IndexError（可被catch捕获）；以
+        -DVIOLA_ARRAY_BOUNDS_CHECK=0编译可关闭。
+
+        越界时提前返回，不写出结果：调用方的表达式求值可能有后续语句先于
+        异常跳转执行，故extra给出把结果置于确定值的语句（该值在异常路径上
+        被丢弃，但不应是未初始化的值）。
+        :param index_var: 下标形参的名字（__getitem__为item，__setitem__为index）。
+        :param extra: 越界时在返回前执行的语句列表。
+        :return: 检查代码文本。
+        """
+        lines: list[str] = [
+            "#if VIOLA_ARRAY_BOUNDS_CHECK",
+            f"\tif ({index_var} >= _this->size) {{",
+            f"\t\tviola$lang$exception$indexError({index_var}, _this->size, listener);",
+        ]
+        lines += [f"\t\t{line}" for line in (extra if extra is not None else [])]
+        lines += ["\t\treturn;", "\t}", "#endif"]
+        return "\n".join(lines)
+
     @classmethod
     def array_type_impl_texts(cls) -> list[str]:
         """获取所有已注册数组类型方法的C实现文本（生成到唯一编译单元__main__.c中）。
@@ -3454,9 +3498,10 @@ class SymbolTable:
                 f"newResult->$refCount = 1; newResult->$parent = NULL;"
             )
             results.append("\n".join([
-                # 下标访问
+                # 下标访问（越界检查由VIOLA_ARRAY_BOUNDS_CHECK控制，见开发疑问记录124）
                 f"void {arr_name}$__getitem__$_0({arr_name} *_this, viola$lang$uint64 item, "
                 f"{elem_asg} element, viola$threads$Listener *listener) {{",
+                SymbolTable._array_bounds_check_text("item", ["memset(element, 0, sizeof(*element));"]),
                 "\t*element = _this->data[item];",
                 "}",
                 # 切片访问
@@ -3511,9 +3556,10 @@ class SymbolTable:
                 f"viola$threads$Listener *listener) {{",
                 "\t*result = _this->size;",
                 "}",
-                # 索引赋值
+                # 索引赋值（越界检查同上；检查置于分配之前，越界时不分配新数组）
                 f"void {arr_name}$__setitem__$_0({arr_name} *_this, viola$lang$uint64 index, "
                 f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener) {{",
+                SymbolTable._array_bounds_check_text("index", ["*newArray = _this;"]),
                 f"\t{new_arr}",
                 "\tnewResult->size = _this->size;",
                 f"\tnewResult->data = newResult->size == 0 ? NULL : ({elem_asg})malloc({elem_size} * newResult->size);",
@@ -3759,8 +3805,10 @@ class SymbolTable:
         self._namespace_name: str = ".".join(map(lambda x: x.name, self._namespace))
         self._counter: int = 0
         # 调试标记的计数器单独计数（编号按符号表，即按模块，使生成产物与
-        # 编译线程的调度无关，见开发疑问记录117）
+        # 编译线程的调度无关，见开发疑问记录117）；表序号用于让不同符号表
+        # 生成的占位名互不相同，写出时再按编译单元统一重编号（见开发疑问记录123）
         self._mark_counter: int = 0
+        self._mark_table_index: int = _next_mark_table_index()
         self._class_info_list_name: str = "$".join(map(lambda x: x.name, self._namespace)) + "$classInfoList"
         self._src_info: SourceInfo = SourceInfo(src_path)
         self._generic_table: GenericTable = GenericTable(self._src_info, self._namespace)
@@ -4084,13 +4132,16 @@ class SymbolTable:
 
     def get_mark_counter(self) -> str:
         """
-        获取调试标记的名称（按符号表独立编号）。
+        获取调试标记的占位名（按符号表独立编号）。
 
-        标记名为生成代码中的文件级静态变量，按所属模块计数即可保证唯一；
         若改用进程内的全局计数器，编号会随并行编译的线程交错变化，使同一
-        工程的连续编译产出不同文本（见开发疑问记录117）。
+        工程的连续编译产出不同文本（见开发疑问记录117），故编号按符号表
+        （即按模块）分配；再冠以符号表序号，使不同符号表在同一编译单元中
+        也不会重名（泛型实例可能以调用方的符号表生成、却写入定义方的文件，
+        见开发疑问记录123）。该名称只是占位名，写出时会按编译单元统一
+        重编号为 $$_MARK_0..$$_MARK_N（见statement.renumber_marks）。
         """
-        result: str = f"$$_MARK_{self._mark_counter}"
+        result: str = f"$$_MARK_{self._mark_table_index}_{self._mark_counter}"
         self._mark_counter += 1
         return result
 

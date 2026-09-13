@@ -49,6 +49,16 @@ typedef struct viola$dynamic$TypeInfo {
 /* 判断对象类型是否为目标的子类型（沿$parent链查找） */
 int viola$lang$convertibleTo(void *obj_vtable, void *target_vtable);
 
+/* ================= 数组越界检查 ================= */
+/* 数组下标访问（__getitem__/__setitem__）的越界检查由本符号控制：
+   默认开启，越界时上报viola.lang.exception的IndexError（可被catch捕获）；
+   以-DVIOLA_ARRAY_BOUNDS_CHECK=0编译可关闭该检查（关闭后越界访问为
+   未定义行为，仅用于对性能敏感且已确认下标安全的场景）。
+   见开发疑问记录124。 */
+#ifndef VIOLA_ARRAY_BOUNDS_CHECK
+#define VIOLA_ARRAY_BOUNDS_CHECK 1
+#endif
+
 /* ================= 对象基类 ================= */
 /* 所有类实例以$refCount、$parent开头（用户类的结构体由编译器生成，
    并继承object的字段布局；此处提供object类型供元组等组合类型引用） */
@@ -255,6 +265,10 @@ void viola$lang$exception$Exception$what$_0(viola$lang$exception$Exception *_thi
                                             viola$threads$Listener *listener);
 void viola$lang$exception$Exception$__del__$_0(viola$lang$exception$Exception *_this,
                                                viola$threads$Listener *listener);
+/* 数组下标越界：构造IndexError异常并写入listener->exception，供生成的数组
+   方法在越界时上报（见开发疑问记录124与VIOLA_ARRAY_BOUNDS_CHECK） */
+void viola$lang$exception$indexError(viola$lang$uint64 index, viola$lang$uint64 size,
+                                     viola$threads$Listener *listener);
 
 /* ================= viola.lang.slice ================= */
 void viola$lang$slice$__del__$_0(viola$lang$slice *_this, viola$threads$Listener *listener);

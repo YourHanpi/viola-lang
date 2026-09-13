@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 from .utils import ParserGenericTable, ParsingResult, TokenStreamIO
 from utils import CompilerException, SourceInfo, VIOLA_INIT, Token, COMPILER_PARAMS, SUPER_ASSIGN_MARKER
-from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, IMPORTS_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock, get_cache_path
+from utils.file_marks import TOKEN_POSTFIX, PARSING_LOCK_POSTFIX, SYMBOL_TABLE_POSTFIX, SYMBOL_TYPE_POSTFIX, IMPORTS_POSTFIX, CACHE_DIR, set_file_lock, remove_file_lock, get_cache_path, write_text_atomic
 from utils.logger import Logger
 from utils.task import TaskResult, TaskResultState
 
 import os
 import time
-from typing import Optional, Callable, Sequence, Mapping, Any
+from contextlib import contextmanager
+from typing import Optional, Callable, Sequence, Mapping, Any, Iterator
 
 __PARSER_UTILS_WITH_ARGS_TYPE = Callable[["GlobalParser", Sequence[Any], Mapping[Any, Any]], Optional[tuple[list[str], list[str]]]]
 __PARSER_UTILS_WITHOUT_ARGS_TYPE = Callable[["GlobalParser"], Optional[tuple[list[str], list[str]]]]
@@ -74,6 +75,10 @@ class GlobalParser:
         self._dynamic_libs_to_link: list[str] = []
         self._expr_count: int = 0
         self._expr_tokens: list[list[Token]] = []
+        # 本解析器实例当前持有的缓存文件解析锁（缓存路径，不含后缀）。
+        # 读取被导入模块的缓存时需要在同一把锁内进行（见开发疑问记录128），
+        # 据此避免对自身已持有的锁重复加锁而死等。
+        self._held_locks: set[str] = set()
 
     def parse(self, tokens: list[Token]) -> Optional[ParsingResult]:
         """
@@ -163,6 +168,7 @@ class GlobalParser:
             # 该文件正在被其他线程解析，重新入队等待
             self._logger.debug("File is being parsed by another thread")
             return TaskResult(TaskResultState.DELAYED, [["violac", "parse", file_path]])
+        self._held_locks.add(cache_file_path)
         try:
             result = self.parse_from_file(cache_file_path, file_abs_path)
             if result is None:
@@ -184,6 +190,7 @@ class GlobalParser:
                 return TaskResult(TaskResultState.DELAYED, self._tasks)
             return TaskResult(TaskResultState.FAILURE)
         finally:
+            self._held_locks.discard(cache_file_path)
             self._remove_file_lock(cache_file_path)
 
     def _add_parsing_slice(self, expr_tokens: list[Token]) -> str:
@@ -286,8 +293,52 @@ class GlobalParser:
                 # 由import引入的符号不属于本模块，不写入符号类型表
                 continue
             lines.append(f"{name}%{t}%{type_args}")
-        with open(file_path + SYMBOL_TYPE_POSTFIX, "w") as f:
-            f.write("\n".join(lines))
+        # 原子写出（见开发疑问记录128）：读者即便未持锁，也不会读到写了一半的内容
+        write_text_atomic(file_path + SYMBOL_TYPE_POSTFIX, "\n".join(lines))
+
+    @contextmanager
+    def _cache_read_lock(self, cache_path: str, timeout: float = 30.0) -> Iterator[bool]:
+        """
+        在缓存文件的解析锁内读取该缓存。
+
+        原先读侧只在读取前检查一次锁文件是否存在，随后直接读取缓存文件；
+        而写侧在持锁状态下以"w"打开文件（先截断再写入），若写侧恰好在
+        "读侧检查锁"与"读侧读取"之间取得锁并开始写入，读侧就会读到写了一半
+        的内容——据其建立的导入映射不完整，最终在后端报"Type xxx not found"
+        （见开发疑问记录128）。
+
+        现在读侧与写侧共用同一把锁：读侧先取得锁（取得锁即说明当前没有写侧，
+        因为写侧在锁内写出），读完释放；写侧的写出同时改为原子改名，二者
+        共同保证读到的缓存始终是完整版本。
+
+        超时（如进程异常退出留下陈旧锁文件，或写侧长时间持锁）后退化为直接
+        读取——此时依赖原子写出保证内容完整，只是可能读到稍旧的版本，优于
+        无限期等待。重入（本实例已持有该锁）不重复加锁。
+        :param cache_path: 缓存路径（不含后缀）。
+        :param timeout: 等待锁的最长时间（秒）。
+        :return: 上下文管理器，产出是否成功取得了锁。
+        """
+        acquired: bool = False
+        if cache_path not in self._held_locks:
+            deadline: float = time.time() + timeout
+            while True:
+                if set_file_lock(cache_path):
+                    acquired = True
+                    break
+                if time.time() >= deadline:
+                    # 超时退化的目的是"不阻塞"，故日志本身不可用时也不应中断读取
+                    try:
+                        self._logger.warning(
+                            f"Timeout waiting for the parsing lock of {cache_path}, reading cache directly")
+                    except Exception:
+                        pass
+                    break
+                time.sleep(0.02)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                remove_file_lock(cache_path)
 
     @staticmethod
     def _filter_blank(tokens: list[Token]) -> list[Token]:
@@ -394,20 +445,19 @@ class GlobalParser:
         if file_path is None:
             return None
         symbol_table_path, _, parsing_lock_path, token_path = file_path
-        if os.path.exists(parsing_lock_path):
-            # 目标模块正被其他线程处理，等待其完成后再读取符号表
-            while os.path.exists(parsing_lock_path):
-                time.sleep(0.1)
-        if not os.path.exists(symbol_table_path):
-            self._add_task(["violac", "parse", token_path])
-            return None
-        # 模块缓存已存在：记录其源文件路径，解析成功后由parse_to_file
-        # 安排run-vm任务，确保导入的模块也被编译（缓存命中的模块
-        # 不会走其自身的parse→run-vm任务链）
-        if token_path not in self._import_module_paths:
-            self._import_module_paths.append(token_path)
-        with open(symbol_table_path, "r") as file:
-            text_list: list[str] = file.read().split("\n")
+        # 与符号类型表同理，在解析锁内读取符号表（见开发疑问记录128）
+        text_list: list[str] = []
+        with self._cache_read_lock(parsing_lock_path[:-len(PARSING_LOCK_POSTFIX)]):
+            if not os.path.exists(symbol_table_path):
+                self._add_task(["violac", "parse", token_path])
+                return None
+            # 模块缓存已存在：记录其源文件路径，解析成功后由parse_to_file
+            # 安排run-vm任务，确保导入的模块也被编译（缓存命中的模块
+            # 不会走其自身的parse→run-vm任务链）
+            if token_path not in self._import_module_paths:
+                self._import_module_paths.append(token_path)
+            with open(symbol_table_path, "r") as file:
+                text_list = file.read().split("\n")
         # 符号表文件头部固定为三行：源路径、缓存目录、分隔符
         if len(text_list) > 2 and text_list[2].strip() == "---":
             text_list = text_list[3:]
@@ -584,18 +634,18 @@ class GlobalParser:
         if file_path is None:
             return
         _, symbol_types_path, parsing_lock_path, token_path = file_path
-        if os.path.exists(parsing_lock_path):
-            # 目标模块正被其他线程处理，等待其完成后再读取符号类型表
-            while os.path.exists(parsing_lock_path):
-                time.sleep(0.1)
-        if not os.path.exists(symbol_types_path):
-            self._add_task(["violac", "parse", token_path])
-            return
-        # 模块缓存已存在：记录其源文件路径（见_load_symbol中的说明）
-        if token_path not in self._import_module_paths:
-            self._import_module_paths.append(token_path)
-        with open(symbol_types_path, "r") as file:
-            texts: list[str] = file.readlines()
+        # 在解析锁内读取符号类型表：写侧在持锁状态下写出该文件，
+        # 未持锁读取可能读到写了一半的内容（见_cache_read_lock与开发疑问记录128）
+        texts: list[str] = []
+        with self._cache_read_lock(parsing_lock_path[:-len(PARSING_LOCK_POSTFIX)]):
+            if not os.path.exists(symbol_types_path):
+                self._add_task(["violac", "parse", token_path])
+                return
+            # 模块缓存已存在：记录其源文件路径（见_load_symbol中的说明）
+            if token_path not in self._import_module_paths:
+                self._import_module_paths.append(token_path)
+            with open(symbol_types_path, "r") as file:
+                texts = file.readlines()
         for text in texts:
             text = text.strip()
             kv_list: list[str] = text.split("%")

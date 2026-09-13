@@ -162,14 +162,19 @@ void viola$lang$global_resource_manager$drainRequests(void) {
             viola$lang$global_resource_manager$queue->capacity;
         viola$lang$global_resource_manager$queue->size--;
         pthread_mutex_unlock(&s_mutex);
-        viola$lang$global_resource_manager$handleRequest(request);
         /* 引用计数为0的请求在入队时由调用方清零（如文件请求由提交方自行释放），
-           仅在请求携带引用计数（>0）时由管理器释放 */
-        if (request->$refCount > 0) {
-            request->$refCount--;
-            if (request->$refCount == 0) {
-                free(request);
-            }
+           仅在请求携带引用计数（>0）时由管理器释放。
+           必须在执行处理器之前读取并递减：处理器末尾会置done=1，提交方
+           （等待中的工作线程）随即可能释放该请求，之后再访问它即为
+           释放后使用——读到已回收内存中的非零值会对该内存递减，
+           并可能再次free，造成堆破坏（见开发疑问记录126）。 */
+        viola$lang$uint32 refCount = request->$refCount;
+        if (refCount > 0) {
+            request->$refCount = refCount - 1;
+        }
+        viola$lang$global_resource_manager$handleRequest(request);
+        if (refCount == 1) {
+            free(request);
         }
     }
 }
