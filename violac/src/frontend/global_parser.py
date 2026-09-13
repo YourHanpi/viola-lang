@@ -1256,6 +1256,11 @@ class GlobalParser:
                 GlobalParser._buffer_match_types(token_buffer[:2], ["IDENTIFIER", "COMMA"]) or \
                 GlobalParser._buffer_match_types(token_buffer[:2], ["THIS", "DOT"]):
             return self._parse_assign_stmt()
+        if GlobalParser.__is_update_expr_stmt(token_buffer):
+            # 语句形式的对象更新表达式（expr => { ... };）：其中更新项的 `=` 与
+            # 源表达式后的 `(` 会使"类型-名称段计数"把它误判为声明语句，故先行
+            # 识别（见开发疑问记录142）
+            return self._parse_op_stmt()
         segments_num = self.__get_segments_num(token_buffer)
         if segments_num is None:
             return None
@@ -2263,6 +2268,28 @@ class GlobalParser:
                 self._raise("Unexpected token: " + token.text)
                 return None
         return segments_num
+
+    @staticmethod
+    def __is_update_expr_stmt(token_buffer: list[Token]) -> bool:
+        """
+        判断记号缓冲区是否为语句形式的对象更新表达式（expr => { ... }）。
+        `=>` 记号为UPDATE；若它在任何括号之外、且其前面（同样在任何括号之外）
+        没有ASSIGN，则该语句以更新表达式开头，是操作语句而非声明/赋值语句
+        （声明与赋值语句的 `=` 一定在源表达式之前，见开发疑问记录142）。
+        :param token_buffer: 记号缓冲区。
+        :return: 是否为语句形式的对象更新表达式。
+        """
+        bracket_level: int = 0
+        for token in token_buffer:
+            if "L_BRACKET" in token.type or "L_SQUARE_BRACKET" in token.type or \
+                    "L_CURLY_BRACKET" in token.type:
+                bracket_level += 1
+            elif "R_BRACKET" in token.type or "R_SQUARE_BRACKET" in token.type or \
+                    "R_CURLY_BRACKET" in token.type:
+                bracket_level -= 1
+            elif bracket_level == 0 and ("UPDATE" in token.type or "ASSIGN" in token.type):
+                return "UPDATE" in token.type
+        return False
 
     @staticmethod
     def __is_generic_call(token_buffer: list[Token]) -> bool:

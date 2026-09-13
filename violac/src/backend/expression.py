@@ -16,6 +16,7 @@ from typing import Optional, Callable
 CONVERTIBLE_TO_FUNC = "viola$lang$convertibleTo"
 FUNC_CALL_T: str = "viola$threads$FuncCall"
 FUNC_ENQUEUE_FUNC: str = "viola$threads$enqueue"
+LISTENER_WAIT_FUNC: str = "viola$threads$waitListener"
 
 I_SIZE_MAX: str = "I_SIZE_MAX"
 
@@ -54,6 +55,15 @@ class Expression(CompilingItem, ABC):
         元组，没有返回值目标时入队的rets为NULL。其余表达式无此问题。
         """
         pass
+
+    @property
+    def discard_release_text(self) -> Optional[str]:
+        """获取丢弃用返回值目标（见set_discard_returns）的释放代码。
+
+        等待任务完成后才可取回其返回值并释放，故不能与调用自身的释放代码
+        一同输出（见开发疑问记录141）。
+        """
+        return None
 
     @abstractmethod
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
@@ -350,8 +360,24 @@ class UnpackExpr(Expression):
         # 与目标变量一一对应时，由调用直接把结果写入目标变量，不物化元组
         self._delegate_call: bool = False
 
+    @property
+    def _is_async_unpack(self) -> bool:
+        """被解包的表达式是否为异步调用。
+
+        异步调用的返回值由工作线程写入调用方分配的返回元组（见CallOp），
+        把元组成员复制到目标变量的解包代码必须在等待之后执行：既不能在
+        front_text中生成（那时任务尚未完成），也不能由调用自身生成
+        （UnpackExpr.front_text会取被解包表达式的front_text，二者互相引用，
+        见开发疑问记录140），故由restore_text在等待语句之后生成。
+        """
+        return self._to_unpack.listener_name is not None
+
     def as_async(self) -> "Expression":
-        return self
+        # 异步转换须传给被解包表达式（内层调用）：否则"async"的多返回值
+        # 声明会按同步调用生成（见开发疑问记录140）
+        new_expr: UnpackExpr = copy(self)
+        new_expr._to_unpack = self._to_unpack.as_async()
+        return new_expr
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         new_expr = copy(self)
@@ -372,6 +398,9 @@ class UnpackExpr(Expression):
     def front_text(self) -> Optional[str]:
         if self._delegate_call:
             # 同步调用直接写入目标变量：调用自身的front_text即为全部代码
+            return self._to_unpack.front_text
+        if self._is_async_unpack:
+            # 异步调用：解包代码在等待之后（restore_text），此处只有调用自身的代码
             return self._to_unpack.front_text
         to_unpack_front_text: Optional[str] = self._to_unpack.front_text
         if len(self._returns) == 0:
@@ -413,6 +442,13 @@ class UnpackExpr(Expression):
     def head_text(self) -> Optional[str]:
         if self._delegate_call:
             return self._to_unpack.head_text
+        if self._is_async_unpack:
+            # 异步调用：目标变量的声明由外层语句输出，此处输出调用自身的临时
+            # 变量声明，并在尾部目标接收剩余元素时补上尾部子元组临时变量
+            result: Optional[str] = self._to_unpack.head_text
+            if self._tail_var is not None:
+                result = (result + "\n" if result is not None else "") + self._tail_var.declaration_text
+            return result
         if len(self._returns) == 0:
             # 尚未设置解包目标：只声明被解包表达式自身的临时变量
             return self._to_unpack.head_text
@@ -426,6 +462,38 @@ class UnpackExpr(Expression):
     @property
     def inline_mapping(self) -> dict[str, str]:
         return self._inline_mapping
+
+    @property
+    def listener_name(self) -> Optional[str]:
+        """被解包表达式为异步调用时，暴露其监听器名（供所在块登记等待）。"""
+        return self._to_unpack.listener_name
+
+    def restore_text(self, var: VariableName) -> Optional[str]:
+        """生成等待之后把返回元组的成员复制到目标变量的代码。
+
+        同步解包（front_text）在本表达式内完成全部复制，无此步骤；异步调用的
+        返回值经调用方分配的返回元组传递，等待完成后才可复制（见开发疑问记录140）。
+        """
+        if not self._is_async_unpack or var not in self._returns:
+            return None
+        index: int = self._returns.index(var)
+        returns_text: str = self._to_unpack.text
+        if self._tail_var is not None and index == len(self._returns) - 1:
+            # 尾部目标接收剩余元素：等待之后由返回元组构造子元组
+            # （与front_text中同步路径的构造相同，只是时机在等待之后）
+            # noinspection PyTypeChecker
+            tail_types: list[TypeName] = self._tail_type.types
+            lines: list[str] = [
+                f"{self._tail_var.name} = ({self._tail_type.c_calling_name})malloc(sizeof({self._tail_type.c_alloc_name}));",
+                f"{self._tail_var.name}->$refCount = 1;",
+                f"{self._tail_var.name}->$parent = NULL;",
+                f"{self._tail_var.name}->size = {len(tail_types)};"
+            ]
+            for i in range(len(tail_types)):
+                lines.append(f"{self._tail_var.name}->${i} = {returns_text}->${index + i};")
+            lines.append(f"{var.name} = {self._tail_var.name};")
+            return "\n".join(lines)
+        return f"{var.name} = {returns_text}->${index};"
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
         new_expr = copy(self)
@@ -449,6 +517,10 @@ class UnpackExpr(Expression):
         if self._delegate_call:
             # 直接解包不产生临时元组，无需释放
             return None
+        if self._is_async_unpack:
+            # 解包不产生临时元组（返回元组由调用分配），由调用自身释放；
+            # 尾部子元组临时变量与同步路径一致不做释放
+            return self._to_unpack.release_text
         result: list[str] = [
             f"if ({self._var.name}->$refCount == 0) {{",
             f"\tif ({self._var.name}->$parent) {{",
@@ -492,6 +564,10 @@ class UnpackExpr(Expression):
                     f"Type mismatch: {ret.type.raw_name} can not convert to {expected_type.raw_name}.",
                     self._src_info
                 )
+        # 注意：最后一个目标接收剩余元素（目标数少于返回值数）时，此处按"最后一个
+        # 元素的类型"校验，故该形式一律被类型检查拒绝——尾部解包路径（_tail_var）
+        # 因此不可达（见开发疑问记录147）。同步路径的调用约定按返回值逐个传指针，
+        # 也无法物化出被切片的整元组
         last_expected_type = TupleTypeName(self._src_info, expr_type.types[-1:])
         if len(last_expected_type.types) == 1:
             last_expected_type = last_expected_type.types[0]
@@ -508,6 +584,20 @@ class UnpackExpr(Expression):
                 len(expr_type.types) == len(returns):
             self._delegate_call = True
             self._to_unpack.set_returns(returns)
+            return True
+        if self._is_async_unpack:
+            # 异步调用：调用方分配的返回元组即解包源，各目标变量就是它的成员
+            # （被调函数的$async包装把返回值写回->$i），因此调用自身不物化解包
+            # 临时元组（unpack=False），解包在等待之后由restore_text生成
+            # （见开发疑问记录140）
+            self._to_unpack.set_returns(returns, unpack=False)
+            if len(expr_type.types) > len(returns):
+                # 尾部目标接收剩余元素：等待之后需要临时尾部元组变量
+                tail_types: list[TypeName] = expr_type.types[len(returns) - 1:]
+                self._tail_type = TupleTypeName(self._src_info, tail_types)
+                self._tail_var = LocalVariableName(
+                    self._src_info, self._symbol_table.get_counter(), self._tail_type
+                )
             return True
         self._var = LocalVariableName(
             self._src_info,
@@ -2355,6 +2445,10 @@ class CallOp(Expression):
         # 语句形式的异步调用（async f();）的丢弃用返回值目标的声明
         # （见set_discard_returns与开发疑问记录138）
         self._discard_ret_decls: list[str] = []
+        # 丢弃用返回值目标自身（释放代码需要变量名与类型，见开发疑问记录141）
+        self._discard_returns: list[LocalVariableName] = []
+        # 被调方法是否为内置数组类型的方法（无$async包装，见开发疑问记录142）
+        self._is_array_method: bool = False
 
     def add_arg(self, expr: Expression, arg_name: Optional[str]) -> None:
         """添加一个调用参数。
@@ -2395,7 +2489,10 @@ class CallOp(Expression):
         result._args_tuple.finish()
         result._returns_tuple = TupleRef(self._src_info, self._symbol_table)
         for ret in self._returns_list:
-            result._returns_tuple.add_value(ret)
+            # 元组成员须为表达式（返回元组按成员表达式的值文本填充）；
+            # 返回值目标已设置时（如更新表达式的下标/切片调用在解析阶段
+            # 已设置）此处以变量引用包装，与set_returns一致
+            result._returns_tuple.add_value(VariableRef(self._src_info, self._symbol_table, ret))
         result._returns_tuple.finish()
         return result
 
@@ -2409,8 +2506,8 @@ class CallOp(Expression):
         （f();）一致。
 
         丢弃变量不登记符号表（与赋值目标为_的丢弃变量一致），其声明由
-        head_text输出；返回值对象不额外释放，与同形式的同步语句调用
-        （其惰性返回值临时变量同样不释放）及开发疑问记录125的现状一致。
+        head_text输出；返回值对象在等待之后由discard_release_text释放，
+        即纳入编译器临时对象的释放路径（见开发疑问记录141）。
         """
         if not self._is_async or len(self._returns_list) > 0:
             # 已有返回值目标（赋值形式）或非异步调用：无需处理
@@ -2429,7 +2526,35 @@ class CallOp(Expression):
             zero: str = "NULL" if discard.is_object else "0"
             self._discard_ret_decls.append(f"{discard.type_name_pair_calling} = {zero};")
         # unpack=False：返回值目标为丢弃变量，无人读取其值，不需要解包
+        self._discard_returns = discards
         self.set_returns(discards, unpack=False)
+
+    @property
+    def discard_release_text(self) -> Optional[str]:
+        """获取丢弃用返回值目标的释放代码（见开发疑问记录141）。
+
+        返回值由工作线程写入返回元组，故须等待任务完成后先取回到丢弃目标
+        再释放；释放语句由所在语句的等待文本输出（OpStmt.restore_listeners），
+        与普通编译器临时对象一样受引用计数保护（见开发疑问记录125）——
+        当前$refCount尚不递减，实际不释放（与既有的临时对象一致）。
+        """
+        if len(self._discard_returns) == 0 or self._returns_tuple is None:
+            return None
+        lines: list[str] = []
+        for i, discard in enumerate(self._discard_returns):
+            if not discard.is_object:
+                # 非对象类型无释放动作
+                continue
+            lines.append(f"{discard.name} = {self._returns_tuple.text}->${i};")
+            lines.append(f"if ({discard.name}) {{")
+            lines.append("\t" + discard.free_text)
+            lines.append("}")
+        return "\n".join(lines) if len(lines) > 0 else None
+
+    @property
+    def returns_list(self) -> list[VariableName]:
+        """获取返回值目标列表（供等待之后按目标取回返回元组成员使用）。"""
+        return self._returns_list
 
     @property
     def _callee_return_types(self) -> list[TypeName]:
@@ -2460,6 +2585,25 @@ class CallOp(Expression):
                 len(self._func.type.returns) <= 1:
             return TailRecursiveCall.from_call_op(self)
         return self
+
+    @property
+    def wait_text(self) -> Optional[str]:
+        """生成"入队后立即等待"的代码（见开发疑问记录142）。
+
+        普通异步语句把等待推迟到变量的首次使用或块末尾，而对象更新表达式的
+        各更新项相互依赖（后一项以前一项返回的新对象为接收者），必须在本调用
+        之后立即等待并取回结果，故不能用前者的等待机制。
+        """
+        if not self._is_async or self._listener_name is None:
+            return None
+        return "\n".join([
+            # 等待任务完成并取回其未捕获的异常，供本函数感知
+            f"$$exc = {LISTENER_WAIT_FUNC}({self._listener_name});",
+            "if ($$exc != NULL) { listener->exception = $$exc; }",
+            f"free({self._call_name});",
+            # 置空调用结构体，与块的等待路径写法一致
+            f"{self._call_name} = NULL;"
+        ])
 
     @property
     def front_text(self) -> str:
@@ -2526,11 +2670,8 @@ class CallOp(Expression):
             # （如异步调用经waitListener取回的异常），无条件赋值会将其丢弃
             call += "\nif ($$exc == NULL) { $$exc = listener->exception; }"
         result.append(call)
-        if len(self._returns_list) > 1 and self._unpack_expr is not None:
-            # 多返回值的异步调用需要把返回元组的成员解包到各目标变量；
-            # 丢弃用返回值目标（set_discard_returns，无_unpack_expr）无人读取，不解包
-            if self._is_async:
-                result.append(self._unpack_expr.front_text)
+        # 多返回值的异步调用不在此处解包：解包代码必须在等待之后生成
+        # （见CallOp.restore_text与开发疑问记录140）
         return "\n".join(result)
 
     def _ensure_closure_args(self, with_capture: bool) -> ClosureCallArgs:
@@ -2790,6 +2931,11 @@ class CallOp(Expression):
         self._func = method.as_function()
         self._resolved_name = method.name
         self._resolved_async_name = method.as_async().name
+        # 内置数组类型的方法由编译器直接生成实现（symbol.ArrayTypeName.
+        # array_type_impl_texts），没有$async包装，不能异步调用
+        # （见开发疑问记录142）。ArrayTypeName.add_method把方法的cls设为
+        # 数组类型自身，故以其类型判定
+        self._is_array_method = isinstance(method.cls, ArrayTypeName)
 
     def set_func(self, expr: Expression) -> None:
 
@@ -2859,6 +3005,8 @@ class CallOp(Expression):
             self._func = method.as_function()
             self._resolved_name = method.name
             self._resolved_async_name = method.as_async().name
+            # 内置数组类型的方法无$async包装，不能异步调用（见开发疑问记录142）
+            self._is_array_method = isinstance(method.cls, ArrayTypeName)
             self._func_expr = expr
             if self._call_dynamic:
                 self._arg_list = [expr.caller] + self._arg_list
@@ -2903,10 +3051,10 @@ class CallOp(Expression):
     def set_returns(self, returns: Optional[list[VariableName]], unpack: bool = True) -> bool:
         """设置异步调用的返回值目标（异步调用由调用方分配返回元组）。
 
-        unpack=False用于丢弃用返回值目标（见set_discard_returns）：其值无人
-        读取，不需要多返回值解包（UnpackExpr.front_text会取被解包表达式即本
-        调用的front_text，二者互相引用，对丢弃目标也不可到达，见开发疑问
-        记录140）。
+        unpack=False用于不需要解包的返回值目标：丢弃用返回值目标
+        （见set_discard_returns）的其值无人读取；异步调用的多返回值目标
+        （见UnpackExpr.set_returns）由调用方的返回元组直接承载，解包在
+        等待之后由restore_text完成（见开发疑问记录140）。
         """
         if returns is not None and self._returns_list == returns:
             # 幂等：已设置相同的返回值目标，避免重复创建临时元组变量
@@ -2916,7 +3064,10 @@ class CallOp(Expression):
         for ret in self._returns_list:
             self._returns_tuple.add_value(VariableRef(self._src_info, self._symbol_table, ret))
         self._returns_tuple.finish()
-        if len(returns) > 1 and unpack:
+        if len(returns) > 1 and unpack and not self._is_async:
+            # 异步调用的解包经由返回元组在等待之后完成，不在此处创建解包表达式
+            # （UnpackExpr.front_text会取本调用的front_text，二者互相引用，
+            # 见开发疑问记录140）
             self._unpack_expr = UnpackExpr(self._src_info, self._symbol_table, self)
             self._unpack_expr.set_returns(returns)
         return True
@@ -4268,9 +4419,51 @@ class UpdateExpr(Expression):
         self._expr_loc.append(expr.src_info)
 
     def as_async(self) -> "Expression":
-        new_expr = copy(self)
+        new_expr: UpdateExpr = copy(self)
         new_expr._is_async = True
+        # 异步转换须传给内部表达式：源表达式与各更新项的下标/切片调用在解析
+        # 阶段创建（add_item中的_is_async判断早于本方法），不转换则async语句
+        # 会按同步执行（见开发疑问记录142）
+        new_expr._src_expr = self._src_expr.as_async()
+        new_expr._expr_list = [
+            (x[0],
+             x[1].as_async() if x[0] is None and self._callee_has_async_form(x[1]) else x[1])
+            for x in self._expr_list
+        ]
         return new_expr
+
+    @staticmethod
+    def _callee_has_async_form(call: Expression) -> bool:
+        """判断调用是否有异步形式（$async包装），没有则保持同步（见开发疑问记录142）。
+
+        编译器只为有函数体的定义生成$async包装（定义处生成），声明式原生函数的
+        包装由build_tools/lib_tools/gen_async_wrappers.py按运行库声明生成；而
+        内置数组类型的方法实现由编译器直接生成（symbol.ArrayTypeName.
+        array_type_impl_texts），运行库与生成器中都没有对应的$async实现，异步
+        调用它们会在链接期报"未声明的$async函数"（见开发疑问记录146）。
+        """
+        return not getattr(call, "_is_array_method", False)
+
+    def _async_wait_lines(self, expr: Expression, returns: Optional[list[VariableName]]) -> list[str]:
+        """生成异步表达式"入队后立即等待并取回返回值"的代码（见开发疑问记录142）。
+
+        :param expr: 已异步化的调用表达式。
+        :param returns: 返回值目标（其值由返回元组承载）；无返回值目标时不生成复制。
+        :return: 需要输出的代码行（非异步表达式返回空列表）。
+        """
+        listener: Optional[str] = expr.listener_name
+        if listener is None:
+            return []
+        lines: list[str] = []
+        wait_text: Optional[str] = expr.wait_text
+        if wait_text is not None:
+            lines.append(wait_text)
+        if returns is not None:
+            for var in returns:
+                restore_text: Optional[str] = expr.restore_text(var)
+                if restore_text is not None:
+                    lines.append(restore_text)
+        return lines
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         # noinspection PyTypeChecker
@@ -4314,10 +4507,16 @@ class UpdateExpr(Expression):
         lines: list[str] = []
         if src_front_text is not None and src_front_text.strip() != "":
             lines.append(src_front_text)
+        # 异步的源表达式：入队后立即等待并取回其返回值（各更新项与副本都依赖
+        # 源对象的值，见开发疑问记录142）
+        lines += self._async_wait_lines(self._src_expr, self._src_temp_returns)
         lines += list(filter(lambda x: x is not None, lines0)) + new_src_lines
         for x in self._expr_list:
             if x[1].front_text is not None:
                 lines.append(x[1].front_text)
+            if x[0] is None:
+                # 下标/切片更新项：异步调用须在串接之前等待并取回新对象
+                lines += self._async_wait_lines(x[1], x[1].returns_list)
             if x[0] is not None:
                 lines.append(f"{self._temp_name}->{x[0].attr} = {x[1].text};")
             else:
@@ -4346,6 +4545,11 @@ class UpdateExpr(Expression):
             # 下标/切片更新项的返回值临时变量：没有这类更新项时不声明，避免未使用变量
             results.append(
                 LocalVariableName(self._src_info, self._work_name, self._src_expr.return_type).declaration_text)
+        # 源表达式自身的临时变量声明：异步化的源表达式（函数调用）需要声明
+        # 监听器/调用结构体/参数与返回元组等临时变量（同步源表达式无此类声明，
+        # 见开发疑问记录142）；须在_materialize_src之后取，使其返回值目标已设置
+        if self._src_expr.head_text is not None:
+            results.append(self._src_expr.head_text)
         results.extend(
             filter(lambda x: x is not None,
                    map(lambda x: x[0].head_text if x[0] is not None else None, self._expr_list)))
@@ -4394,6 +4598,12 @@ class UpdateExpr(Expression):
             "\t}"
             "}"
         ]
+        # 各更新项的异步调用分配的元组同样纳入编译器临时对象的释放路径
+        # （等待已在front_text中完成，此处释放是安全的；见开发疑问记录142）
+        for x in self._expr_list:
+            release_text: Optional[str] = x[1].release_text
+            if release_text is not None:
+                result.append(release_text)
         return "\n".join(result)
 
     @property

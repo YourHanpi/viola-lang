@@ -197,6 +197,62 @@ fn makeNumbers(int n) -> (int[] result) {
     result = [n, n + 1, n + 2];
 }
 
+// 多返回值的异步调用（声明/赋值形式）：应真正异步执行（入队+在变量首次使用时
+// 等待），返回值经调用方分配的返回元组取回（原先声明形式按同步调用生成、
+// 赋值形式递归溢出，见开发疑问记录140）
+fn pairReturn(int x) -> (int number, string text) {
+    number = x + 1;
+    text = "pair";
+}
+
+sq triggerMultiReturnDeclare(int x) -> () {
+    async int number, string text = pairReturn(x);
+    check(number == x + 1 && text == "pair", "async multi-return declaration");
+}
+
+sq triggerMultiReturnAssign(int x) -> () {
+    int number;
+    string text;
+    async number, text = pairReturn(x);
+    check(number == x + 1 && text == "pair", "async multi-return assignment");
+}
+
+// 丢弃用返回值目标含对象（string）：等待之后释放（受引用计数保护，当前不实际
+// 释放，见开发疑问记录141）；此处断言被调函数的副作用已完成
+sq triggerVoidAsyncObjectReturn(string path) -> () {
+    async writeEchoMarker(path, "object-discard\n");
+}
+
+// 更新项（__setitem__）带副作用的类：用于验证语句形式的更新表达式确实执行了
+// 更新项（见开发疑问记录142）
+class UpdateRecorder {
+    public string markerPath;
+    public int applied;
+
+    public sq __new__(string markerPath) -> (this) {
+        this.markerPath = markerPath;
+        this.applied = 0;
+    }
+
+    public sq __setitem__(int index, int value) -> (UpdateRecorder result) {
+        writeMarkerTo(this.markerPath, "updated\n");
+        result = this => { .applied = value };
+    }
+}
+
+// 语句形式的更新表达式（同步）：结果被丢弃，更新照常执行
+sq triggerUpdateStatementSync(string path) -> () {
+    UpdateRecorder recorder(path);
+    recorder => { [0] = 9 };
+}
+
+// 语句形式的更新表达式（异步）：用户定义的__setitem__有$async包装，
+// 更新项以异步调用执行，语句内等待其完成后再继续
+sq triggerUpdateStatementAsync(string path) -> () {
+    UpdateRecorder recorder(path);
+    async recorder => { [0] = 9 };
+}
+
 // 断言：条件不成立时打印并以致非零退出码结束（供测试脚本判定）
 sq check(bool condition, string label) -> () {
     if (condition) {
@@ -518,6 +574,33 @@ sq main() -> () {
     };
     check(callSrcUpdated.length() == 3 && callSrcUpdated[0] == 9 &&
           callSrcUpdated[1] == 2 && callSrcUpdated[2] == 3, "update expr call source");
+
+    // 多返回值的异步调用（声明/赋值形式）：真正异步执行并取回全部返回值
+    // （原先声明形式按同步调用生成、赋值形式递归溢出，见开发疑问记录140）
+    triggerMultiReturnDeclare(numbers[0]);
+    triggerMultiReturnAssign(numbers[1]);
+
+    // 丢弃用返回值目标含对象：等待之后释放（见开发疑问记录141）
+    string discardPath = "void_async_object_discard_marker.txt";
+    file discardSetup = open(discardPath, "w", "utf-8");
+    write(discardSetup, "pending\n");
+    triggerVoidAsyncObjectReturn(discardPath);
+    file discardRead = open(discardPath, "r", "utf-8");
+    check(read(discardRead) == "object-discard\n", "discard object return released");
+
+    // 语句形式的对象更新表达式：结果被丢弃，更新项必须执行（见开发疑问记录142）
+    string syncUpdatePath = "update_statement_sync_marker.txt";
+    file syncUpdateSetup = open(syncUpdatePath, "w", "utf-8");
+    write(syncUpdateSetup, "pending\n");
+    triggerUpdateStatementSync(syncUpdatePath);
+    file syncUpdateRead = open(syncUpdatePath, "r", "utf-8");
+    check(read(syncUpdateRead) == "updated\n", "update statement sync side effect");
+    string asyncUpdatePath = "update_statement_async_marker.txt";
+    file asyncUpdateSetup = open(asyncUpdatePath, "w", "utf-8");
+    write(asyncUpdateSetup, "pending\n");
+    triggerUpdateStatementAsync(asyncUpdatePath);
+    file asyncUpdateRead = open(asyncUpdatePath, "r", "utf-8");
+    check(read(asyncUpdateRead) == "updated\n", "update statement async side effect");
 
     print("0.1 runtime library test completed\n");
 }

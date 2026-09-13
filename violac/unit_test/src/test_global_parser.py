@@ -590,13 +590,20 @@ class TestGlobalParserParseToFile(unittest.TestCase):
 
     @patch("os.path.getmtime")
     @patch("frontend.utils.ParsingResult.write")
+    # 缓存文件的原子写出（utils.file_marks.write_text_atomic）会写临时文件到目标
+    # 目录：本测试的源文件在工作区之外（./test/src 对 ./test/workspace 而言是
+    # ".."），缓存路径落在工作区的__viola_cache__/__external__下，而该目录在真实
+    # 流程中由_set_file_lock（os.makedirs）创建——本测试把它连同os.makedirs一并
+    # mock掉了，目录因此不存在，写出报FileNotFoundError（见开发疑问记录143）。
+    # 与ParsingResult.write同理，此处不需要真正写文件，故一并mock。
+    @patch("frontend.global_parser.write_text_atomic")
     @patch("os.path.exists")
     @patch("os.makedirs")
     @patch("frontend.global_parser.GlobalParser._set_file_lock")
     @patch("frontend.global_parser.GlobalParser._remove_file_lock")
     @patch("frontend.utils.TokenStreamIO.read")
-    def test_parse_to_file_success(self, mock_read, mock_remove, mock_set, mock_makedirs, mock_exists, mock_write,
-                                   mock_getmtime):
+    def test_parse_to_file_success(self, mock_read, mock_remove, mock_set, mock_makedirs, mock_exists,
+                                   mock_write_atomic, mock_write, mock_getmtime):
         """Should return SUCCESS when parsing succeeds."""
         mock_exists.return_value = True
         # 源文件比符号表更新，重新解析

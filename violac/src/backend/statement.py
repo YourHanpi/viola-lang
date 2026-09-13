@@ -1271,6 +1271,23 @@ class OpStmt(Statement):
         return [listener] if listener is not None else []
 
     @property
+    def restore_listeners(self) -> dict[str, list[str]]:
+        """获取等待之后执行的代码：释放被丢弃的返回值对象。
+
+        语句形式的异步调用若有返回值（见开发疑问记录138的丢弃用返回值目标），
+        其返回值对象是编译器临时对象，不在符号表中，因而不会被所在块的释放
+        逻辑覆盖；且其值在任务完成后才可取回，故随waitListener之后的复制代码
+        一并释放（见开发疑问记录141）。
+        """
+        listener: Optional[str] = self._expr.listener_name
+        if listener is None:
+            return {}
+        release_text: Optional[str] = self._expr.discard_release_text
+        if release_text is None:
+            return {}
+        return {listener: [release_text]}
+
+    @property
     def new_variables(self) -> set[VariableName]:
         return set()
 
@@ -2492,6 +2509,12 @@ class CleanupBlock(CStmt):
         self._to_released_vars: list[VariableName] = to_released_vars
         self.add_text(jump_label)
         for v in self._to_released_vars:
+            if v.is_return:
+                # 返回值槽位在C层为指针形参（如string**），不是本函数的局部对象：
+                # 按局部对象释放会把形参指针本身当作对象（获取其$refCount/$parent，
+                # gcc按类型不符报warning，且可能free/递减到非法地址，见开发疑问
+                # 记录144），其对象的所有权也随返回值交给调用方
+                continue
             self.add_text(f"if ({v.name}) {{ {v.free_text} }}")
 
     @property
@@ -2590,6 +2613,10 @@ class BlockStmt(Statement):
         # 是集合，直接遍历会因对象哈希（地址）差异使生成代码中的等待语句顺序
         # 随进程变化（见开发疑问记录117）
         for var in list(self._listeners.keys()):
+            if var not in self._listeners:
+                # 同一监听器的其余变量已在上一次等待中一并就绪并移除（见下），
+                # 遍历的是一开始取得的快照，故此处需跳过
+                continue
             if var in stmt.input_variables:
                 wait_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
                 listener_name: str = self._listeners[var]
@@ -2608,11 +2635,18 @@ class BlockStmt(Statement):
                 ] + self._listener_restores.pop(listener_name, []))
                 wait_stmt.set_text(wait_text)
                 self._stmt.append(wait_stmt)
-                if var in self._outer_variables:
-                    self._outer_variables[var] = VariableState.ASSIGNED
-                else:
-                    self._inner_variables[var] = VariableState.ASSIGNED
-                del self._listeners[var]
+                # 同一监听器可能对应多个变量（多返回值的异步调用，见开发疑问
+                # 记录140）：其全部返回值在这一次等待后一并就绪，故这些变量
+                # 同时转为已赋值并一并从待等待表中移除，避免对同一监听器重复
+                # waitListener（重复等待等于对已回收的任务再次等待）
+                waited_variables: list[VariableName] = [
+                    v for v, name in self._listeners.items() if name == listener_name]
+                for waited_var in waited_variables:
+                    if waited_var in self._outer_variables:
+                        self._outer_variables[waited_var] = VariableState.ASSIGNED
+                    else:
+                        self._inner_variables[waited_var] = VariableState.ASSIGNED
+                    del self._listeners[waited_var]
         self._listeners.update(stmt.new_listeners)
         self._deferred_listeners += stmt.deferred_listeners
         # 记录本块创建的全部监听器（语句形式的异步调用没有返回值目标，只登记在
