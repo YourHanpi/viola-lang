@@ -273,6 +273,11 @@ void viola$lang$exception$indexError(viola$lang$uint64 index, viola$lang$uint64 
    切片赋值（__setitem__$_1）在范围非法时上报（见开发疑问记录129） */
 void viola$lang$exception$sliceError(viola$lang$uint64 start, viola$lang$uint64 end,
                                      viola$threads$Listener *listener);
+/* 数组切片步长为0：构造异常并写入listener->exception，供生成的切片访问
+   （__getitem__$_1）上报——步长为0时元素个数计算会除以0，取值为0与变量时
+   均可达（见开发疑问记录135） */
+void viola$lang$exception$sliceStepError(viola$lang$uint64 step,
+                                         viola$threads$Listener *listener);
 
 /* ================= viola.lang.slice ================= */
 void viola$lang$slice$__del__$_0(viola$lang$slice *_this, viola$threads$Listener *listener);

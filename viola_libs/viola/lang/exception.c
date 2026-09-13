@@ -90,6 +90,28 @@ void viola$lang$exception$sliceError(viola$lang$uint64 start, viola$lang$uint64 
     listener->exception = exc;
 }
 
+/* 数组切片步长为0：构造异常并上报到listener。
+   生成的__getitem__$_1（切片访问）在step == 0时调用本函数后返回空结果；
+   该情形原先使元素个数计算 (end - start + step - 1) / step 除以0
+   （整数除零，x86上触发SIGFPE），且步长为0时遍历循环永不结束
+   （见开发疑问记录135）。 */
+void viola$lang$exception$sliceStepError(viola$lang$uint64 step,
+                                         viola$threads$Listener *listener) {
+    char buffer[128];
+    viola$lang$string *message = NULL;
+    viola$lang$exception$Exception *exc = NULL;
+    if (listener == NULL) {
+        /* 无监听器可上报（正常路径不会发生）：调用方仍会立即返回空结果，
+           不进行除以0的计算与遍历 */
+        return;
+    }
+    snprintf(buffer, sizeof(buffer), "array slice step must not be 0: step %llu",
+             (unsigned long long)step);
+    message = viola$lang$string$fromCharString(buffer);
+    viola$lang$exception$Exception$__new__$_0(message, &exc, listener);
+    listener->exception = exc;
+}
+
 /* 析构异常 */
 void viola$lang$exception$Exception$__del__$_0(viola$lang$exception$Exception *_this,
                                                viola$threads$Listener *listener) {

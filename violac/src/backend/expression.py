@@ -2582,7 +2582,10 @@ class CallOp(Expression):
             results.append(self._closure_args.head_text)
         if self._is_async:
             results.append(f"{LISTENER_T} *{self._listener_name};")
-            results.append(f"{FUNC_CALL_T} *{self._call_name};")
+            # 置空初始化：块的异常清理路径上需要判断"本次调用是否已入队、是否
+            # 已被等待"，而未初始化时该判断读到的是栈上的垃圾值
+            # （见开发疑问记录133）
+            results.append(f"{FUNC_CALL_T} *{self._call_name} = NULL;")
         if len(results) == 0:
             return None
         return "\n".join(results)
@@ -4050,6 +4053,11 @@ class UpdateExpr(Expression):
     不修改原有对象，而是先 malloc + memcpy 创建一个副本，
     再在副本上逐条应用指定的属性/元素修改，最终返回新对象。
     语法：`=>` 左侧为源对象，`{}` 内为一条或多条更新项。
+
+    下标/切片更新项对应`__setitem__`调用，其返回值为新对象（函数式更新），
+    故各更新项串接在同一个"当前对象"临时变量上：副本先生成，其后每一条
+    下标/切片更新项以当前对象为接收者、把返回的新对象写回当前对象，
+    属性更新项则直接修改当前对象（见开发疑问记录134）。
     """
 
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
@@ -4059,8 +4067,58 @@ class UpdateExpr(Expression):
         self._expr_list: list[tuple[Optional[Expression], Expression]] = []
         self._expr_loc: list[SourceInfo] = []
         self._temp_name: str = self._symbol_table.get_counter()
+        # 下标/切片更新项的返回值临时变量：先写入该变量，再串接回结果临时变量，
+        # 避免同一个变量既作接收者又作返回目标（别名）
+        self._work_name: str = self._symbol_table.get_counter()
+        # 源表达式的值临时变量：函数调用等表达式作为值使用时其返回值不会落入
+        # 临时变量（text为NULL），需先物化到该变量再复制（见开发疑问记录137）
+        self._src_temp_name: str = self._symbol_table.get_counter()
+        self._src_temp_returns: Optional[list[VariableName]] = None
         self._is_async: bool = False
         self._inline_mapping: dict[str, str] = {}
+
+    def _materialize_src(self) -> Optional[list[VariableName]]:
+        """把源表达式的值物化到源临时变量。
+
+        源表达式作为值使用时其返回值不会自动落入临时变量（如函数调用，此时其
+        text为NULL），直接作为memcpy的源会从NULL复制（见开发疑问记录137）。
+        与声明语句一致：先以源临时变量作为该表达式的返回值目标，使求值代码
+        把结果写入源临时变量。直接值表达式（变量引用、字面量、数组/元组字面量
+        等ValueRef）的text本身即有效的值表达式，且不受返回值目标影响，无需物化。
+
+        :return: 源临时变量的返回值列表；源表达式的值不经过源临时变量时为None。
+        """
+        if isinstance(self._src_expr, ValueRef):
+            return None
+        if self._src_temp_returns is None:
+            # 以全局变量名引用：内联复制时不重命名，与head_text中的声明一致
+            # （与_copy_ref同理）
+            self._src_temp_returns = [GlobalVariableName(
+                self._src_info, [], self._src_temp_name, self._src_expr.return_type)]
+        return self._src_temp_returns if self._src_expr.set_returns(self._src_temp_returns) else None
+
+    def _src_value_text(self) -> str:
+        """获取源表达式的值文本（物化后的临时变量名，或源表达式自身的值文本）。"""
+        returns: Optional[list[VariableName]] = self._materialize_src()
+        return returns[0].name if returns is not None else self._src_expr.text
+
+    def _src_ref(self) -> Expression:
+        """获取源表达式的值引用（物化后的临时变量，或源表达式自身）。"""
+        returns: Optional[list[VariableName]] = self._materialize_src()
+        if returns is None:
+            return self._src_expr
+        return VariableRef(self._src_info, self._symbol_table, returns[0])
+
+    def _copy_ref(self) -> VariableRef:
+        """获取指向副本临时变量的引用（下标/切片更新项的接收者）。
+
+        该临时变量由编译器生成（非用户变量）：以全局变量名引用，使其在内联
+        复制时不被重命名（重命名会与head_text中的声明不一致），且不会为其
+        插入释放语句（其对象的生命周期由结果临时变量负责）。
+        """
+        return VariableRef(self._src_info, self._symbol_table,
+                           GlobalVariableName(self._src_info, [], self._temp_name,
+                                              self._src_expr.return_type))
 
     def add_item(self, index: list[Expression], value: Expression) -> None:
         """添加一项下标更新 `[idx] = value`。
@@ -4081,15 +4139,16 @@ class UpdateExpr(Expression):
                 f"Type {self._src_expr.return_type.raw_name} (expression: {self._src_expr.text}) "
                 f"is not a class.", self._src_info)
         attr_expr = AttrOp(self._src_info, self._symbol_table)
-        attr_expr.set_caller(self._src_expr)
+        # 接收者为副本临时变量（front_text中先生成副本，见该属性）
+        attr_expr.set_caller(self._copy_ref())
         attr_expr.set_attr("__setitem__")
         call_op = CallOp(self._src_info, self._symbol_table)
         for i in index:
             call_op.add_arg(i, None)
         call_op.add_arg(value, None)
         call_op.set_func(attr_expr)
-        # __setitem__返回新对象，直接写入更新结果的临时变量
-        call_op.set_returns([LocalVariableName(self._src_info, self._temp_name, self._src_expr.return_type)])
+        # __setitem__返回新对象，先写入游标临时变量（front_text再串接回结果临时变量）
+        call_op.set_returns([LocalVariableName(self._src_info, self._work_name, self._src_expr.return_type)])
         if self._is_async:
             call_op = call_op.as_async()
         self._expr_list.append((None, call_op))
@@ -4117,7 +4176,9 @@ class UpdateExpr(Expression):
                 f"Property {property_name} is not defined in class {self._src_expr.return_type.raw_name}.",
                 expr.src_info)
         attr_op = AttrOp(self._src_info, self._symbol_table)
-        attr_op.set_caller(self._src_expr)
+        # 接收者为源表达式的值引用：源表达式已在front_text中物化到源临时变量，
+        # 直接以源表达式为接收者会使其被求值两次（见开发疑问记录137）
+        attr_op.set_caller(self._src_ref())
         attr_op.set_attr(property_name)
         self._expr_list.append((attr_op, expr))
         self._expr_loc.append(expr.src_info)
@@ -4151,18 +4212,33 @@ class UpdateExpr(Expression):
     def front_text(self) -> Optional[str]:
         if not self._is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
+        # 源表达式的值先求值（必要时物化到源临时变量）：函数调用等表达式作为值
+        # 使用时其返回值不会落入临时变量，其text为NULL，不先求值会使memcpy
+        # 从NULL复制（见开发疑问记录137）
+        src_value_text: str = self._src_value_text()
+        src_front_text: Optional[str] = self._src_expr.front_text
         lines0: list[str] = list(map(lambda x: x[0].front_text, filter(lambda x: x[0] is not None, self._expr_list)))
-        lines1: list[str] = list(map(lambda x: x[1].front_text, filter(lambda x: x[1] is not None, self._expr_list)))
+        # 副本先于各更新项生成：下标/切片更新项（__setitem__）以副本为接收者
+        # （原先副本在更新项之后生成，会把刚写入的修改覆盖掉，见开发疑问记录134）
         new_src_lines: list[str] = [
             f"{self._temp_name} = ({self._src_expr.return_type.c_calling_name})malloc(sizeof({self._src_expr.return_type.c_alloc_name}));",
-            f"memcpy({self._temp_name}, {self._src_expr.text}, sizeof({self._src_expr.return_type.c_alloc_name}));"
+            f"memcpy({self._temp_name}, {src_value_text}, sizeof({self._src_expr.return_type.c_alloc_name}));"
         ]
-        setting_lines: list[str] = [
-            f"{self._temp_name}->{x[0].attr} = {x[1].text};"
-            if x[0] is not None else x[1].text + ";"
-            for x in self._expr_list
-        ]
-        return "\n".join(list(filter(lambda x: x is not None, lines0 + lines1)) + new_src_lines + setting_lines)
+        # 每条更新项的求值代码与其作用代码必须相邻：下标/切片更新项的作用是把
+        # __setitem__返回的新对象串接回结果临时变量，若把所有更新项的求值代码
+        # 集中在前，后一项的接收者仍是未串接的旧对象，前一项的修改会丢失
+        lines: list[str] = []
+        if src_front_text is not None and src_front_text.strip() != "":
+            lines.append(src_front_text)
+        lines += list(filter(lambda x: x is not None, lines0)) + new_src_lines
+        for x in self._expr_list:
+            if x[1].front_text is not None:
+                lines.append(x[1].front_text)
+            if x[0] is not None:
+                lines.append(f"{self._temp_name}->{x[0].attr} = {x[1].text};")
+            else:
+                lines.append(f"{self._temp_name} = {x[1].text};")
+        return "\n".join(lines)
 
     @property
     def global_init_text(self) -> Optional[str]:
@@ -4176,10 +4252,20 @@ class UpdateExpr(Expression):
     def head_text(self) -> Optional[str]:
         results: list[str] = [
             LocalVariableName(self._src_info, self._temp_name, self._src_expr.return_type).declaration_text,
-            *list(filter(lambda x: x is not None,
-                         map(lambda x: x[0].head_text if x[0] is not None else None, self._expr_list))),
-            *list(filter(lambda x: x is not None, map(lambda x: x[1].head_text, self._expr_list)))
         ]
+        # 源表达式的值临时变量：源表达式本身即可作为memcpy的源（如变量引用）时不声明，
+        # 避免未使用变量（见front_text）
+        src_returns: Optional[list[VariableName]] = self._materialize_src()
+        if src_returns is not None:
+            results.append(src_returns[0].declaration_text)
+        if any(x[0] is None for x in self._expr_list):
+            # 下标/切片更新项的返回值临时变量：没有这类更新项时不声明，避免未使用变量
+            results.append(
+                LocalVariableName(self._src_info, self._work_name, self._src_expr.return_type).declaration_text)
+        results.extend(
+            filter(lambda x: x is not None,
+                   map(lambda x: x[0].head_text if x[0] is not None else None, self._expr_list)))
+        results.extend(filter(lambda x: x is not None, map(lambda x: x[1].head_text, self._expr_list)))
         return "\n".join(results)
 
     @property
@@ -4268,7 +4354,11 @@ class UpdateExpr(Expression):
 
     @property
     def used_variables(self) -> set[VariableName]:
+        # 源对象由副本生成（memcpy）读取，且下标/切片更新项已不再以源对象为
+        # 接收者，故显式计入其使用的变量（否则其最后一次使用会被判早，
+        # 释放语句可能插到本表达式之前）
         return set.union(
+            self._src_expr.used_variables,
             *map(lambda x: x[0].used_variables, filter(lambda x: x[0] is not None, self._expr_list)),
             *map(lambda x: x[1].used_variables, self._expr_list),
             {LocalVariableName(self._src_info, self._temp_name, self._src_expr.return_type)}

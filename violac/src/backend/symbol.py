@@ -3544,8 +3544,17 @@ class SymbolTable:
                 "\tviola$lang$uint64 start = s->start;",
                 "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
                 "\tviola$lang$uint64 step = s->step;",
-                "\tviola$lang$uint64 count = start < end ? (end - start + step - 1) / step : 0;",
+                # 结果对象先分配：步长为0的上报路径上也要给出确定值（空切片），
+                # 因为调用方的表达式求值可能有后续语句先于异常跳转执行
+                # （越界下标检查同理给出确定的元素值，见开发疑问记录124）
                 f"\t{new_arr}",
+                # 步长为0的检查：元素个数按(end - start + step - 1) / step计算，
+                # 步长为0时除以0（见开发疑问记录135）
+                SymbolTable._array_check_text(
+                    "step == 0",
+                    "viola$lang$exception$sliceStepError(step, listener);",
+                    ["newResult->size = 0;", "newResult->data = NULL;", "*subarray = newResult;"]),
+                "\tviola$lang$uint64 count = start < end ? (end - start + step - 1) / step : 0;",
                 "\tnewResult->size = count;",
                 f"\tnewResult->data = count == 0 ? NULL : ({elem_asg})malloc({elem_size} * count);",
                 "\tviola$lang$uint64 j = 0;",

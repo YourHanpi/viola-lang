@@ -3,6 +3,9 @@ c_source
 src_old
 /project
 .idea
+__viola_cache__
+__pycache__
+*.pyc
 violac/src_modified
 violac/whole_test/test_compiled
 violac/whole_test/template_projects

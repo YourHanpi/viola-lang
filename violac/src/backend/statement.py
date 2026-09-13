@@ -2519,6 +2519,10 @@ class BlockStmt(Statement):
         self._deferred_listeners: list[str] = []
         # 监听器名 -> 异步返回值复制回目标变量的代码（waitListener之后执行）
         self._listener_restores: dict[str, list[str]] = {}
+        # 本块创建的全部监听器名（按创建顺序）：块的清理路径（$$N）与退出路径
+        # （return/throw）上需要逐一等待尚未等待过的监听器，故不能只记剩余的
+        # _listeners（它随首次使用而被移除，见开发疑问记录136）
+        self._block_listeners: list[str] = []
         self._input_variables: set[VariableName] = set()
         self._new_variables: list[VariableName] = []
         self._used_outer_variables: list[VariableName] = []
@@ -2589,7 +2593,11 @@ class BlockStmt(Statement):
                 wait_text = "\n".join([
                     # 等待异步任务完成并取回其未捕获的异常，供本函数感知
                     f"$$exc = {LISTENER_WAIT_FUNC}({listener_name});",
-                    f"free({listener_name}$$_call);"
+                    f"free({listener_name}$$_call);",
+                    # 置空调用结构体：块的清理路径与退出路径据此判断该监听器是否
+                    # 已被等待（取回的异常会使本语句跳到清理标签，不置空则清理
+                    # 路径会对已释放的监听器再次等待，见开发疑问记录136）
+                    f"{listener_name}$$_call = NULL;"
                 ] + self._listener_restores.pop(listener_name, []))
                 wait_stmt.set_text(wait_text)
                 self._stmt.append(wait_stmt)
@@ -2600,6 +2608,12 @@ class BlockStmt(Statement):
                 del self._listeners[var]
         self._listeners.update(stmt.new_listeners)
         self._deferred_listeners += stmt.deferred_listeners
+        # 记录本块创建的全部监听器（语句形式的异步调用没有返回值目标，只登记在
+        # _deferred_listeners中）：清理路径与退出路径需要按此顺序等待尚未等待过的
+        # 监听器（见开发疑问记录133、136）
+        for listener in dict.fromkeys(list(stmt.new_listeners.values()) + stmt.deferred_listeners):
+            if listener not in self._block_listeners:
+                self._block_listeners.append(listener)
         self._listener_restores.update(stmt.restore_listeners)
         self._stmt.append(stmt)
         self._input_variables |= stmt.input_variables
@@ -2698,17 +2712,32 @@ class BlockStmt(Statement):
             new_stmt_list.append(stmt)
         new_stmt_list.reverse()
         self._stmt = new_stmt_list
-        # 按监听器名去重：同一监听器被等待两次会重复waitListener并重复free其调用
-        # 结构体（as_async/as_inline的块副本与本体共享_listeners/_deferred_listeners）
+        # 本块创建的全部监听器（含已在首次使用处等待过的，见开发疑问记录136）：
+        # 清理路径与退出路径上的等待都按此顺序生成。按监听器名去重——同一监听器
+        # 被等待两次会重复waitListener并重复free其调用结构体
+        # （as_async/as_inline的块副本与本体共享_listeners/_deferred_listeners）
+        block_listeners: list[str] = list(dict.fromkeys(self._block_listeners))
         wait_texts: dict[str, str] = {}
+        # 清理路径/退出路径上的等待文本：与正常路径不同，只在调用结构体仍存在时
+        # 才等待（正常路径已等待过的监听器其结构体已置空、监听器已释放）
+        cleanup_wait_texts: dict[str, str] = {}
+        # 正常路径的等待消费掉的restores：清理路径/退出路径上的等待需要补上
+        # 同样的复制（两者互斥，同一处只执行一次）
+        restores_of: dict[str, list[str]] = {}
         for listener in dict.fromkeys(list(self._listeners.values()) + self._deferred_listeners):
             wait_stmt = CStmt(self.src_info, self._symbol_table, self._var_states)
+            restores: list[str] = self._listener_restores.pop(listener, [])
+            restores_of[listener] = restores
             wait_text = "\n".join(
                 [f"$$exc = {LISTENER_WAIT_FUNC}({listener});",
                  # 任务已完成，调用结构体不再被引用：释放之（与
                  # BlockStmt.add_stmt的等待路径一致，避免语句形式的异步调用
                  # 在循环中每次泄漏一个结构体）
-                 f"free({listener}$$_call);"] + self._listener_restores.pop(listener, []))
+                 f"free({listener}$$_call);",
+                 # 置空调用结构体：取回的异常会使本语句跳到清理标签$$N，而清理
+                 # 路径据该指针判断是否已等待过——不置空则那里会对已释放的监听器
+                 # 再次waitListener并重复free其结构体（见开发疑问记录136）
+                 f"{listener}$$_call = NULL;"] + restores)
             wait_texts[listener] = wait_text
             wait_stmt.set_text(wait_text)
             # 等待语句在finish中追加，未经过上面统一设置跳转标记的循环；
@@ -2716,14 +2745,30 @@ class BlockStmt(Statement):
             # catch分发标签（见开发疑问记录84）
             wait_stmt.set_jump_mark(self._cleanup_mark_name)
             self._stmt.append(wait_stmt)
-        # 语句形式的异步调用登记为“块结束时等待”（见Statement.deferred_listeners），
-        # 但块内的return/throw会直接退出函数，绕过块末尾的等待语句（return是C的
+        for listener in block_listeners:
+            # 已在首次使用处等待过的监听器其restores已被该处的等待消费
+            # （见BlockStmt.add_stmt），故此处取不到（为空）
+            restores: list[str] = restores_of.get(listener, [])
+            cleanup_wait_texts[listener] = "\n".join([
+                # 只等待尚未等待过的监听器：正常路径的等待会把调用结构体置空，
+                # 不做判断会重复waitListener并重复free结构体
+                f"if ({listener}$$_call != NULL) {{",
+                # 任务自身的异常不能顶掉正在传播的异常（否则本块的异常会被
+                # 吞掉、catch不再执行），只在无待传播异常时采用——与同步调用
+                # 之后刷新异常缓存的写法一致
+                f"\t{EXCEPTION_T} *$$waited_exc = {LISTENER_WAIT_FUNC}({listener});",
+                f"\tfree({listener}$$_call);",
+                f"\t{listener}$$_call = NULL;",
+                "\tif ($$exc == NULL) { $$exc = $$waited_exc; }",
+                "}"] + restores)
+        # 块内的return/throw会直接退出函数，绕过块末尾的等待语句（return是C的
         # return，既不经过块末尾的等待，也不经过本块的清理路径），故把同一等待
         # 插到块内各退出语句之前，否则入队的任务可能无人等待
-        # （见开发疑问记录130）
-        for listener in dict.fromkeys(self._deferred_listeners):
+        # （见开发疑问记录130）；按变量等待的监听器同样如此——它在变量的首次
+        # 使用处等待，若退出语句早于该处，等待被绕过（见开发疑问记录136）
+        for listener in block_listeners:
             exit_wait_stmt = CStmt(self.src_info, self._symbol_table, self._var_states)
-            exit_wait_stmt.set_text(wait_texts[listener])
+            exit_wait_stmt.set_text(cleanup_wait_texts[listener])
             # 等待后直接执行退出语句自身：不取回异常、不跳转（退出路径上函数级
             # 清理代码同样不执行，与既有的按变量等待行为一致）
             exit_wait_stmt.remove_jump_mark()
@@ -2735,6 +2780,19 @@ class BlockStmt(Statement):
         cleanup_mark.add_text(f"goto {self._after_cleanup_mark_name};")
         cleanup_mark.add_text(f"{self._cleanup_mark_name}:")
         self._stmt.append(cleanup_mark)
+        # 清理标签之后的等待：块内语句末尾的`if ($$exc) goto $$N;`与被调函数抛出
+        # 的异常都跳到这里，绕过块末尾的等待语句，入队的任务在这条路径上原先无人
+        # 等待（见开发疑问记录133）；按变量等待的监听器在其首次使用前发生异常
+        # 跳转时同样被绕过，故一并补上（见开发疑问记录136）。等待须位于释放语句
+        # 之前——异步任务可能仍在使用这些局部对象
+        for listener in block_listeners:
+            cleanup_wait_stmt = CStmt(self.src_info, self._symbol_table, self._var_states)
+            cleanup_wait_stmt.set_text(cleanup_wait_texts[listener])
+            # 已在异常路径上：等待自身不再跳转（否则取回异常后又跳回$$N），
+            # 也不带调试标记（与退出路径上的等待一致）
+            cleanup_wait_stmt.remove_jump_mark()
+            cleanup_wait_stmt.remove_mark()
+            self._stmt.append(cleanup_wait_stmt)
         self._stmt += self._release_stmt_list
         after_cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
         after_cleanup_mark.remove_jump_mark()
