@@ -20,7 +20,14 @@ fn isEven(int x) -> (bool result) {
 }
 
 fn sumChunk(int[] chunk) -> (int result) {
-    result = chunk[0] + chunk[1];
+    // 末块元素可能不足reduceSize个（数组切片按实际长度截断），只累加
+    // 实际存在的元素：原先固定读chunk[1]会越界读取未初始化内存，
+    // 使reduce结果偶发错误（见开发疑问记录119）
+    if (chunk.length() > 1) {
+        result = chunk[0] + chunk[1];
+    } else {
+        result = chunk[0];
+    }
 }
 
 fn increment(int x) -> (int r) {

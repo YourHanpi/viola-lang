@@ -608,14 +608,21 @@ class GlobalParser:
                 else:
                     # from...import：导入名保持原名，但原始符号名需要模块限定
                     original_name = namespace + "." + original_name
-                self._symbol_types[kv_list[0]] = kv_list[1], type_args
-                # 已有同名映射时保留先导入的映射（本模块显式导入优先于
-                # 其他模块传递导入的同名符号）
-                if kv_list[0] not in self._imports:
-                    self._imports[kv_list[0]] = original_name
-                self._imported_names.add(kv_list[0])
-                if len(type_args) > 0:
-                    self._parser_generic_table.add(kv_list[0], type_args)
+                # 以别名导入时，除“别名.符号”外同时登记完整模块路径：同一文件中
+                # 混用两种写法时（如array.Array::<int>与viola.util.array.Array::<int>），
+                # 限定名需按导入映射解析到可解析的根符号，否则表达式位置的完整路径
+                # 无法解析（见开发疑问记录120）
+                names: list[str] = [kv_list[0], original_name] \
+                    if to_load is None and alias != namespace else [kv_list[0]]
+                for name in names:
+                    self._symbol_types[name] = kv_list[1], type_args
+                    # 已有同名映射时保留先导入的映射（本模块显式导入优先于
+                    # 其他模块传递导入的同名符号）
+                    if name not in self._imports:
+                        self._imports[name] = original_name
+                    self._imported_names.add(name)
+                    if len(type_args) > 0:
+                        self._parser_generic_table.add(name, type_args)
 
     def _load_tokens(self, tokens: list[Token]) -> None:
         """

@@ -6,10 +6,13 @@ from utils.fsm import FSM, StateNode, Token
 from abc import ABC, abstractmethod
 from copy import copy, deepcopy
 from enum import Enum
+import heapq
 import os
 import re
 import threading
 from typing import Optional, Callable
+
+from utils.logger import Logger
 
 # 函数值结构体（0.1起原Closure更名为Function，见versions_dev_plan_zh.md）
 FUNCTION_T: str = "viola$lang$function$Function"
@@ -1246,6 +1249,103 @@ def _collect_class_names(t: TypeName, result: set[str]) -> None:
             _collect_class_names(e, result)
 
 
+# 类型定义在头文件中的类别优先级（仅用于同层排序）：
+# 数组 -> 同步函数指针 -> 元组 -> 异步函数指针
+_TYPEDEF_CATEGORY_ARRAY: int = 0
+_TYPEDEF_CATEGORY_FUNC_SYNC: int = 1
+_TYPEDEF_CATEGORY_TUPLE: int = 2
+_TYPEDEF_CATEGORY_FUNC_ASYNC: int = 3
+
+_TYPE_DEF_ORDER_LOGGER: Logger = Logger("Type Def Order")
+
+
+def _referenced_type_def_names(t: TypeName) -> set[str]:
+    """获取类型t的C声明所直接引用的其他类型定义名。
+
+    类类型的结构体由各模块头文件提供（调用方已按type_def_class_names()生成
+    前置声明），同步函数类型的C表示为Function结构体指针，二者都不属于本文件
+    的类型定义注册表，因此返回空集。
+    """
+    if isinstance(t, ArrayTypeName):
+        # 元素的C声明形如"<元素名>$$array *"，元素为数组时引用其typedef
+        return {t.c_alloc_name}
+    if isinstance(t, TupleTypeName):
+        return {t.name}
+    if isinstance(t, AsyncFuncTypeName):
+        return {t.name}
+    return set()
+
+
+def _type_def_dependencies(category: int, name: str) -> set[str]:
+    """获取某个已注册类型定义所直接引用的其他类型定义名。"""
+    result: set[str] = set()
+    if category == _TYPEDEF_CATEGORY_ARRAY:
+        # 数组结构体的元素字段形如"<元素类型> data;"
+        return _referenced_type_def_names(_ARRAY_TYPE_DEFS[name])
+    if category == _TYPEDEF_CATEGORY_TUPLE:
+        for e in _TUPLE_TYPE_DEFS[name].types:
+            result |= _referenced_type_def_names(e)
+        return result
+    func: FunctionTypeName = _FUNCTION_TYPE_DEFS[name]
+    if category == _TYPEDEF_CATEGORY_FUNC_SYNC:
+        # 同步函数指针的参数与返回类型直接出现在其typedef中
+        for e in func.args + func.returns:
+            result |= _referenced_type_def_names(e)
+        return result
+    # 异步函数指针的参数为参数元组与返回元组
+    return {TupleTypeName.c_name_of(func.args), TupleTypeName.c_name_of(func.returns)}
+
+
+def ordered_type_def_keys() -> list[tuple[int, str]]:
+    """按“先定义后引用”的确定性顺序获取全部类型定义（类别序号, 名称）。
+
+    各注册表的插入顺序取决于并行编译的线程交错（见开发疑问记录117），直接
+    遍历会使生成的头文件随线程调度而变。这里对类型定义做拓扑排序：被引用的
+    定义先于引用者输出；同层按类别优先级（数组 -> 同步函数指针 -> 元组 ->
+    异步函数指针）再按名称排序，因而输出与线程调度无关。
+    """
+    keys: set[tuple[int, str]] = set()
+    for name, t in _FUNCTION_TYPE_DEFS.items():
+        keys.add((_TYPEDEF_CATEGORY_FUNC_ASYNC if t._IS_ASYNC else _TYPEDEF_CATEGORY_FUNC_SYNC, name))
+    keys |= {(_TYPEDEF_CATEGORY_TUPLE, name) for name in _TUPLE_TYPE_DEFS}
+    keys |= {(_TYPEDEF_CATEGORY_ARRAY, name) for name in _ARRAY_TYPE_DEFS}
+    # 类型定义的名称在各类别间前缀不同，不会重复；仍以（类别, 名称）为键以确保唯一
+    name_to_key: dict[str, tuple[int, str]] = {key[1]: key for key in keys}
+    deps: dict[tuple[int, str], set[tuple[int, str]]] = {}
+    for key in keys:
+        # 引用自身（如异步函数指针的参数元组为其自身）不构成依赖
+        deps[key] = {name_to_key[n] for n in _type_def_dependencies(*key)
+                     if n in name_to_key} - {key}
+    dependents: dict[tuple[int, str], set[tuple[int, str]]] = {k: set() for k in keys}
+    for key, key_deps in deps.items():
+        for d in key_deps:
+            dependents[d].add(key)
+    remaining: dict[tuple[int, str], int] = {k: len(deps[k]) for k in keys}
+    # 就绪队列按（类别, 名称）排序，使同层输出确定
+    ready: list[tuple[int, str]] = [k for k in keys if remaining[k] == 0]
+    heapq.heapify(ready)
+    pushed: set[tuple[int, str]] = set(ready)
+    result: list[tuple[int, str]] = []
+    while len(ready) > 0:
+        key = heapq.heappop(ready)
+        result.append(key)
+        for nxt in sorted(dependents[key]):
+            remaining[nxt] -= 1
+            if remaining[nxt] == 0 and nxt not in pushed:
+                pushed.add(nxt)
+                heapq.heappush(ready, nxt)
+    if len(result) < len(keys):
+        # 互为前提的类型定义在C层无法表示（如函数类型以自身为参数）。此时
+        # 按（类别, 名称）追加剩余项，保证输出仍然确定，便于复现问题。
+        rest: list[tuple[int, str]] = sorted(keys - set(result))
+        _TYPE_DEF_ORDER_LOGGER.warning(
+            f"Circular reference among type definitions, emitting {len(rest)} item(s) "
+            f"in name order: {', '.join(map(lambda k: k[1], rest))[:200]}"
+        )
+        result.extend(rest)
+    return result
+
+
 def type_def_class_names() -> set[str]:
     """获取全局注册的类型定义（元组/函数指针/数组）所引用的类类型C名称。
 
@@ -1459,8 +1559,13 @@ class TupleTypeName(ClassName):
     基本类型元素的成员类型为T。
     """
 
+    @staticmethod
+    def c_name_of(types: list[TypeName]) -> str:
+        """获取元组类型的C名称（不构造对象，因而不产生注册等副作用）。"""
+        return TUPLE_T + "$" + "$".join(list(map(lambda t: t.name, types)))
+
     def __init__(self, src_info: SourceInfo, types: list[TypeName]) -> None:
-        c_name: str = TUPLE_T + "$" + "$".join(list(map(lambda t: t.name, types)))
+        c_name: str = TupleTypeName.c_name_of(types)
         super().__init__(src_info, [], c_name, None, False, False)
         self._type_args: list[TypeName] = types
         # 注册到符号表，以便在头文件中生成结构体定义
@@ -3280,74 +3385,67 @@ class SymbolTable:
         return t.raw_name
 
     @classmethod
-    def tuple_type_defs(cls) -> list[str]:
-        """获取所有已注册元组类型的typedef文本（惰性生成）。"""
-        return list(map(lambda t: t.c_typedef_text, _TUPLE_TYPE_DEFS.values()))
+    def type_def_texts(cls) -> list[str]:
+        """按确定性顺序获取全部类型定义文本（结构体定义与函数指针typedef）。
 
-    @classmethod
-    def function_type_defs(cls) -> list[str]:
-        """获取所有已注册函数类型的函数指针typedef文本（惰性生成）。"""
-        sync_defs: list[str] = []
-        async_defs: list[str] = []
-        for t in _FUNCTION_TYPE_DEFS.values():
-            if t._IS_ASYNC:
-                async_defs.append(t.c_typedef_text)
+        顺序由ordered_type_def_keys()给出：被引用的定义先于引用者输出，同层
+        按类别（数组 -> 同步函数指针 -> 元组 -> 异步函数指针）与名称排序。
+        各注册表的插入顺序取决于并行编译的线程交错，不能直接遍历（见开发
+        疑问记录117）。
+        """
+        texts: list[str] = []
+        for category, name in ordered_type_def_keys():
+            if category == _TYPEDEF_CATEGORY_ARRAY:
+                texts.append(cls._array_type_decl_text(name, _ARRAY_TYPE_DEFS[name]))
+            elif category == _TYPEDEF_CATEGORY_TUPLE:
+                texts.append(_TUPLE_TYPE_DEFS[name].c_typedef_text)
             else:
-                sync_defs.append(t.c_typedef_text)
-        return sync_defs + async_defs
+                texts.append(_FUNCTION_TYPE_DEFS[name].c_typedef_text)
+        return texts
 
-    @classmethod
-    def function_type_defs_sync(cls) -> list[str]:
-        """获取同步函数类型的typedef文本（不依赖元组类型定义）。"""
-        return [t.c_typedef_text for t in _FUNCTION_TYPE_DEFS.values() if not t._IS_ASYNC]
-
-    @classmethod
-    def function_type_defs_async(cls) -> list[str]:
-        """获取异步函数类型的typedef文本（引用参数/返回元组类型）。"""
-        return [t.c_typedef_text for t in _FUNCTION_TYPE_DEFS.values() if t._IS_ASYNC]
-
-    @classmethod
-    def array_type_decl_texts(cls) -> list[str]:
-        """获取所有已注册数组类型的结构体定义与方法声明文本。"""
-        results: list[str] = []
-        for arr_name, elem in _ARRAY_TYPE_DEFS.items():
-            elem_asg: str = elem.c_assigning_name
-            elem_call: str = elem.c_calling_name
-            results.append("\n".join([
-                f"#ifndef _VIOLA_ARRAY_T_{arr_name}",
-                f"#define _VIOLA_ARRAY_T_{arr_name}",
-                "typedef struct {",
-                "\tviola$lang$uint32 $refCount;",
-                "\tviola$lang$ptr $parent;",
-                f"\t{elem_asg} data;",
-                "\tviola$lang$uint64 size;",
-                f"}} {arr_name};",
-                f"void {arr_name}$__getitem__$_0({arr_name} *_this, viola$lang$uint64 item, "
-                f"{elem_asg} element, viola$threads$Listener *listener);",
-                f"void {arr_name}$__getitem__$_1({arr_name} *_this, viola$lang$slice *s, "
-                f"{arr_name} ** subarray, viola$threads$Listener *listener);",
-                f"void {arr_name}$concat$_0({arr_name} *_this, {arr_name} *other, "
-                f"{arr_name} ** result, viola$threads$Listener *listener);",
-                f"void {arr_name}$append$_0({arr_name} *_this, {elem_call} newElement, "
-                f"{arr_name} ** newArray, viola$threads$Listener *listener);",
-                f"void {arr_name}$insert$_0({arr_name} *_this, viola$lang$int64 location, "
-                f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener);",
-                f"void {arr_name}$length$_0({arr_name} *_this, viola$lang$uint64 * result, "
-                f"viola$threads$Listener *listener);",
-                f"void {arr_name}$__setitem__$_0({arr_name} *_this, viola$lang$uint64 index, "
-                f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener);",
-                f"void {arr_name}$__setitem__$_1({arr_name} *_this, viola$lang$slice *s, "
-                f"{arr_name} *newSubarray, {arr_name} ** newArray, viola$threads$Listener *listener);",
-                f"void {arr_name}$__del__({arr_name} *_this, viola$threads$Listener *listener);",
-                "#endif"
-            ]))
-        return results
+    @staticmethod
+    def _array_type_decl_text(arr_name: str, elem: TypeName) -> str:
+        """获取数组类型的结构体定义与方法声明文本。"""
+        elem_asg: str = elem.c_assigning_name
+        elem_call: str = elem.c_calling_name
+        return "\n".join([
+            f"#ifndef _VIOLA_ARRAY_T_{arr_name}",
+            f"#define _VIOLA_ARRAY_T_{arr_name}",
+            "typedef struct {",
+            "\tviola$lang$uint32 $refCount;",
+            "\tviola$lang$ptr $parent;",
+            f"\t{elem_asg} data;",
+            "\tviola$lang$uint64 size;",
+            f"}} {arr_name};",
+            f"void {arr_name}$__getitem__$_0({arr_name} *_this, viola$lang$uint64 item, "
+            f"{elem_asg} element, viola$threads$Listener *listener);",
+            f"void {arr_name}$__getitem__$_1({arr_name} *_this, viola$lang$slice *s, "
+            f"{arr_name} ** subarray, viola$threads$Listener *listener);",
+            f"void {arr_name}$concat$_0({arr_name} *_this, {arr_name} *other, "
+            f"{arr_name} ** result, viola$threads$Listener *listener);",
+            f"void {arr_name}$append$_0({arr_name} *_this, {elem_call} newElement, "
+            f"{arr_name} ** newArray, viola$threads$Listener *listener);",
+            f"void {arr_name}$insert$_0({arr_name} *_this, viola$lang$int64 location, "
+            f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener);",
+            f"void {arr_name}$length$_0({arr_name} *_this, viola$lang$uint64 * result, "
+            f"viola$threads$Listener *listener);",
+            f"void {arr_name}$__setitem__$_0({arr_name} *_this, viola$lang$uint64 index, "
+            f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener);",
+            f"void {arr_name}$__setitem__$_1({arr_name} *_this, viola$lang$slice *s, "
+            f"{arr_name} *newSubarray, {arr_name} ** newArray, viola$threads$Listener *listener);",
+            f"void {arr_name}$__del__({arr_name} *_this, viola$threads$Listener *listener);",
+            "#endif"
+        ])
 
     @classmethod
     def array_type_impl_texts(cls) -> list[str]:
-        """获取所有已注册数组类型方法的C实现文本（生成到唯一编译单元__main__.c中）。"""
+        """获取所有已注册数组类型方法的C实现文本（生成到唯一编译单元__main__.c中）。
+
+        按类型名排序，避免输出随并行编译的线程交错变化（见开发疑问记录117）。
+        """
         results: list[str] = []
-        for arr_name, elem in _ARRAY_TYPE_DEFS.items():
+        for arr_name in sorted(_ARRAY_TYPE_DEFS.keys()):
+            elem: TypeName = _ARRAY_TYPE_DEFS[arr_name]
             elem_asg: str = elem.c_assigning_name
             elem_call: str = elem.c_calling_name
             elem_size: str = f"sizeof({elem_call.strip()})"
@@ -3660,6 +3758,9 @@ class SymbolTable:
         self._namespace: list[NamespaceName] = list(map(lambda x: NamespaceName(x), dir_list))
         self._namespace_name: str = ".".join(map(lambda x: x.name, self._namespace))
         self._counter: int = 0
+        # 调试标记的计数器单独计数（编号按符号表，即按模块，使生成产物与
+        # 编译线程的调度无关，见开发疑问记录117）
+        self._mark_counter: int = 0
         self._class_info_list_name: str = "$".join(map(lambda x: x.name, self._namespace)) + "$classInfoList"
         self._src_info: SourceInfo = SourceInfo(src_path)
         self._generic_table: GenericTable = GenericTable(self._src_info, self._namespace)
@@ -3979,6 +4080,18 @@ class SymbolTable:
         """
         result: str = f"$$_{self._counter}"
         self._counter += 1
+        return result
+
+    def get_mark_counter(self) -> str:
+        """
+        获取调试标记的名称（按符号表独立编号）。
+
+        标记名为生成代码中的文件级静态变量，按所属模块计数即可保证唯一；
+        若改用进程内的全局计数器，编号会随并行编译的线程交错变化，使同一
+        工程的连续编译产出不同文本（见开发疑问记录117）。
+        """
+        result: str = f"$$_MARK_{self._mark_counter}"
+        self._mark_counter += 1
         return result
 
     def get_generic_cls_instance(self, class_name: ClassName, t: tuple[TypeName, ...]) -> ClassName:

@@ -117,10 +117,9 @@ class SourceFile(CompilingItem):
             f"typedef struct {name} {name};"
             for name in sorted(own_classes | type_def_class_names())
         ]
-        # 依赖顺序：数组 -> 同步函数指针 -> 元组（成员可能引用同步函数指针） -> 异步函数指针（引用元组）
-        type_defs: list[str] = forward_decls + SymbolTable.array_type_decl_texts() + \
-            SymbolTable.function_type_defs_sync() + SymbolTable.tuple_type_defs() + \
-            SymbolTable.function_type_defs_async()
+        # 依赖顺序：数组 -> 同步函数指针 -> 元组（成员可能引用同步函数指针） -> 异步函数指针（引用元组）。
+        # 顺序由type_def_texts()统一保证确定且被引用者在前（见开发疑问记录117）
+        type_defs: list[str] = forward_decls + SymbolTable.type_def_texts()
         if not os.path.exists(os.path.dirname(self._dst_code_path)):
             os.makedirs(os.path.dirname(self._dst_code_path), exist_ok=True)
         with open(self._dst_code_path, "w", encoding=COMPILER_PARAMS["encoding"]) as f:
@@ -264,15 +263,15 @@ class _MainFile:
         fwd_decls: list[str] = [
             f"typedef struct {name} {name};" for name in sorted(type_def_class_names())
         ]
-        runtime_defs: list[str] = fwd_decls + \
-            SymbolTable.array_type_decl_texts() + SymbolTable.function_type_defs_sync() + \
-            SymbolTable.tuple_type_defs() + SymbolTable.function_type_defs_async() + \
+        runtime_defs: list[str] = fwd_decls + SymbolTable.type_def_texts() + \
             SymbolTable.array_type_impl_texts()
         main_body: list[str] = [
             "viola$threads$Listener *listener = (viola$threads$Listener *)malloc(sizeof(viola$threads$Listener));",
             "viola$threads$initListener(listener, 0);",
             *argv_setting_text,
-            *self._global_calls,
+            # 全局初始化调用按名称排序：其登记顺序取决于并行编译的线程交错，
+            # 直接使用会使main函数体随调度变化（见开发疑问记录117）
+            *sorted(self._global_calls),
             self._entry_call,
             "viola$threads$waitListener(listener);",
             "return 0;"
@@ -328,17 +327,21 @@ class Project:
 
     def finish(self) -> None:
         """完成项目构建，完成主入口文件的生成。"""
+        # 按源文件路径排序遍历：字典的插入顺序取决于并行编译的线程交错，
+        # 而泛型实例的C名序号按“谁先请求谁先编号”分配，遍历顺序不同会使
+        # 同一实例得到不同的C名，进而使生成产物随调度变化（见开发疑问记录117）
+        source_files: list[SourceFile] = [self._source_files[k] for k in sorted(self._source_files)]
         # 全部模块编译完成后，合并各模块发起的泛型实例化请求并重写输出。
         # 实例化可能产生新的实例化请求（泛型函数体调用其他泛型函数，
         # 请求注册可能晚于被调泛型的快照），迭代至不动点后再统一写出。
         for _ in range(64):
             changed: bool = False
-            for source_file in self._source_files.values():
+            for source_file in source_files:
                 if source_file.refresh_generic_instances():
                     changed = True
             if not changed:
                 break
-        for source_file in self._source_files.values():
+        for source_file in source_files:
             source_file.write()
         self._main_file.finish()
 

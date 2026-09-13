@@ -220,6 +220,138 @@ def collect_decls(paths: list[str], root: str) -> list[FuncDecl]:
     return result
 
 
+# wrapper类结构体的固定前缀字段（与编译器生成的类结构体布局一致）：
+# $refCount/$parent来自object类（见symbol.py中Object.add_property），
+# $$vtable由编译器为每个类自动添加
+WRAPPER_STRUCT_PREFIX: list[tuple[str, str]] = [
+    ("$refCount", "viola$lang$uint32"),
+    ("$parent", "viola$lang$ptr"),
+    ("$$vtable", "viola$lang$ptr"),
+]
+# 允许出现在声明字段之后的运行库内部字段（wrapper类的C实现自用，
+# 不在.vla中声明）。运行时新增此类字段需同步更新此表。
+RUNTIME_INTERNAL_FIELDS: dict[str, list[str]] = {
+    "viola$io$file": ["fp", "isPopen"],
+}
+# 布局不由.vla声明决定的wrapper类：其C结构体由编译器内置类型或运行库
+# 自行定义（.vla声明仅列出方法），无法据声明推导字段，故跳过校验。
+LAYOUT_NOT_FROM_VLA: dict[str, str] = {
+    "viola$lang$string": "编译器内置类型StringTypeName，布局由编译器与运行库维护",
+}
+
+WRAPPER_CLASS_PATTERN = re.compile(r"^\s*wrapper\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{")
+CLASS_END_PATTERN = re.compile(r"^\s*\}\s*$")
+# 属性声明：可选修饰符 + 类型 + 名称 + ";"
+WRAPPER_PROPERTY_PATTERN = re.compile(
+    r"^\s*((?:public|private|protected|static)\s+)*([^(){};]+?)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;\s*$")
+STRUCT_PATTERN = re.compile(r"typedef\s+struct\s+([A-Za-z0-9_$]+)\s*\{([^}]*)\}\s*([A-Za-z0-9_$]+)\s*;")
+
+
+def parse_wrapper_classes(paths: list[str], root: str) -> dict[str, list[tuple[str, str]]]:
+    """解析.vla文件中的wrapper类声明。
+
+    返回：C结构体名 -> [(字段名, C类型), ...]（不含固定前缀字段）。
+    字段顺序与编译器的结构体布局一致（即声明顺序，static属性不进入结构体）。
+    """
+    result: dict[str, list[tuple[str, str]]] = {}
+    for path in paths:
+        namespace = namespace_of(path, root)
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+        i = 0
+        while i < len(lines):
+            match = WRAPPER_CLASS_PATTERN.match(lines[i])
+            if match is None:
+                i += 1
+                continue
+            cls_name = match.group(1)
+            c_name = f"{namespace}${cls_name}"
+            fields: list[tuple[str, str]] = []
+            i += 1
+            while i < len(lines) and CLASS_END_PATTERN.match(lines[i]) is None:
+                body = lines[i].strip()
+                if body != "" and not body.startswith("//") and "(" not in body:
+                    prop = WRAPPER_PROPERTY_PATTERN.match(lines[i])
+                    if prop is not None:
+                        modifiers = prop.group(1) or ""
+                        if "static" not in modifiers:
+                            c_type = parse_type(prop.group(2), f"{path}:{cls_name}")
+                            fields.append((prop.group(3), c_type.calling))
+                i += 1
+            if c_name in result:
+                raise ValueError(f"{path}: wrapper类 {cls_name} 重复声明（C名 {c_name}）")
+            result[c_name] = fields
+    return result
+
+
+def parse_runtime_structs(path: str) -> dict[str, list[tuple[str, str]]]:
+    """解析runtime.h中的结构体定义。
+
+    返回：结构体名 -> [(字段名, C类型), ...]（按定义顺序）。
+    """
+    with open(path, encoding="utf-8") as f:
+        # 先去掉注释，避免结构体外的说明文字干扰匹配
+        text = re.sub(r"/\*.*?\*/", "", f.read(), flags=re.S)
+    result: dict[str, list[tuple[str, str]]] = {}
+    for match in STRUCT_PATTERN.finditer(text):
+        struct_name, body, alias = match.group(1), match.group(2), match.group(3)
+        if struct_name != alias:
+            # typedef struct X {...} Y;形式（如匿名结构体）不作为wrapper类定义
+            continue
+        fields: list[tuple[str, str]] = []
+        for field_text in body.split(";"):
+            field_text = " ".join(field_text.split())
+            if field_text == "":
+                continue
+            # 字段形如"<类型> <名称>"，声明符可能带*（如"viola$lang$uint16 *data"）
+            field_match = re.match(r"^(.+?)\s*(\**)\s*([A-Za-z_$][A-Za-z0-9_$]*)$", field_text)
+            if field_match is None:
+                raise ValueError(f"{path}: 无法解析结构体 {struct_name} 的字段：{field_text!r}")
+            field_type: str = (field_match.group(1).strip() + " " + field_match.group(2)).strip()
+            fields.append((field_match.group(3), field_type))
+        result[struct_name] = fields
+    return result
+
+
+def check_wrapper_structs(paths: list[str], root: str, runtime_header: str) -> list[str]:
+    """校验.vla中的wrapper类声明与runtime.h中的结构体定义是否一致。
+
+    两份定义必须字段顺序与类型完全一致（编译器与运行库按相同偏移读写，
+    不一致时不会报错而是静默读写错误字段，见开发疑问记录113/118）。
+    返回不一致的说明列表，为空表示一致。
+    """
+    if not os.path.exists(runtime_header):
+        return [f"运行库头文件不存在：{runtime_header}"]
+    declared = parse_wrapper_classes(paths, root)
+    structs = parse_runtime_structs(runtime_header)
+    problems: list[str] = []
+    for c_name, fields in sorted(declared.items()):
+        if c_name in LAYOUT_NOT_FROM_VLA:
+            # 布局不由.vla声明决定（见LAYOUT_NOT_FROM_VLA的说明）
+            continue
+        expected: list[tuple[str, str]] = WRAPPER_STRUCT_PREFIX + fields
+        actual: Optional[list[tuple[str, str]]] = structs.get(c_name)
+        if actual is None:
+            problems.append(f"{c_name}: {runtime_header} 中缺少该wrapper类的结构体定义")
+            continue
+        if len(actual) < len(expected):
+            problems.append(
+                f"{c_name}: {runtime_header} 中的字段过少（需至少{len(expected)}个，实际{len(actual)}个）")
+            continue
+        for index, (want, got) in enumerate(zip(expected, actual)):
+            if want != got:
+                problems.append(
+                    f"{c_name}: 第{index}个字段不一致：.vla声明为 {want[0]} ({want[1]})，"
+                    f"runtime.h为 {got[0]} ({got[1]})")
+        extras: list[str] = [name for name, _ in actual[len(expected):]]
+        allowed: list[str] = RUNTIME_INTERNAL_FIELDS.get(c_name, [])
+        if extras != allowed:
+            problems.append(
+                f"{c_name}: 声明字段之后的运行库内部字段不一致：runtime.h为{extras}，"
+                f"预期为{allowed}（若为新增的运行时内部字段，请在RUNTIME_INTERNAL_FIELDS中登记）")
+    return problems
+
+
 def gen_tuple_def(types: list[CType]) -> str:
     """生成元组结构体的typedef（带与编译器一致的include guard）。"""
     name = tuple_c_name([t.name for t in types])
@@ -309,13 +441,35 @@ def main() -> int:
     parser.add_argument("--root", default=".", help="命名空间根目录")
     parser.add_argument("-o", "--output", default="", help="输出C文件")
     parser.add_argument("--list", action="store_true", help="仅列出解析到的声明")
+    parser.add_argument("--runtime-header", default="",
+                        help="运行库头文件路径（缺省为<root>/viola/runtime.h），"
+                             "用于校验wrapper类结构体定义是否一致")
+    parser.add_argument("--skip-struct-check", action="store_true",
+                        help="跳过wrapper类结构体的一致性校验")
     args = parser.parse_args()
 
-    decls: list[FuncDecl] = collect_decls(args.files, args.root)
     if args.list:
+        decls: list[FuncDecl] = collect_decls(args.files, args.root)
         for decl in decls:
             print(f"{decl.async_name}")
         return 0
+
+    # wrapper类的结构体定义在runtime.h中，与.vla声明是两份必须保持一致的
+    # 定义（见开发疑问记录113/118）：不一致时按不同偏移读写且不会报错，
+    # 因此生成前先校验
+    if not args.skip_struct_check:
+        runtime_header: str = args.runtime_header or os.path.join(
+            args.root, "viola", "runtime.h")
+        problems: list[str] = check_wrapper_structs(args.files, args.root, runtime_header)
+        if len(problems) > 0:
+            print("wrapper类结构体定义不一致（.vla声明 与 runtime.h）：", file=sys.stderr)
+            for problem in problems:
+                print(f"  - {problem}", file=sys.stderr)
+            print("请同步修改两侧定义（或确认后以--skip-struct-check跳过校验）。",
+                  file=sys.stderr)
+            return 1
+
+    decls = collect_decls(args.files, args.root)
 
     # 先收集所有需要的元组/数组结构体定义（按C名去重，保持确定顺序：
     # 每次解析生成的CType是新对象，按对象身份去重会输出重复的typedef）

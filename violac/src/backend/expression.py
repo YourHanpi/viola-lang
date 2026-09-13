@@ -1193,6 +1193,11 @@ class SliceRef(ValueRef):
             self._end.front_text if self._end else None,
             self._step.front_text,
             f"{self._temp_var.name} = ({SliceTypeName.c_calling_name})malloc(sizeof({SliceTypeName.c_alloc_name}));",
+            # $refCount/$parent必须显式初始化：析构函数按其取值决定是否释放
+            # （见release_text）。未初始化时析构会读到垃圾值，$refCount恰为0
+            # 且$parent非空时会对野指针写入而崩溃（见开发疑问记录119）
+            f"{self._temp_var.name}->$refCount = 1;",
+            f"{self._temp_var.name}->$parent = NULL;",
             f"{self._temp_var.name}->start = {self._start.text};",
             f"{self._temp_var.name}->end = {self._end.text};",
             f"{self._temp_var.name}->step = {self._step.text};"
@@ -2551,7 +2556,7 @@ class CallOp(Expression):
     @property
     def head_text(self) -> Optional[str]:
         self._ensure_lazy_ret()
-        if self._is_async and self._returns_tuple is not None and self._returns_tuple.head_text is not None:
+        if self._is_async and self._has_return_values and self._returns_tuple.head_text is not None:
             # 返回元组仅由异步调用分配（同步调用的返回值通过指针传递），
             # 同步调用无需声明返回元组临时变量
             results: list[str] = [self._returns_tuple.head_text]
@@ -2660,10 +2665,20 @@ class CallOp(Expression):
             self._closure_args.release_text if self._closure_args is not None else None,
             self._unpack_expr.release_text if self._unpack_expr is not None else None,
             # 返回元组仅由异步调用分配，同步调用不释放
-            self._returns_tuple.release_text if self._is_async and self._returns_tuple is not None else None
+            self._returns_tuple.release_text if self._is_async and self._has_return_values else None
         ]
         result_str: str = "\n".join(filter(lambda x: x is not None, result))
         return result_str if result_str != "" else None
+
+    @property
+    def _has_return_values(self) -> bool:
+        """调用是否存在需要返回元组承载的返回值。
+
+        无返回值（void）的异步调用在C层以rets为NULL入队，调用方既不分配
+        返回元组，也不能对其做释放判断（否则对NULL解引用会崩溃，见开发
+        疑问记录121）。同步调用的返回值经指针传递，不使用返回元组。
+        """
+        return len(self._returns_list) > 0
 
     @property
     def return_type(self) -> TypeName:

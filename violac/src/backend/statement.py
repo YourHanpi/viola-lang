@@ -45,8 +45,6 @@ THREAD_INFO_T: str = "viola$threads$ThreadInfo"
 class _Mark:
     """调试标记，用于在生成的代码中插入源代码位置信息。"""
 
-    _mark_counter: int = 0
-
     def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable) -> None:
         """
         初始化调试标记。
@@ -55,9 +53,10 @@ class _Mark:
         """
         self._text_text: str = src_info.traceback_no_location + "\tat "
         self._lineno: int = src_info.lineno
-        self._mark_name: str = f"$$_MARK_{_Mark._mark_counter}"
+        # 编号由符号表（即模块）分配：全局计数器会随并行编译的线程交错
+        # 使同一工程的连续编译产出不同文本（见开发疑问记录117）
+        self._mark_name: str = symbol_table.get_mark_counter()
         self._is_const_def: bool = False
-        _Mark._mark_counter += 1
 
     @classmethod
     def _utf16_units(cls, text: str) -> list[int]:
@@ -832,6 +831,8 @@ class AssignStmt(Statement):
         self._is_super: bool = False
         # 丢弃变量（赋值目标为_）：不登记符号表，其声明由本语句自行生成
         self._discard_vars: set[VariableName] = set()
+        # 无返回值调用的赋值（如 async _ = voidFn();）：不声明变量、不做赋值
+        self._is_void_assign: bool = False
 
     def add_var_name(self, var_name: str) -> None:
         """添加赋值目标变量名。"""
@@ -902,10 +903,16 @@ class AssignStmt(Statement):
     def finish(self) -> None:
         """完成赋值语句，进行类型检查和收包处理。"""
         expr_type = self._var_value.return_type
+        if isinstance(expr_type, TupleTypeName) and len(expr_type.types) == 0:
+            # 空元组即无返回值（void）调用：仅允许赋给丢弃变量，此时不声明
+            # 变量、不做赋值（调用本身即为副作用，见开发疑问记录121）
+            if all(var in self._discard_vars for var in self._var):
+                self._is_void_assign = True
+                self._is_finished = True
+                return
+            raise CompilerException("Cannot unpacking an empty tuple.", self._src_info)
         self._infer_discard_types(expr_type)
         if isinstance(expr_type, TupleTypeName):
-            if len(expr_type.types) == 0:
-                raise CompilerException("Cannot unpacking an empty tuple.", self._src_info)
             if len(self._var) > len(expr_type.types):
                 raise CompilerException("Too many variables to unpacking.", self._src_info)
             elif len(self._var) == len(expr_type.types):
@@ -948,13 +955,15 @@ class AssignStmt(Statement):
 
     @property
     def head_text(self) -> Optional[str]:
-        if isinstance(self._var_value, (CallOp, UnpackExpr)) and len(self._var) > 0:
+        if not self._is_void_assign and isinstance(self._var_value, (CallOp, UnpackExpr)) and len(self._var) > 0:
             # 与_inner_text一致：先设置返回值目标，
-            # 使head_text包含调用/解包产生的临时变量声明
+            # 使head_text包含调用/解包产生的临时变量声明。
+            # 无返回值调用不能设置返回值目标：否则会为其分配并不存在的返回元组
+            # （见开发疑问记录121）
             self._var_value.set_returns(self._var)
         prefix: str = "\n".join(
             var.declaration_text for var in self._var if var in self._discard_vars
-        )
+        ) if not self._is_void_assign else ""
         result: Optional[str] = self._var_value.head_text if self._var_value is not None else None
         if prefix != "":
             result = prefix if result is None else prefix + "\n" + result
@@ -998,9 +1007,10 @@ class AssignStmt(Statement):
     def restore_listeners(self) -> dict[str, list[str]]:
         if self._var_value is None or self._var_value.listener_name is None:
             return {}
-        if isinstance(self._var_value, (CallOp, UnpackExpr)) and len(self._var) > 0:
+        if not self._is_void_assign and isinstance(self._var_value, (CallOp, UnpackExpr)) and len(self._var) > 0:
             # 与head_text/_inner_text一致：先设置返回值目标，
-            # 使restore_text能按目标变量定位返回元组中的下标
+            # 使restore_text能按目标变量定位返回元组中的下标。
+            # 无返回值调用不设置返回值目标（见开发疑问记录121）
             self._var_value.set_returns(self._var)
         restores: list[str] = list(filter(
             lambda x: x is not None, map(lambda var: self._var_value.restore_text(var), self._var)))
@@ -1010,12 +1020,13 @@ class AssignStmt(Statement):
 
     @property
     def new_variables(self) -> set[VariableName]:
-        return set(self._var)
+        # 无返回值调用的赋值不产生变量（丢弃变量既不声明也不赋值）
+        return set() if self._is_void_assign else set(self._var)
 
     @property
     def new_variables_ordered(self) -> list[VariableName]:
         """按声明顺序获取本语句新增的变量（见开发疑问记录115）。"""
-        return list(self._var)
+        return [] if self._is_void_assign else list(self._var)
 
     def optimize(self, foldable: Optional[set[VariableName]] = None) -> "Statement":
         """
@@ -1102,6 +1113,11 @@ class AssignStmt(Statement):
 
     @property
     def _inner_text(self) -> str:
+        if self._is_void_assign:
+            # 无返回值调用：只生成调用本身，不做赋值、也不设置返回值目标
+            # （设置返回值目标会为其分配并不存在的返回元组，见开发疑问记录121）
+            return "\n".join(filter(
+                lambda x: x is not None, [self._var_value.front_text, self._var_value.release_text]))
         if self._is_super:
             if self._var_value is None or self._this_cls is None or self._this_cls.parent is None:
                 raise CompilerException("this.super requires a parent class constructor call.", self._src_info)
@@ -2514,8 +2530,11 @@ class BlockStmt(Statement):
                     raise CompilerException(f"Variable {k.raw_name} is already assigned.", stmt.src_info)
             else:
                 self._inner_variables[k] = v
-        for var in stmt.input_variables:
-            if var in self._listeners:
+        # 待等待的监听器按登记顺序（即异步调用的书写顺序）遍历：input_variables
+        # 是集合，直接遍历会因对象哈希（地址）差异使生成代码中的等待语句顺序
+        # 随进程变化（见开发疑问记录117）
+        for var in list(self._listeners.keys()):
+            if var in stmt.input_variables:
                 wait_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
                 listener_name: str = self._listeners[var]
                 wait_text = "\n".join([
