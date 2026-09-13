@@ -269,6 +269,10 @@ void viola$lang$exception$Exception$__del__$_0(viola$lang$exception$Exception *_
    方法在越界时上报（见开发疑问记录124与VIOLA_ARRAY_BOUNDS_CHECK） */
 void viola$lang$exception$indexError(viola$lang$uint64 index, viola$lang$uint64 size,
                                      viola$threads$Listener *listener);
+/* 数组切片范围非法（start > end）：构造异常并写入listener->exception，供生成的
+   切片赋值（__setitem__$_1）在范围非法时上报（见开发疑问记录129） */
+void viola$lang$exception$sliceError(viola$lang$uint64 start, viola$lang$uint64 end,
+                                     viola$threads$Listener *listener);
 
 /* ================= viola.lang.slice ================= */
 void viola$lang$slice$__del__$_0(viola$lang$slice *_this, viola$threads$Listener *listener);

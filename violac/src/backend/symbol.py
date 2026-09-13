@@ -3456,30 +3456,64 @@ class SymbolTable:
         ])
 
     @staticmethod
+    def _array_check_text(condition: str, report: str,
+                          extra: Optional[list[str]] = None) -> str:
+        """
+        获取数组范围检查的C代码（越界下标、非法切片范围等共用）。
+
+        检查由运行库的VIOLA_ARRAY_BOUNDS_CHECK宏控制，默认开启，条件成立时
+        上报异常（可被catch捕获）；以-DVIOLA_ARRAY_BOUNDS_CHECK=0编译可关闭
+        （见开发疑问记录124）。
+
+        条件成立时提前返回，不写出结果：调用方的表达式求值可能有后续语句先于
+        异常跳转执行，故extra给出把结果置于确定值的语句（该值在异常路径上
+        被丢弃，但不应是未初始化的值）。
+        :param condition: 触发检查的C条件表达式。
+        :param report: 条件成立时上报异常的C语句。
+        :param extra: 条件成立时在返回前执行的语句列表。
+        :return: 检查代码文本。
+        """
+        lines: list[str] = [
+            "#if VIOLA_ARRAY_BOUNDS_CHECK",
+            f"\tif ({condition}) {{",
+            f"\t\t{report}",
+        ]
+        lines += [f"\t\t{line}" for line in (extra if extra is not None else [])]
+        lines += ["\t\treturn;", "\t}", "#endif"]
+        return "\n".join(lines)
+
+    @staticmethod
     def _array_bounds_check_text(index_var: str, extra: Optional[list[str]] = None) -> str:
         """
         获取数组下标越界检查的C代码。
 
         数组的__getitem__/__setitem__原先直接读写data[index]，越界时静默读取
-        相邻堆内存（见开发疑问记录124）。检查由运行库的VIOLA_ARRAY_BOUNDS_CHECK
-        宏控制，默认开启，越界时上报IndexError（可被catch捕获）；以
-        -DVIOLA_ARRAY_BOUNDS_CHECK=0编译可关闭。
-
-        越界时提前返回，不写出结果：调用方的表达式求值可能有后续语句先于
-        异常跳转执行，故extra给出把结果置于确定值的语句（该值在异常路径上
-        被丢弃，但不应是未初始化的值）。
+        相邻堆内存（见开发疑问记录124）。越界时上报IndexError。
         :param index_var: 下标形参的名字（__getitem__为item，__setitem__为index）。
         :param extra: 越界时在返回前执行的语句列表。
         :return: 检查代码文本。
         """
-        lines: list[str] = [
-            "#if VIOLA_ARRAY_BOUNDS_CHECK",
-            f"\tif ({index_var} >= _this->size) {{",
-            f"\t\tviola$lang$exception$indexError({index_var}, _this->size, listener);",
-        ]
-        lines += [f"\t\t{line}" for line in (extra if extra is not None else [])]
-        lines += ["\t\treturn;", "\t}", "#endif"]
-        return "\n".join(lines)
+        return SymbolTable._array_check_text(
+            f"{index_var} >= _this->size",
+            f"viola$lang$exception$indexError({index_var}, _this->size, listener);",
+            extra)
+
+    @staticmethod
+    def _array_slice_range_check_text() -> str:
+        """
+        获取数组切片赋值（__setitem__$_1）的范围检查C代码。
+
+        切片赋值原先以_this->size - (end - start) + newSubarray->size计算新长度，
+        其中end被截断到size而start未做上界截断；start > end时（如a[3:1] = [...]）
+        end - start按uint64下溢为极大值，随后的malloc通常失败并解引用空指针
+        （见开发疑问记录129）。与下标越界检查同样由VIOLA_ARRAY_BOUNDS_CHECK
+        控制，范围非法时上报viola$lang$exception$sliceError。
+        :return: 检查代码文本。
+        """
+        return SymbolTable._array_check_text(
+            "start > end",
+            "viola$lang$exception$sliceError(start, end, listener);",
+            ["*newArray = _this;"])
 
     @classmethod
     def array_type_impl_texts(cls) -> list[str]:
@@ -3572,6 +3606,8 @@ class SymbolTable:
                 f"{arr_name} *newSubarray, {arr_name} ** newArray, viola$threads$Listener *listener) {{",
                 "\tviola$lang$uint64 start = s->start;",
                 "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
+                # 范围检查（start > end时长度计算下溢，见开发疑问记录129）
+                SymbolTable._array_slice_range_check_text(),
                 f"\t{new_arr}",
                 "\tnewResult->size = _this->size - (end - start) + newSubarray->size;",
                 f"\tnewResult->data = newResult->size == 0 ? NULL : ({elem_asg})malloc({elem_size} * newResult->size);",

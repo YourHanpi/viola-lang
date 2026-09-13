@@ -2700,6 +2700,7 @@ class BlockStmt(Statement):
         self._stmt = new_stmt_list
         # 按监听器名去重：同一监听器被等待两次会重复waitListener并重复free其调用
         # 结构体（as_async/as_inline的块副本与本体共享_listeners/_deferred_listeners）
+        wait_texts: dict[str, str] = {}
         for listener in dict.fromkeys(list(self._listeners.values()) + self._deferred_listeners):
             wait_stmt = CStmt(self.src_info, self._symbol_table, self._var_states)
             wait_text = "\n".join(
@@ -2708,12 +2709,27 @@ class BlockStmt(Statement):
                  # BlockStmt.add_stmt的等待路径一致，避免语句形式的异步调用
                  # 在循环中每次泄漏一个结构体）
                  f"free({listener}$$_call);"] + self._listener_restores.pop(listener, []))
+            wait_texts[listener] = wait_text
             wait_stmt.set_text(wait_text)
             # 等待语句在finish中追加，未经过上面统一设置跳转标记的循环；
             # 若不设置，取回异常后会跳到函数级$$cleanup，绕过本块所属try的
             # catch分发标签（见开发疑问记录84）
             wait_stmt.set_jump_mark(self._cleanup_mark_name)
             self._stmt.append(wait_stmt)
+        # 语句形式的异步调用登记为“块结束时等待”（见Statement.deferred_listeners），
+        # 但块内的return/throw会直接退出函数，绕过块末尾的等待语句（return是C的
+        # return，既不经过块末尾的等待，也不经过本块的清理路径），故把同一等待
+        # 插到块内各退出语句之前，否则入队的任务可能无人等待
+        # （见开发疑问记录130）
+        for listener in dict.fromkeys(self._deferred_listeners):
+            exit_wait_stmt = CStmt(self.src_info, self._symbol_table, self._var_states)
+            exit_wait_stmt.set_text(wait_texts[listener])
+            # 等待后直接执行退出语句自身：不取回异常、不跳转（退出路径上函数级
+            # 清理代码同样不执行，与既有的按变量等待行为一致）
+            exit_wait_stmt.remove_jump_mark()
+            # 同一等待被插入块内每条退出语句，带调试标记会重复输出标记声明
+            exit_wait_stmt.remove_mark()
+            self.insert_finally_stmt(exit_wait_stmt)
         cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
         cleanup_mark.remove_jump_mark()
         cleanup_mark.add_text(f"goto {self._after_cleanup_mark_name};")

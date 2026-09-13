@@ -7,6 +7,7 @@ import viola.util.control_flow as control_flow;
 import viola.util.functools as functools;
 import viola.util.array as array;
 import viola.os;
+import viola.os.path;
 from viola.math import *;
 from viola.os import exit, Stat;
 from viola.threads import *;
@@ -53,6 +54,28 @@ sq writeMarker(string text) -> () {
 // 在函数体内以语句形式发起异步调用：函数返回前应等待其完成
 sq triggerVoidAsync(string text) -> () {
     async writeMarker(text);
+}
+
+// 写入指定路径的标记文件（供提前return的等待测试使用）
+sq writeMarkerTo(string path, string text) -> () {
+    file markerFile = open(path, "w", "utf-8");
+    write(markerFile, text);
+}
+
+// 以语句形式发起异步调用后立即return：等待应插在return之前
+// （块末尾的等待语句被return绕过，见开发疑问记录130）
+sq triggerVoidAsyncEarlyReturn(string path, string text) -> () {
+    async writeMarkerTo(path, text);
+    return;
+}
+
+// 条件提前return（return位于嵌套的if块内）：应同样等待
+sq triggerVoidAsyncConditionalReturn(string path, string text) -> () {
+    async writeMarkerTo(path, text);
+    if (text.length() > 0) {
+        return;
+    }
+    writeMarkerTo(path, "not-returned\n");
 }
 
 // 断言：条件不成立时打印并以致非零退出码结束（供测试脚本判定）
@@ -167,6 +190,36 @@ sq main() -> () {
         check(true, "array bounds check");
     }
 
+    // 字符串越界读同样应上报异常（原先静默返回空串，与数组语义不一致，
+    // 见开发疑问记录124的附带发现）
+    string smallText = "ab";
+    try {
+        string outOfString = smallText[5];
+        check(false, "string bounds check");
+    } catch Exception e {
+        check(true, "string bounds check");
+    }
+
+    // 切片赋值的范围检查：start > end时原先新长度按uint64下溢（malloc极大值
+    // 失败后解引用空指针），现应上报异常（同样由VIOLA_ARRAY_BOUNDS_CHECK控制，
+    // 见开发疑问记录129）
+    try {
+        int[] validSlice = numbers => {
+            [1:3] = [9, 9, 9]
+        };
+        check(true, "slice range valid");
+    } catch Exception e {
+        check(false, "slice range valid");
+    }
+    try {
+        int[] badSlice = numbers => {
+            [3:1] = [9]
+        };
+        check(false, "slice range error");
+    } catch Exception e {
+        check(true, "slice range error");
+    }
+
     // functools：map/filter（异步：每个元素的调用放入任务队列；map不保证顺序）
     int[] mappedAsync = functools.map::<int, int>(numbers, doubleValue, true);
     int asyncMapSum = mappedAsync[0] + mappedAsync[1] + mappedAsync[2] + mappedAsync[3];
@@ -202,6 +255,16 @@ sq main() -> () {
     string contentSync = contentAsync;
     check(contentSync == "line1\nline2\n", "io.read async");
 
+    // viola.os.path原生函数的异步调用（其$async包装由
+    // gen_async_wrappers.py生成，见开发疑问记录131）
+    async bool absAsync = viola.os.path.isabs(cwdText);
+    bool absSync = absAsync;
+    async bool existsAsync = viola.os.path.exists("test_output.txt");
+    bool existsSync = existsAsync;
+    async string baseAsync = viola.os.path.basename(cwdText);
+    string baseSync = baseAsync;
+    check(absSync && existsSync && baseSync.length() > 0, "os.path async");
+
     // 语句形式的异步调用（无赋值目标）应在所在函数返回前被等待：任务入队后
     // 若无人等待，函数可能在任务执行前结束（见开发疑问记录122）。
     // triggerVoidAsync在其函数末尾等待该任务，故此处读取标记文件时写入已完成
@@ -209,6 +272,26 @@ sq main() -> () {
     file markerReadFile = open("void_async_marker.txt", "r", "utf-8");
     string markerText = read(markerReadFile);
     check(markerText == "awaited\n", "void async statement waits");
+
+    // 提前return的路径同样应等待：先写入"pending"占位（任务未完成时读到它，
+    // 不至于因文件不存在而报错），再由triggerVoidAsyncEarlyReturn内的异步
+    // 调用覆盖为"early-return"；未等待时应读到占位内容
+    string earlyPath = "void_async_return_marker.txt";
+    file earlySetupFile = open(earlyPath, "w", "utf-8");
+    write(earlySetupFile, "pending\n");
+    triggerVoidAsyncEarlyReturn(earlyPath, "early-return\n");
+    file earlyReadFile = open(earlyPath, "r", "utf-8");
+    string earlyText = read(earlyReadFile);
+    check(earlyText == "early-return\n", "void async waits before early return");
+
+    // 条件提前return（return在嵌套的if块内）同样应等待
+    string condPath = "void_async_cond_return_marker.txt";
+    file condSetupFile = open(condPath, "w", "utf-8");
+    write(condSetupFile, "pending\n");
+    triggerVoidAsyncConditionalReturn(condPath, "cond-return\n");
+    file condReadFile = open(condPath, "r", "utf-8");
+    string condText = read(condReadFile);
+    check(condText == "cond-return\n", "void async waits before conditional return");
 
     print("0.1 runtime library test completed\n");
 }

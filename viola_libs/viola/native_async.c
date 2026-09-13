@@ -539,6 +539,28 @@ void viola$os$exit(viola$lang$int32 code, viola$threads$Listener *listener);
 void viola$os$getEnv(viola$lang$string * name, viola$lang$string ** result, viola$threads$Listener *listener);
 void viola$os$time(viola$lang$uint64 * result, viola$threads$Listener *listener);
 void viola$os$system(viola$lang$string * command, viola$lang$int32 * result, viola$threads$Listener *listener);
+void viola$os$path$abspath(viola$lang$string * path, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$path$basename(viola$lang$string * path, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$path$commonpath(viola$lang$string$$array * paths, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$path$commonprefix(viola$lang$string$$array * paths, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$path$dirname(viola$lang$string * path, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$path$exists(viola$lang$string * path, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$path$getatime(viola$lang$string * path, viola$lang$uint64 * result, viola$threads$Listener *listener);
+void viola$os$path$getctime(viola$lang$string * path, viola$lang$uint64 * result, viola$threads$Listener *listener);
+void viola$os$path$getmtime(viola$lang$string * path, viola$lang$uint64 * result, viola$threads$Listener *listener);
+void viola$os$path$getsize(viola$lang$string * path, viola$lang$uint64 * result, viola$threads$Listener *listener);
+void viola$os$path$isabs(viola$lang$string * path, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$path$isdir(viola$lang$string * path, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$path$isfile(viola$lang$string * path, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$path$islink(viola$lang$string * path, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$path$ismount(viola$lang$string * path, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$path$join(viola$lang$string$$array * paths, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$path$normpath(viola$lang$string * path, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$path$realpath(viola$lang$string * path, viola$lang$string ** result, viola$threads$Listener *listener);
+void viola$os$path$samefile(viola$lang$string * path1, viola$lang$string * path2, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$path$sameopenfile(viola$lang$int32 fd1, viola$lang$int32 fd2, viola$lang$bool * result, viola$threads$Listener *listener);
+void viola$os$path$split(viola$lang$string * path, viola$lang$string$$array ** result, viola$threads$Listener *listener);
+void viola$os$path$splitext(viola$lang$string * path, viola$lang$string$$array ** result, viola$threads$Listener *listener);
 
 void viola$math$sqrt$async(viola$collections$Tuple$viola$lang$float64 * params, viola$collections$Tuple$viola$lang$float64 * returns,
                           viola$threads$Listener *listener) {
@@ -5278,6 +5300,782 @@ void viola$os$system$async(viola$collections$Tuple$viola$lang$string * params, v
 		command = params->$0;
 		if ($$exc) goto $$_async_err;
 		viola$os$system(command, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$abspath$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$abspath(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$basename$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$basename(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$commonpath$async(viola$collections$Tuple$viola$lang$string$$array * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string$$array * paths = NULL;
+		viola$lang$string * result = NULL;
+		paths = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$commonpath(paths, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$commonprefix$async(viola$collections$Tuple$viola$lang$string$$array * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string$$array * paths = NULL;
+		viola$lang$string * result = NULL;
+		paths = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$commonprefix(paths, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$dirname$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$dirname(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$exists$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$bool result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$exists(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$getatime$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$uint64 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$uint64 result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$getatime(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$getctime$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$uint64 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$uint64 result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$getctime(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$getmtime$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$uint64 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$uint64 result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$getmtime(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$getsize$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$uint64 * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$uint64 result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$getsize(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$isabs$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$bool result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$isabs(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$isdir$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$bool result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$isdir(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$isfile$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$bool result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$isfile(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$islink$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$bool result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$islink(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$ismount$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$bool result;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$ismount(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$join$async(viola$collections$Tuple$viola$lang$string$$array * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string$$array * paths = NULL;
+		viola$lang$string * result = NULL;
+		paths = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$join(paths, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$normpath$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$normpath(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$realpath$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$realpath(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$samefile$async(viola$collections$Tuple$viola$lang$string$viola$lang$string * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path1 = NULL;
+		viola$lang$string * path2 = NULL;
+		viola$lang$bool result;
+		path1 = params->$0;
+		if ($$exc) goto $$_async_err;
+		path2 = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$samefile(path1, path2, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$sameopenfile$async(viola$collections$Tuple$viola$lang$int32$viola$lang$int32 * params, viola$collections$Tuple$viola$lang$bool * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$int32 fd1;
+		viola$lang$int32 fd2;
+		viola$lang$bool result;
+		fd1 = params->$0;
+		if ($$exc) goto $$_async_err;
+		fd2 = params->$1;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$sameopenfile(fd1, fd2, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$split$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string$$array * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string$$array * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$split(path, &result, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		returns->$0 = result;
+		if ($$exc) goto $$_async_err;
+		goto $$_async_done;
+	} while (0);
+$$_async_err:
+	if (viola$lang$convertibleTo($$exc->$$vtable, &viola$lang$exception$Exception$$vtable)) {
+		viola$lang$exception$Exception *exc = $$exc;
+		$$exc = NULL;
+		listener->exception = NULL;
+		viola$lang$string *$$_msg = NULL;
+		viola$lang$exception$Exception$what$_0(exc, &$$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		viola$io$print$perror($$_msg, listener);
+		if ($$exc == NULL) { $$exc = listener->exception; }
+		listener->exception = exc;
+		viola$lang$exception$Exception$__del__$_0(exc, listener);
+		exc = NULL;
+	}
+$$_async_done:
+$$_async_cleanup: ;
+	if ($$exc) { goto $$_async_cleanup; }
+	viola$threads$popStackB(listener->currentThreadId);
+}
+
+void viola$os$path$splitext$async(viola$collections$Tuple$viola$lang$string * params, viola$collections$Tuple$viola$lang$string$$array * returns,
+                          viola$threads$Listener *listener) {
+	viola$lang$exception$Exception *$$exc = listener->exception;
+	viola$threads$pushStackB(listener->currentThreadId);
+	do {
+		viola$lang$string * path = NULL;
+		viola$lang$string$$array * result = NULL;
+		path = params->$0;
+		if ($$exc) goto $$_async_err;
+		viola$os$path$splitext(path, &result, listener);
 		if ($$exc == NULL) { $$exc = listener->exception; }
 		returns->$0 = result;
 		if ($$exc) goto $$_async_err;

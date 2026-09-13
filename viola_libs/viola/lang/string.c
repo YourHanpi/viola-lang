@@ -341,6 +341,12 @@ void viola$lang$string$__getitem__$_0(viola$lang$string *_this, viola$lang$int64
     }
     uint16_t buf[1];
     if (index < 0 || (uint64_t)index >= _this->length) {
+#if VIOLA_ARRAY_BOUNDS_CHECK
+        /* 越界读原先静默返回空串，与数组__getitem__上报IndexError的语义不一致，
+           现同样上报（见开发疑问记录124的附带发现）。仍返回空串：调用方的表达式
+           求值可能有后续语句先于异常跳转执行，结果不应是未初始化的值。 */
+        viola$lang$exception$indexError((viola$lang$uint64)index, _this->length, listener);
+#endif
         *ch = newString(NULL, 0);
         return;
     }

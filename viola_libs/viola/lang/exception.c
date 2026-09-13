@@ -69,6 +69,27 @@ void viola$lang$exception$indexError(viola$lang$uint64 index, viola$lang$uint64 
     listener->exception = exc;
 }
 
+/* 数组切片范围非法（start > end）：构造异常并上报到listener。
+   生成的__setitem__$_1（切片赋值）在start > end时调用本函数后立即返回；
+   该情形原先使长度计算的新长度按uint64下溢（size - (end - start)），
+   随后的malloc通常失败并解引用空指针（见开发疑问记录129）。 */
+void viola$lang$exception$sliceError(viola$lang$uint64 start, viola$lang$uint64 end,
+                                     viola$threads$Listener *listener) {
+    char buffer[128];
+    viola$lang$string *message = NULL;
+    viola$lang$exception$Exception *exc = NULL;
+    if (listener == NULL) {
+        /* 无监听器可上报（正常路径不会发生）：调用方仍会立即返回，
+           不进行非法范围的计算与分配 */
+        return;
+    }
+    snprintf(buffer, sizeof(buffer), "array slice range is invalid: start %llu > end %llu",
+             (unsigned long long)start, (unsigned long long)end);
+    message = viola$lang$string$fromCharString(buffer);
+    viola$lang$exception$Exception$__new__$_0(message, &exc, listener);
+    listener->exception = exc;
+}
+
 /* 析构异常 */
 void viola$lang$exception$Exception$__del__$_0(viola$lang$exception$Exception *_this,
                                                viola$threads$Listener *listener) {

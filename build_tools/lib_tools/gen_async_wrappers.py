@@ -8,7 +8,17 @@
 涉及wrapper类（viola.io.file、viola.os.Stat/StatVFS）的原生函数同样支持：
 这些类的结构体定义由运行库头文件runtime.h提供，本文件直接包含该头文件即可
 （见开发疑问记录113）。用法见下方“用法”，生成的 native_async.c 覆盖
-viola.math / viola.stat / viola.threads / viola.lang / viola.io / viola.os。
+viola.math / viola.stat / viola.threads / viola.lang / viola.io / viola.os /
+viola.os.path。
+
+native_async.c 由本脚本整体重写，因此每次修改运行库声明文件（.vla）后都应
+重新生成（生成前会自动校验wrapper类的结构体与runtime.h一致，见开发疑问记录118）。
+生成 native_async.c 所用的命令（在viola_libs目录下执行）：
+
+    python ../build_tools/lib_tools/gen_async_wrappers.py \
+        viola/math.vla viola/stat.vla viola/threads.vla viola/lang.vla \
+        viola/io.vla viola/os.vla viola/os/path.vla \
+        --root . -o viola/native_async.c
 
 异步包装的C签名（与编译器生成的完全一致）：
     void <C名>$async(<参数元组> * params, <返回元组> * returns,
