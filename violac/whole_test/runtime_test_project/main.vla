@@ -39,6 +39,26 @@ fn lessThanFive(int x) -> (bool c) {
     c = x < 5;
 }
 
+// int与int32互为同一类型（见开发疑问记录151）：以两者分别为形参类型，
+// 用于验证实参可互相传递
+fn takesInt32(int32 x) -> (int32 r) {
+    r = x + 1;
+}
+
+fn takesInt(int x) -> (int r) {
+    r = x * 2;
+}
+
+// 以int64[]为形参：验证int字面量数组实参按形参的元素类型构造
+// （见开发疑问记录155）
+fn arraySum64(int64[] values) -> (int64 result) {
+    result = values[0] + values[1] + values[2];
+}
+
+fn arraySum(int32[] values) -> (int32 result) {
+    result = values[0] + values[1] + values[2];
+}
+
 // 调用长度不等的dist（dist会抛出异常，本函数不捕获，用于验证跨函数传播）
 fn thrower(double[] a, double[] b) -> (double result) {
     result = dist(a, b);
@@ -701,6 +721,53 @@ sq main() -> () {
     ShapeSquare asyncSquare = ShapeSquare(3);
     async int asyncShapeSide = shapeSide(asyncSquare);
     check(asyncShapeSide == 3, "async arg upcast");
+
+    // int与int32为同一类型（见开发疑问记录151）：可互相赋值、互相作为形参，
+    // 且两者的数组类型也相同（原先生成的C代码会在两者间强制转换指针类型）
+    int intValue = 21;
+    int32 int32Value = intValue * 2;
+    int intSum = intValue + int32Value;
+    check(intSum == 63, "int and int32 arithmetic");
+    int[] ints = [1, 2, 3];
+    int32[] int32s = ints;
+    check(int32s.length() == 3 && int32s[1] == 2, "int[] and int32[] are the same type");
+    check(takesInt32(intValue) == 22 && takesInt(int32Value) == 84, "int and int32 parameters");
+
+    // 数组字面量按目标数组的元素类型构造（见开发疑问记录155）：原先保持字面量
+    // 自身的元素类型（如[1, 2, 3]为int32[]），赋给元素类型不同的数组时按错误的
+    // 元素宽度重解释同一块内存（int32[]按int64[]读取会越界读取堆内存）
+    int64[] widened = [1, 2, 3];
+    check(widened.length() == 3 && widened[2] == 3, "int64[] from int literals");
+    uint8[] bytes = [65, 66, 67];
+    check(bytes.length() == 3 && bytes[1] == 66, "uint8[] from int literals");
+    float64[] floatsFromInts = [1, 2, 3];
+    check(floatsFromInts.length() == 3 && floatsFromInts[1] == 2.0,
+          "float64[] from int literals");
+    int64[] widenedByAssign;
+    widenedByAssign = [4, 5, 6];
+    check(widenedByAssign.length() == 3 && widenedByAssign[0] == 4, "int64[] from literals by assign");
+    check(arraySum([1, 2, 3]) == 6 && arraySum64([1, 2, 3]) == 6,
+          "array literal argument element type");
+
+    // string[]、uint8[]等由运行库定义结构体的数组类型，其同步方法在模块编译
+    // 单元内也有声明（见开发疑问记录154：原先声明落在运行库已定义的include
+    // guard内而被跳过，gcc报隐式声明警告）
+    string[] splitParts = "a,b,c,d".split(",");
+    check(splitParts.length() == 4 && splitParts[3] == "d", "string[] sync methods");
+    string[] splitPartsMore = splitParts.append("e");
+    check(splitPartsMore.length() == 5 && splitPartsMore[4] == "e", "string[] append sync");
+    uint8[] bytesMore = bytes.append(68);
+    check(bytesMore.length() == 4 && bytesMore[3] == 68, "uint8[] append sync");
+
+    // 混合基类对象与子类对象的数组字面量：元素类型取两者的公共父类
+    // （见开发疑问记录156：原先shared_parent遍历继承链时不前进，编译到内存耗尽）
+    ShapeBase baseShape = ShapeBase(5);
+    ShapeSquare squareShape = ShapeSquare(6);
+    ShapeBase[] shapeMix = [baseShape, squareShape];
+    check(shapeMix.length() == 2 && shapeSide(shapeMix[0]) == 5 && shapeSide(shapeMix[1]) == 6,
+          "mixed class array literal");
+    object[] shapeObjects = [baseShape, squareShape];
+    check(shapeObjects.length() == 2, "class array literal to object array");
 
     print("0.1 runtime library test completed\n");
 }

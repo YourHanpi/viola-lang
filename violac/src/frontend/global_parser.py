@@ -2077,24 +2077,18 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_typedef_stmt(self) -> Optional[tuple[list[str], list[str]]]:
-        """解析类型别名定义语句（using）。"""
+        """解析类型别名定义语句（using）。
+
+        类型别名（`using name = type;`）尚未实现：后端没有MAKE STMT TYPEDEF的
+        处理（报KeyError），模块级的写法还会写出符号表无法读回的条目
+        （读回时报IndexError，见开发疑问记录151、155）。此处显式报出，避免以
+        内部异常的形式崩溃。
+        """
         if not self._match_type("USING"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
-        self._next()
-        if not self._match_type("IDENTIFIER"):
-            self._raise("Unexpected token: " + self._get_current().text)
-            return None
-        self._next()
-        if not self._match_type("ASSIGN"):
-            self._raise("Unexpected token: " + self._get_current().text)
-            return None
-        self._next()
-        src_type = self._parse_type()
-        if src_type is None:
-            return None
-        dst_type = self._get_current().text
-        return [f"MAKE STMT TYPEDEF {dst_type}", f"MAKE EXPR TYPE_REF {src_type}", "CALL SET_TYPE"], []
+        self._raise("Type alias (using) is not supported yet.")
+        return None
 
     @_set_loc_command
     def _parse_type_name_list(self, end_symbols: list[str]) -> Optional[tuple[list[str], list[str]]]:

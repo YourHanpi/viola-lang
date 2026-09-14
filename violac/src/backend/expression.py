@@ -1470,7 +1470,14 @@ class ArrayRef(ValueRef):
             if not isinstance(value.return_type, ClassName):
                 raise InternalCompilerException("ArrayRef element type mismatch", self._src_info)
             if self._element_type != value.return_type:
-                self._element_type = self._element_type.shared_parent(value.return_type)
+                shared: Optional[ClassName] = self._element_type.shared_parent(value.return_type)
+                if shared is None:
+                    # None同时是"元素类型未知"的标记（空数组字面量），故不能直接
+                    # 赋给_element_type，否则会被当作空数组
+                    raise CompilerException(
+                        f"Array literal elements of types {self._element_type.raw_name} and "
+                        f"{value.return_type.raw_name} have no common parent class.", self._src_info)
+                self._element_type = shared
         elif isinstance(self._element_type, BaseTypeName):
             if not isinstance(value.return_type, BaseTypeName):
                 raise InternalCompilerException("ArrayRef element type mismatch", self._src_info)
@@ -1509,16 +1516,41 @@ class ArrayRef(ValueRef):
         self._temp_var = LocalVariableName(self._src_info, var_name, self._type)
         self._is_finished = True
 
-    def set_inferred_element_type(self, element_type: TypeName) -> None:
-        """为已完成但元素类型未知（空数组字面量）的数组推断元素类型。
+    def set_inferred_element_type(self, element_type: TypeName) -> bool:
+        """按调用方给出的期望元素类型推断数组字面量的元素类型。
 
-        调用方（如函数调用）根据期望的形参类型推断空数组的元素类型。
+        调用方（变量声明/赋值、函数调用等）已知目标数组类型时据此推断：
+        - 空数组字面量（[]）的元素类型未知，直接改用期望的元素类型；
+        - 非空数组字面量的元素类型由各元素表达式降级得到（如[1, 2, 3]为
+          int32），与期望的元素类型不同时，若各元素都能转换到期望类型则一并
+          改用：元素的写入由C语言按目标类型隐式转换完成（如int32字面量写入
+          uint8数组）。原先不改用，赋值给元素类型不同的数组时只是把同一块
+          内存按错误的元素宽度重解释（int32[]的数据按int64[]读取会越界读取
+          堆内存，见开发疑问记录155）。
+
+        :param element_type: 期望的元素类型。
+        :return: 是否改变了元素类型。
         """
-        if not self._is_finished or not isinstance(self._type, EmptyArrayTypeName):
-            return
+        if not self._is_finished:
+            return False
+        if not isinstance(self._type, EmptyArrayTypeName):
+            if self._element_type == element_type:
+                return False
+            # 非空：仅当两边的元素类型都是基本数据类型时才按期望类型改写。
+            # 类类型的元素都是指针，元素宽度相同，按原类型构造不会有内存错误
+            # （读作父类数组安全），故保持原行为，不引入额外的C指针类型警告。
+            if not isinstance(self._element_type, BaseTypeName) or \
+                    not isinstance(element_type, BaseTypeName):
+                return False
+            # 每个元素都能转换到期望的元素类型时才改用，否则保持原类型，
+            # 由调用方的类型检查给出错误
+            if not all(value.return_type.convertible_to(element_type, self._symbol_table.symbols)
+                       for value in self._values):
+                return False
         self._element_type = element_type
         self._type = ArrayTypeName(self._src_info, element_type)
         self._temp_var = LocalVariableName(self._src_info, self._temp_var.name, self._type)
+        return True
 
     @property
     def front_text(self) -> Optional[str]:
@@ -3171,13 +3203,15 @@ class CallOp(Expression):
                         raise CompilerException(
                             f"Missing argument {n} for function {self._func.raw_name}, "
                             f"and it has no default value.", self._src_info)
-            # 空数组字面量的元素类型按形参类型推断
+            # 数组字面量的元素类型按形参类型推断（空字面量的元素类型未知；
+            # 非空字面量的元素类型与形参不同时按形参改写，避免按错误的元素
+            # 宽度重解释同一块内存，见开发疑问记录155。元素类型不同又无法
+            # 转换时set_inferred_element_type不改写，由后续类型检查报出）
             for i, arg in enumerate(self._arg_list):
                 if i >= len(self._func.type.args):
                     break
                 expected: TypeName = self._func.type.args[i]
-                if isinstance(arg, ArrayRef) and isinstance(arg.return_type, EmptyArrayTypeName) and \
-                        isinstance(expected, ArrayTypeName):
+                if isinstance(arg, ArrayRef) and isinstance(expected, ArrayTypeName):
                     arg.set_inferred_element_type(expected.element_type)
         if self._args_tuple is not None:
             self._args_tuple.finish()
@@ -4474,6 +4508,11 @@ class UpdateExpr(Expression):
         """获取源表达式的值文本（物化后的临时变量名，或源表达式自身的值文本）。"""
         returns: Optional[list[VariableName]] = self._materialize_src()
         return returns[0].name if returns is not None else self._src_expr.text
+
+    @property
+    def source(self) -> Optional[Expression]:
+        """获取被复制更新的源表达式（`=>` 左侧），尚未设置时为None。"""
+        return self._src_expr
 
     def _src_ref(self) -> Expression:
         """获取源表达式的值引用（物化后的临时变量，或源表达式自身）。"""

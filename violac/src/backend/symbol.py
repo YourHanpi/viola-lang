@@ -396,10 +396,13 @@ class BaseTypeName(TypeName):
 
 BOOL: BaseTypeName = BaseTypeName("bool", "b")
 
-INT: BaseTypeName = BaseTypeName("int", "i")
+INT32: BaseTypeName = BaseTypeName("int32", "i32")
+# int是int32的别名：两者为同一个TypeName对象，完全等价（见开发疑问记录151）。
+# 因此生成的C类型名为viola$lang$int32，int不再有自己的C类型
+# （原先的viola$lang$int仍保留在runtime.h中，供手写C代码使用）。
+INT: BaseTypeName = INT32
 INT8: BaseTypeName = BaseTypeName("int8", "i8")
 INT16: BaseTypeName = BaseTypeName("int16", "i16")
-INT32: BaseTypeName = BaseTypeName("int32", "i32")
 INT64: BaseTypeName = BaseTypeName("int64", "i64")
 
 UINT: BaseTypeName = BaseTypeName("uint", "u")
@@ -1120,20 +1123,25 @@ class ClassName(TypeName):
             other: TypeName
     ) -> Optional["ClassName"]:
         """
-        获取公共父类。
+        获取公共父类（继承链上最近的公共祖先），没有则返回None。
+
+        原先两处循环都追加固定的self.parent/other.parent而不是继承链的下一项：
+        父类不为None时（即类有父类）循环永不结束，追加到内存耗尽
+        （MemoryError，见开发疑问记录156——混合基类对象与子类对象的数组字面量
+        即会触发）。
         """
         if not isinstance(other, ClassName):
             return None
         self_parents: list[Optional[ClassName]] = [self]
         while self_parents[-1] is not None:
-            self_parents.append(self.parent)
+            self_parents.append(self_parents[-1].parent)
         self_parents.pop()
         other_parents: list[Optional[ClassName]] = [other]
         while other_parents[-1] is not None:
-            other_parents.append(other.parent)
+            other_parents.append(other_parents[-1].parent)
         other_parents.pop()
-        cls: Optional[ClassName] = list(filter(lambda x: x in other_parents, self_parents))[0]
-        return cls
+        common: list[ClassName] = list(filter(lambda x: x in other_parents, self_parents))
+        return common[0] if len(common) > 0 else None
 
     @property
     def short_name(self) -> str:
@@ -1156,8 +1164,10 @@ class ClassName(TypeName):
 _TUPLE_TYPE_DEFS: dict[str, "TupleTypeName"] = {}
 # 函数类型定义注册表：C类型名 -> 函数类型对象（函数指针typedef，惰性生成）
 _FUNCTION_TYPE_DEFS: dict[str, "FunctionTypeName"] = {}
-# 数组类型定义注册表：C类型名 -> 元素类型（生成typedef与各方法的C实现）
-_ARRAY_TYPE_DEFS: dict[str, TypeName] = {}
+# 数组类型定义注册表：C类型名 -> 数组类型对象（生成typedef与各方法的C实现；
+# 数组类型对象本身也要参与生成——方法的形参/返回值类型由_array_method_descs
+# 给出TypeName对象，见开发疑问记录153）
+_ARRAY_TYPE_DEFS: dict[str, ArrayTypeName] = {}
 
 # 泛型函数实例化请求的全局注册表（按函数的C名 -> 类型参数元组集合）。
 # 实例化请求发生在调用方模块，而泛型函数的定义位于其所在模块，
@@ -1260,7 +1270,7 @@ def register_array_type(t: "ArrayTypeName") -> None:
     if isinstance(t.element_type, GenericArgument):
         # 泛型参数元素的数组（如T[]）在实例化后以具体元素类型重新注册
         return
-    _ARRAY_TYPE_DEFS[t.c_alloc_name] = t.element_type
+    _ARRAY_TYPE_DEFS[t.c_alloc_name] = t
 
 
 def _collect_class_names(t: TypeName, result: set[str]) -> None:
@@ -1310,7 +1320,7 @@ def _type_def_dependencies(category: int, name: str) -> set[str]:
     result: set[str] = set()
     if category == _TYPEDEF_CATEGORY_ARRAY:
         # 数组结构体的元素字段形如"<元素类型> data;"
-        return _referenced_type_def_names(_ARRAY_TYPE_DEFS[name])
+        return _referenced_type_def_names(_ARRAY_TYPE_DEFS[name].element_type)
     if category == _TYPEDEF_CATEGORY_TUPLE:
         for e in _TUPLE_TYPE_DEFS[name].types:
             result |= _referenced_type_def_names(e)
@@ -1389,62 +1399,67 @@ def type_def_class_names() -> set[str]:
     for t in _FUNCTION_TYPE_DEFS.values():
         for e in t.args + t.returns:
             _collect_class_names(e, result)
-    for element in _ARRAY_TYPE_DEFS.values():
-        _collect_class_names(element, result)
+    for arr_type in _ARRAY_TYPE_DEFS.values():
+        _collect_class_names(arr_type.element_type, result)
     return result
 
 
 class ArrayMethodDesc:
-    """内置数组类型的一个方法的描述（同步声明、同步实现与$async包装的唯一来源，
-    见开发疑问记录148）。
+    """内置数组类型的一个方法的描述（方法注册、同步声明、同步实现与$async包装
+    的唯一来源，见开发疑问记录148、153）。
 
-    args/rets的元素为三元组(C类型文本, 形参/返回值名, 元组成员类型名)：
-    - C类型文本：该方法作为同步实现的形参/返回值时的C写法（c_calling_name）；
-    - 元组成员类型名：异步调用的实参/返回元组按被调函数声明的形参/返回类型
-      构造（见expression.py的CallOp._async_arg_types/_async_ret_types），元组
-      结构体的C名由各成员的类型名（TypeName.name）拼出，故此处按类型名给出。
-    描述用字符串而非TypeName对象：生成该文本时（输出阶段）构造TypeName会注册
-    新类型，影响已生成的类型定义顺序（见开发疑问记录117）。
+    args/rets的元素为二元组(TypeName对象, 形参/返回值名)：
+    - TypeName对象：既用于构造方法的FunctionTypeName（供调用解析），
+      也用于生成C文本（c_calling_name）与异步实参/返回元组的成员类型名
+      （TypeName.name，见expression.py的CallOp._async_arg_types/_async_ret_types）。
+    表中只引用已存在的TypeName对象（SIZE_T、SliceTypeName、INT64、元素类型与
+    数组类型自身），不构造新的类型对象，故在输出阶段求值也不会注册新类型、
+    影响已生成的类型定义顺序（见开发疑问记录117）。
 
     body为同步实现的C语句模板（不含函数首行与结尾的"}"）；与元素类型相关的
     文本写作占位符，由SymbolTable._array_method_body_text替换（表因此同时是同步
     声明的来源：声明与实现的首行由同一个_array_sync_signature_text生成）。
-    新增方法时只需在此表添加一项：遗漏会被校验报出（占位符未替换、
-    ArrayTypeName构造时的_check_method_table不一致）。
+    新增方法时只需在此表添加一项。
     """
 
-    def __init__(self, suffix: str, args: Optional[list[tuple[str, str, str]]] = None,
-                 rets: Optional[list[tuple[str, str, str]]] = None,
-                 body: Optional[list[str]] = None) -> None:
+    def __init__(self, suffix: str, args: Optional[list[tuple[TypeName, str]]] = None,
+                 rets: Optional[list[tuple[TypeName, str]]] = None,
+                 body: Optional[list[str]] = None,
+                 modifier: Modifier = Modifier.PUBLIC) -> None:
         self.suffix: str = suffix
-        self.args: list[tuple[str, str, str]] = args if args is not None else []
-        self.rets: list[tuple[str, str, str]] = rets if rets is not None else []
+        self.args: list[tuple[TypeName, str]] = args if args is not None else []
+        self.rets: list[tuple[TypeName, str]] = rets if rets is not None else []
         self.body: list[str] = body if body is not None else []
+        self.modifier: Modifier = modifier
+
+    @property
+    def name(self) -> str:
+        """获取方法名（不含重载序号，如__getitem__；序号在suffix中）。"""
+        return self.suffix.split("$_")[0]
 
 
-def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
-    """获取内置数组类型的方法表（同步声明、同步实现与$async包装的来源，
-    见开发疑问记录148；与ArrayTypeName构造方法中注册的方法一致，
-    由_check_method_table校验）。
+def _array_method_descs(arr_type: "ArrayTypeName") -> list[ArrayMethodDesc]:
+    """获取内置数组类型的方法表（方法注册、同步声明、同步实现与$async包装的
+    唯一来源，见开发疑问记录148、153）。
 
     接收者（_this）不在表中：它总是形参元组的第一个成员，类型即数组类型自身。
-    方法的先后顺序即$this$_{重载序号}的序号来源，与注册顺序一致，不可随意调换。
+    方法的先后顺序即$this$_{重载序号}的序号来源：ArrayTypeName构造时按本表的
+    顺序注册方法，故两者不会错配，不可随意调换本表的顺序。
     定义在模块级而非SymbolTable中：ArrayTypeName的构造（模块导入期间即会发生，
     如StringTypeName的data属性为uint16[]）要调用本表，此时SymbolTable尚未定义。
     """
-    arr_call: str = f"{arr_name} *"
-    elem_call: str = elem.c_calling_name
+    elem: TypeName = arr_type.raw_element_type
     return [
         ArrayMethodDesc(
-            "__getitem__$_0", [(SIZE_T.c_calling_name, "item", SIZE_T.name)],
-            [(elem_call, "element", elem.name)],
+            "__getitem__$_0", [(SIZE_T, "item")],
+            [(elem, "element")],
             body=[
                 "@check_index_get@",
                 "\t*element = _this->data[item];",
             ]),
         ArrayMethodDesc(
-            "__getitem__$_1", [(SliceTypeName.c_calling_name, "s", SliceTypeName.name)],
-            [(arr_call, "subarray", arr_name)],
+            "__getitem__$_1", [(SliceTypeName, "s")],
+            [(arr_type, "subarray")],
             body=[
                 "\tviola$lang$uint64 start = s->start;",
                 "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
@@ -1463,8 +1478,8 @@ def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
                 "\t*subarray = newResult;",
             ]),
         ArrayMethodDesc(
-            "concat$_0", [(arr_call, "other", arr_name)],
-            [(arr_call, "result", arr_name)],
+            "concat$_0", [(arr_type, "other")],
+            [(arr_type, "result")],
             body=[
                 "\t@new_result@",
                 "\tnewResult->size = _this->size + other->size;",
@@ -1477,8 +1492,8 @@ def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
                 "\t*result = newResult;",
             ]),
         ArrayMethodDesc(
-            "append$_0", [(elem_call, "newElement", elem.name)],
-            [(arr_call, "newArray", arr_name)],
+            "append$_0", [(elem, "newElement")],
+            [(arr_type, "newArray")],
             body=[
                 "\t@new_result@",
                 "\tnewResult->size = _this->size + 1;",
@@ -1489,9 +1504,8 @@ def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
                 "\t*newArray = newResult;",
             ]),
         ArrayMethodDesc(
-            "insert$_0", [(INT64.c_calling_name, "location", INT64.name),
-                          (elem_call, "newElement", elem.name)],
-            [(arr_call, "newArray", arr_name)],
+            "insert$_0", [(INT64, "location"), (elem, "newElement")],
+            [(arr_type, "newArray")],
             body=[
                 "\tviola$lang$uint64 loc = location < 0 ? 0 : (viola$lang$uint64)location;",
                 "\tloc = loc > _this->size ? _this->size : loc;",
@@ -1507,14 +1521,13 @@ def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
             ]),
         ArrayMethodDesc(
             "length$_0", [],
-            [(SIZE_T.c_calling_name, "result", SIZE_T.name)],
+            [(SIZE_T, "result")],
             body=[
                 "\t*result = _this->size;",
             ]),
         ArrayMethodDesc(
-            "__setitem__$_0", [(SIZE_T.c_calling_name, "index", SIZE_T.name),
-                               (elem_call, "newElement", elem.name)],
-            [(arr_call, "newArray", arr_name)],
+            "__setitem__$_0", [(SIZE_T, "index"), (elem, "newElement")],
+            [(arr_type, "newArray")],
             # 越界检查置于分配之前，越界时不分配新数组
             body=[
                 "@check_index_set@",
@@ -1528,9 +1541,8 @@ def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
                 "\t*newArray = newResult;",
             ]),
         ArrayMethodDesc(
-            "__setitem__$_1", [(SliceTypeName.c_calling_name, "s", SliceTypeName.name),
-                               (arr_call, "newSubarray", arr_name)],
-            [(arr_call, "newArray", arr_name)],
+            "__setitem__$_1", [(SliceTypeName, "s"), (arr_type, "newSubarray")],
+            [(arr_type, "newArray")],
             body=[
                 "\tviola$lang$uint64 start = s->start;",
                 "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
@@ -1558,7 +1570,8 @@ def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
                 "\t\t\tfree(_this); _this = NULL;",
                 "\t\t}",
                 "\t}",
-            ]),
+            ],
+            modifier=Modifier.PRIVATE),
     ]
 
 
@@ -1579,69 +1592,33 @@ class ArrayTypeName(ClassName):
         # 因为带[]的名称不是合法C标识符。方法实现由编译器按元素类型生成。
         c_cls: ClassName = ClassName(src_info, [], self.c_alloc_name, None, False, False)
         c_cls._is_array_method_cls = True
-        self.add_method("__getitem__", MethodName(
-            src_info, c_cls, "__getitem__", FunctionTypeName(
-                src_info, [SIZE_T], [element_type]
-            ), False, False, ["item"], ["element"], Modifier.PUBLIC, True, True
-        ))
-        self.add_method("__getitem__", MethodName(
-            src_info, c_cls, "__getitem__", FunctionTypeName(
-                src_info, [SliceTypeName], [self]
-            ), False, False, ["s"], ["subarray"], Modifier.PUBLIC, True, True
-        ))
-        self.add_method("concat", MethodName(
-            src_info, c_cls, "concat", FunctionTypeName(
-                src_info, [self], [self]
-            ), False, False, ["other"], ["result"], Modifier.PUBLIC, True, True
-        ))
-        self.add_method("append", MethodName(
-            src_info, c_cls, "append", FunctionTypeName(
-                src_info, [element_type], [self]
-            ), False, False, ["newElement"], ["newArray"], Modifier.PUBLIC, True, True
-        ))
-        self.add_method("insert", MethodName(
-            src_info, c_cls, "insert", FunctionTypeName(
-                src_info, [INT64, element_type], [self]
-            ), False, False, ["location", "newElement"], ["newArray"], Modifier.PUBLIC, True, True
-        ))
-        self.add_method("length", MethodName(
-            src_info, c_cls, "length", FunctionTypeName(
-                src_info, [], [SIZE_T]
-            ), False, False, [], ["result"], Modifier.PUBLIC, True, True
-        ))
-        self.add_method("__setitem__", MethodName(
-            src_info, c_cls, "__setitem__", FunctionTypeName(
-                src_info, [SIZE_T, element_type], [self]
-            ), False, False, ["index", "newElement"], ["newArray"], Modifier.PUBLIC, True, True
-        ))
-        self.add_method("__setitem__", MethodName(
-            src_info, c_cls, "__setitem__", FunctionTypeName(
-                src_info, [SliceTypeName, self], [self]
-            ), False, False, ["s", "newSubarray"], ["newArray"], Modifier.PUBLIC, True, True
-        ))
-        self.add_method(
-            "__del__", MethodName(
-                src_info, c_cls, "__del__", FunctionTypeName(src_info, [], []), False,
-                False, [], [], Modifier.PRIVATE, True, True
-            )
-        )
+        # 方法注册（调用解析所用）由方法表生成：形参/返回值的类型取自表中给出的
+        # TypeName对象，重载序号由注册顺序决定（见开发疑问记录153）。原先这里与
+        # 同步声明/实现各自维护一份方法列表，新增方法时两处易错配。
+        for desc in _array_method_descs(self):
+            self.add_method(desc.name, MethodName(
+                src_info, c_cls, desc.name, FunctionTypeName(
+                    src_info, [t for t, _ in desc.args], [t for t, _ in desc.rets]
+                ), False, False, [n for _, n in desc.args], [n for _, n in desc.rets],
+                desc.modifier, True, True
+            ))
         register_array_type(self)
-        self._check_method_table()
+        self._check_method_names()
 
-    def _check_method_table(self) -> None:
-        """校验此处注册的方法与数组方法表（_array_method_descs）一致。
+    def _check_method_names(self) -> None:
+        """校验方法表给出的C名后缀（含重载序号）与注册结果一致。
 
-        方法表是同步声明、同步实现与$async包装的来源（见开发疑问记录148），
-        此处注册的方法则供调用解析使用：新增/修改方法时若只改一处，生成代码与
-        调用解析会错配（原先要到gcc阶段才以隐式声明或链接错误报出），故在此
-        显式报出。返回值名不参与校验：包装体按下标写回元组成员，与名称无关。
+        方法注册、同步声明、同步实现与$async包装都由方法表生成（见开发疑问记录
+        148、153），但注册的C名中的重载序号由*注册顺序*决定，而声明/实现/包装
+        的C名直接取自表中的suffix：若表中同一方法名的两项与序号不符（如把
+        __getitem__$_0与$_1互换位置），生成代码与调用解析会按不同的函数名互相
+        调用（要到gcc阶段才报出）。此处显式报出该情况。
 
-        元素类型尚无法给出C类型时（泛型参数如T[]、any等）跳过：此时表中同样
-        无C类型可比，且该形式的数组在输出阶段本就会受限。
+        元素类型尚无法给出C名时（泛型参数如T[]、any等）跳过：此时表中同样无
+        可比之名。
         """
         try:
-            descs: list[ArrayMethodDesc] = _array_method_descs(
-                self.c_alloc_name, self._element_type)
+            descs: list[ArrayMethodDesc] = _array_method_descs(self)
         except CompilerException:
             return
         methods: list["MethodName"] = list(self.methods.values())
@@ -1651,18 +1628,10 @@ class ArrayTypeName(ClassName):
                 f"but the method table has {len(descs)}.", self._src_info)
         for method, desc in zip(methods, descs):
             expected_name: str = f"{self.c_alloc_name}${desc.suffix}"
-            # 方法的形参表以接收者（_this）为首个元素
-            actual_args: list[tuple[str, str]] = list(zip(
-                [t.c_calling_name for t in method.type.args[1:]], method.arg_names[1:]))
-            expected_args: list[tuple[str, str]] = [(a[0], a[1]) for a in desc.args]
-            actual_rets: list[str] = [t.c_calling_name for t in method.type.returns]
-            expected_rets: list[str] = [r[0] for r in desc.rets]
-            if method.name != expected_name or actual_args != expected_args or \
-                    actual_rets != expected_rets:
+            if method.name != expected_name:
                 raise InternalCompilerException(
-                    f"Array method {method.name} does not match the method table: "
-                    f"table has {expected_name} {expected_args} -> {expected_rets}, "
-                    f"registered {actual_args} -> {actual_rets}.", self._src_info)
+                    f"Array type {self.c_alloc_name} registers method {method.name}, "
+                    f"but the method table expects {expected_name}.", self._src_info)
 
     @property
     def c_alloc_name(self) -> str:
@@ -1688,6 +1657,16 @@ class ArrayTypeName(ClassName):
     def element_type(self) -> TypeName:
         """
         获取元素类型。
+        """
+        return self._element_type
+
+    @property
+    def raw_element_type(self) -> TypeName:
+        """获取元素类型，不校验其是否已知。
+
+        EmptyArrayTypeName（空数组字面量）的element_type属性会报错（元素类型
+        尚待推断），而方法表与方法注册在推断之前就要构建（空数组字面量在推断
+        出元素类型前也要能解析其方法，见开发疑问记录153）。
         """
         return self._element_type
 
@@ -3630,7 +3609,7 @@ class SymbolTable:
         texts: list[str] = []
         for category, name in ordered_type_def_keys():
             if category == _TYPEDEF_CATEGORY_ARRAY:
-                texts.append(cls._array_type_decl_text(name, _ARRAY_TYPE_DEFS[name]))
+                texts.append(cls._array_type_decl_text(_ARRAY_TYPE_DEFS[name]))
             elif category == _TYPEDEF_CATEGORY_TUPLE:
                 texts.append(_TUPLE_TYPE_DEFS[name].c_typedef_text)
             else:
@@ -3712,8 +3691,8 @@ class SymbolTable:
         指针形式（c_calling_name加"*"，对基本类型与类类型均即c_assigning_name）。
         """
         params: list[str] = [f"{arr_name} *_this"]
-        params += [SymbolTable._array_param_text(c_type, name) for c_type, name, _ in desc.args]
-        params += [SymbolTable._array_param_text(c_type, name, True) for c_type, name, _ in desc.rets]
+        params += [SymbolTable._array_param_text(t.c_calling_name, name) for t, name in desc.args]
+        params += [SymbolTable._array_param_text(t.c_calling_name, name, True) for t, name in desc.rets]
         params.append(f"{LISTENER_T} *listener")
         return f"void {arr_name}${desc.suffix}({', '.join(params)}){terminator}"
 
@@ -3728,14 +3707,23 @@ class SymbolTable:
         return TUPLE_T + "$" + "$".join(type_names)
 
     @staticmethod
-    def _array_type_decl_text(arr_name: str, elem: TypeName) -> str:
+    def _array_type_decl_text(arr_type: "ArrayTypeName") -> str:
         """获取数组类型的结构体定义与方法声明文本。
 
         方法声明由方法表生成（见_array_sync_decl_text），与同步实现、$async包装
-        同源，不再各自维护一份文本（见开发疑问记录148）。
+        及方法注册同源，不再各自维护一份文本（见开发疑问记录148、153）。
+
+        方法声明与$async声明都置于结构体定义之外（见开发疑问记录154）：string[]、
+        uint8[]等数组类型的结构体由运行库头文件runtime.h定义（同名include guard），
+        其guard在包含本文件的编译单元中已定义，guard内的声明会被整块跳过，模块内
+        调用其数组方法（如viola$lang$string$$array$length$_0）便没有原型（gcc隐式
+        声明警告）。结构体本身不能重复定义，故只把声明移出guard；声明所需的
+        结构体由runtime.h或紧随其前的guard块给出。
         """
+        arr_name: str = arr_type.c_alloc_name
+        elem: TypeName = arr_type.element_type
         elem_asg: str = elem.c_assigning_name
-        descs: list[ArrayMethodDesc] = _array_method_descs(arr_name, elem)
+        descs: list[ArrayMethodDesc] = _array_method_descs(arr_type)
         return "\n".join([
             f"#ifndef _VIOLA_ARRAY_T_{arr_name}",
             f"#define _VIOLA_ARRAY_T_{arr_name}",
@@ -3745,12 +3733,9 @@ class SymbolTable:
             f"\t{elem_asg} data;",
             "\tviola$lang$uint64 size;",
             f"}} {arr_name};",
-            *map(lambda desc: SymbolTable._array_sync_decl_text(arr_name, desc), descs),
             "#endif",
+            *map(lambda desc: SymbolTable._array_sync_decl_text(arr_name, desc), descs),
             # $async包装所需的实参/返回元组结构体与$async声明（见开发疑问记录146）。
-            # 置于数组结构体的include guard之外：string[]等数组类型的结构体由运行库
-            # 头文件runtime.h定义（同名guard），其guard在本guard之前已被定义，
-            # 本块会被跳过，其中的$async声明便不会出现在任何编译单元中。
             # 元组结构体自带include guard，函数声明重复出现不影响语义。
             "\n\n".join(map(lambda desc: SymbolTable._array_async_tuple_defs_text(arr_name, desc),
                             descs)),
@@ -3767,18 +3752,18 @@ class SymbolTable:
         """
         return "\n".join([
             SymbolTable._tuple_typedef_text(
-                SymbolTable._tuple_type_name([arr_name] + [a[2] for a in desc.args]),
-                [f"{arr_name} *"] + [a[0] for a in desc.args]),
+                SymbolTable._tuple_type_name([arr_name] + [t.name for t, _ in desc.args]),
+                [f"{arr_name} *"] + [t.c_calling_name for t, _ in desc.args]),
             SymbolTable._tuple_typedef_text(
-                SymbolTable._tuple_type_name([r[2] for r in desc.rets]),
-                [r[0] for r in desc.rets])
+                SymbolTable._tuple_type_name([t.name for t, _ in desc.rets]),
+                [t.c_calling_name for t, _ in desc.rets])
         ])
 
     @staticmethod
     def _array_async_decl_text(arr_name: str, desc: ArrayMethodDesc) -> str:
         """获取一个数组方法的$async声明文本（见开发疑问记录146）。"""
-        args_tuple: str = SymbolTable._tuple_type_name([arr_name] + [a[2] for a in desc.args])
-        rets_tuple: str = SymbolTable._tuple_type_name([r[2] for r in desc.rets])
+        args_tuple: str = SymbolTable._tuple_type_name([arr_name] + [t.name for t, _ in desc.args])
+        rets_tuple: str = SymbolTable._tuple_type_name([t.name for t, _ in desc.rets])
         return f"void {arr_name}${desc.suffix}$async({args_tuple} * params, " \
                f"{rets_tuple} * returns, viola$threads$Listener *listener);"
 
@@ -3843,7 +3828,7 @@ class SymbolTable:
             ["*newArray = _this;"])
 
     @classmethod
-    def _array_async_impl_texts(cls, arr_name: str, elem: TypeName) -> list[str]:
+    def _array_async_impl_texts(cls, arr_type: "ArrayTypeName") -> list[str]:
         """获取一个数组类型全部方法的$async实现文本（见开发疑问记录146）。
 
         包装体与编译器为有函数体的函数生成的$async包装等价（声明式原生函数的
@@ -3858,12 +3843,13 @@ class SymbolTable:
         此时再注册元组类型来不及输出到（已生成的）头文件。
         """
         results: list[str] = []
-        for desc in _array_method_descs(arr_name, elem):
+        arr_name: str = arr_type.c_alloc_name
+        for desc in _array_method_descs(arr_type):
             args_desc: list[tuple[str, str]] = [("_this", f"{arr_name} *")] + \
-                [(a[1], a[0]) for a in desc.args]
-            rets_desc: list[tuple[str, str]] = [(r[1], r[0]) for r in desc.rets]
-            args_tuple: str = cls._tuple_type_name([arr_name] + [a[2] for a in desc.args])
-            rets_tuple: str = cls._tuple_type_name([r[2] for r in desc.rets])
+                [(name, t.c_calling_name) for t, name in desc.args]
+            rets_desc: list[tuple[str, str]] = [(name, t.c_calling_name) for t, name in desc.rets]
+            args_tuple: str = cls._tuple_type_name([arr_name] + [t.name for t, _ in desc.args])
+            rets_tuple: str = cls._tuple_type_name([t.name for t, _ in desc.rets])
             results.append(cls._tuple_typedef_text(
                 args_tuple, [c_type for _, c_type in args_desc]))
             results.append(cls._tuple_typedef_text(
@@ -3958,18 +3944,17 @@ class SymbolTable:
         """
         results: list[str] = []
         for arr_name in sorted(_ARRAY_TYPE_DEFS.keys()):
-            elem: TypeName = _ARRAY_TYPE_DEFS[arr_name]
-            for desc in _array_method_descs(arr_name, elem):
+            arr_type: ArrayTypeName = _ARRAY_TYPE_DEFS[arr_name]
+            for desc in _array_method_descs(arr_type):
                 results.append("\n".join(
                     [cls._array_sync_signature_text(arr_name, desc, " {")]
-                    + cls._array_method_body_text(arr_name, elem, desc)
+                    + cls._array_method_body_text(arr_name, arr_type.element_type, desc)
                     + ["}"]))
-        # 各方法的$async包装（见开发疑问记录146）：置于全部同步实现之后，
-        # 使其调用的同步函数已在本单元内定义——数组方法的声明可能因运行库头文件
-        # 先定义了同名的结构体guard而未出现在模块头文件中（如string[]、uint8[]），
-        # 此时无声明可用，靠先行的定义避免隐式声明警告
+        # 各方法的$async包装（见开发疑问记录146）置于全部同步实现之后，
+        # 使其调用的同步函数已在本单元内定义：即使某数组类型的方法声明未出现在
+        # 模块头文件中，也能靠先行的定义避免隐式声明警告
         for arr_name in sorted(_ARRAY_TYPE_DEFS.keys()):
-            results.extend(cls._array_async_impl_texts(arr_name, _ARRAY_TYPE_DEFS[arr_name]))
+            results.extend(cls._array_async_impl_texts(_ARRAY_TYPE_DEFS[arr_name]))
         return results
 
     def __contains__(self, item: tuple[NamedSymbol | str, Optional[tuple[TypeName, ...]]]) -> bool:
@@ -4217,7 +4202,8 @@ class SymbolTable:
     def _init_builtin_types(self) -> None:
         builtin_types = [
             BOOL,
-            INT, INT8, INT16, INT32, INT64,
+            # INT不在列表中：它与INT32是同一个对象，其名称"int"在下方单独注册
+            INT8, INT16, INT32, INT64,
             UINT, UINT8, UINT16, UINT32, UINT64,
             SIZE_T,
             FLOAT, FLOAT32, FLOAT64, FLOAT128,
@@ -4226,7 +4212,10 @@ class SymbolTable:
         ]
         for t in builtin_types:
             self.add(t, t.self_name, None)
+        # size_t与uint64、int与int32分别是同一个类型：以别名（第二个查找名）
+        # 注册，使源码中的这两个名字都解析到同一个TypeName对象（见开发疑问记录151）
         self.add(SIZE_T, "size_t", None)
+        self.add(INT, "int", None)
         self.add(PointerGenericClassName, PointerGenericClassName.self_name, None)
         self._generic_table.add_cls_def(PointerGenericClassName)
         self.add(Object, Object.self_name, None)

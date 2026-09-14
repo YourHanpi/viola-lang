@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
 from .expression import Expression, VariableRef, AttrOp, CallOp, UnpackExpr, CONVERTIBLE_TO_FUNC, TypeRef, ClassRef, \
-    StringLiteral, TupleRef, CExpr, too_few_unpack_targets_error
+    StringLiteral, TupleRef, CExpr, ArrayRef, too_few_unpack_targets_error
 from .symbol import (
     VariableName,
     TypeName,
@@ -17,7 +17,8 @@ from .symbol import (
     GenericArgument,
     SymbolTable,
     ExceptionTypeName,
-    AutoTypeName
+    AutoTypeName,
+    ArrayTypeName
 )
 from utils import CompilerException, unreachable_warning, SourceInfo, InternalCompilerException, SUPER_ASSIGN_MARKER
 
@@ -43,6 +44,24 @@ STACK_A_POP_FUNC: str = "viola$threads$popStackA"
 STACK_B_PUSH_FUNC: str = "viola$threads$pushStackB"
 STACK_B_POP_FUNC: str = "viola$threads$popStackB"
 THREAD_INFO_T: str = "viola$threads$ThreadInfo"
+
+
+def infer_array_literal_element_type(value: Optional[Expression], target: TypeName) -> None:
+    """已知目标类型时，按目标数组类型的元素类型构造数组字面量（见开发疑问记录155）。
+
+    数组字面量的元素类型默认由元素表达式推断（如[1, 2, 3]为int32），元素类型
+    与目标数组不同时不做转换，只是把同一块内存按目标元素类型重解释
+    （int32[]的数据按int64[]读取会越界读取堆内存）。此处按目标元素类型改写
+    字面量，元素的写入交由C语言按目标类型隐式转换。
+
+    更新表达式（`[1, 2, 3] => { [0] = 9 }`）的结果数组与源数组的元素类型相同，
+    但更新项的下标赋值在解析时已按源数组的类型解析为__setitem__调用（其返回
+    临时变量的类型也已确定），事后改写字面量的元素类型会使该调用与接收者类型
+    不一致（生成的C代码报指针类型警告，结果也不可靠），故不向内层推断；该形式
+    的元素类型不一致问题见开发疑问记录158。
+    """
+    if isinstance(value, ArrayRef) and isinstance(target, ArrayTypeName):
+        value.set_inferred_element_type(target.element_type)
 
 
 class _Mark:
@@ -621,6 +640,10 @@ class DeclStmt(Statement):
         else:
             if len(self._var) > 1:
                 raise CompilerException("Too many variables for unpacking.", self._src_info)
+            # 数组字面量按声明类型的元素类型构造（推断可能改变字面量类型，
+            # 须在类型检查之前进行，见开发疑问记录155）
+            infer_array_literal_element_type(self._var_value, self._var[0].type)
+            expr_type = self._var_value.return_type
             if self._var[0].type.name != "auto" and \
                     not expr_type.convertible_to(self._var[0].type, self._symbol_table.symbols):
                 raise CompilerException(f"{expr_type.raw_name} cannot be assigned to {self._var[0].type.raw_name}.",
@@ -933,6 +956,9 @@ class AssignStmt(Statement):
 
     def finish(self) -> None:
         """完成赋值语句，进行类型检查和收包处理。"""
+        if len(self._var) == 1:
+            # 数组字面量按赋值目标的元素类型构造（见开发疑问记录155）
+            infer_array_literal_element_type(self._var_value, self._var[0].type)
         expr_type = self._var_value.return_type
         if isinstance(expr_type, TupleTypeName) and len(expr_type.types) == 0:
             # 空元组即无返回值（void）调用：仅允许赋给丢弃变量，此时不声明

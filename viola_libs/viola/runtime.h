@@ -17,6 +17,8 @@
 
 /* ================= 基本数据类型 ================= */
 typedef bool viola$lang$bool;
+/* Viola源代码中的int是int32的别名，编译器生成的C代码一律使用
+   viola$lang$int32（见开发疑问记录151）；本类型保留供手写C代码使用。 */
 typedef int32_t viola$lang$int;
 typedef int8_t viola$lang$int8;
 typedef int16_t viola$lang$int16;
