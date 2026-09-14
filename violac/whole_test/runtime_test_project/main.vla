@@ -205,6 +205,17 @@ fn pairReturn(int x) -> (int number, string text) {
     text = "pair";
 }
 
+// 返回宽于int的类型（size_t）：用于验证以窄目标接收返回值（见开发疑问记录145）
+fn wideReturn() -> (size_t n) {
+    n = 9;
+}
+
+// 形参宽于整型字面量（double）：用于验证异步调用的实参按声明的形参类型传递
+// （见开发疑问记录145）
+fn halfOf(double x) -> (double r) {
+    r = x / 2.0;
+}
+
 sq triggerMultiReturnDeclare(int x) -> () {
     async int number, string text = pairReturn(x);
     check(number == x + 1 && text == "pair", "async multi-return declaration");
@@ -601,6 +612,34 @@ sq main() -> () {
     triggerUpdateStatementAsync(asyncUpdatePath);
     file asyncUpdateRead = open(asyncUpdatePath, "r", "utf-8");
     check(read(asyncUpdateRead) == "updated\n", "update statement async side effect");
+
+    // 返回值目标类型窄于被调函数返回类型：按返回类型中转后隐式转换
+    // （原先按目标变量地址接收，越界写入相邻变量，见开发疑问记录145）
+    int narrowCount = wideReturn();
+    check(narrowCount == 9, "narrow return target sync");
+    size_t wideNumber, string wideText = pairReturn(numbers[2]);
+    check(wideNumber == numbers[2] + 1 && wideText == "pair", "wide return target sync");
+
+    // 异步调用的实参按被调函数声明的形参类型传递，返回值经按声明返回类型构造
+    // 的元组取回（见开发疑问记录145）
+    async double halfValue = halfOf(1);
+    check(halfValue == 0.5, "async arg type conversion");
+    async int asyncNarrowCount = wideReturn();
+    check(asyncNarrowCount == 9, "narrow return target async");
+
+    // 内置数组类型方法的异步调用：$async包装由编译器生成（见开发疑问记录146）
+    async int[] asyncAppended = numbers.append(5);
+    check(asyncAppended.length() == numbers.length() + 1 &&
+          asyncAppended[numbers.length()] == 5, "async array append");
+    async int asyncLength = numbers.length();
+    check(asyncLength == numbers.length(), "async array length narrow target");
+    async double[] asyncDoubles = shortArr.append(3.5);
+    check(asyncDoubles.length() == 3 && asyncDoubles[2] == 3.5, "async double array append literal");
+    async int[] asyncUpdatedIndex = numbers => {
+        [0] = 9
+    };
+    check(asyncUpdatedIndex.length() == numbers.length() && asyncUpdatedIndex[0] == 9,
+          "async array setitem");
 
     print("0.1 runtime library test completed\n");
 }

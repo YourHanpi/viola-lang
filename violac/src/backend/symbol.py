@@ -25,6 +25,17 @@ LISTENER_INIT_FUNC: str = "viola$threads$initListener"
 EXCEPTION_T: str = "viola$lang$exception$Exception"
 EXCEPTION_T_NAME: str = "viola$lang$exception$Exception"
 TUPLE_T: str = "viola$collections$Tuple"
+# 数组方法的$async包装（见array_type_impl_texts）所用的运行库符号：
+# 与definition.py/expression.py/statement.py中的同名常量一致，因模块依赖方向
+# （definition/statement引用symbol）无法跨模块引用，故在此重复声明
+STRING_T: str = "viola$lang$string"
+CONVERTIBLE_TO_FUNC: str = "viola$lang$convertibleTo"
+EXCEPTION_VTABLE: str = EXCEPTION_T + "$$vtable"
+EXCEPTION_WHAT_FUNC: str = EXCEPTION_T + "$what$_0"
+EXCEPTION_DEL_FUNC: str = EXCEPTION_T + "$__del__$_0"
+PERROR_FUNC: str = "viola$io$print$perror"
+STACK_B_PUSH_FUNC: str = "viola$threads$pushStackB"
+STACK_B_POP_FUNC: str = "viola$threads$popStackB"
 
 
 class SymbolType(Enum):
@@ -3311,6 +3322,25 @@ class _TypeNameParser:
         return result
 
 
+class ArrayMethodDesc:
+    """内置数组类型的一个方法的描述（用于生成方法声明与$async包装，见开发疑问记录146）。
+
+    args/rets的元素为三元组(C类型文本, 形参/返回值名, 元组成员类型名)：
+    - C类型文本：该方法作为同步实现的形参/返回值时的C写法（c_calling_name）；
+    - 元组成员类型名：异步调用的实参/返回元组按被调函数声明的形参/返回类型
+      构造（见expression.py的CallOp._async_arg_types/_async_ret_types），元组
+      结构体的C名由各成员的类型名（TypeName.name）拼出，故此处按类型名给出。
+    描述用字符串而非TypeName对象：生成该文本时（输出阶段）构造TypeName会注册
+    新类型，影响已生成的类型定义顺序（见开发疑问记录117）。
+    """
+
+    def __init__(self, suffix: str, args: Optional[list[tuple[str, str, str]]] = None,
+                 rets: Optional[list[tuple[str, str, str]]] = None) -> None:
+        self.suffix: str = suffix
+        self.args: list[tuple[str, str, str]] = args if args is not None else []
+        self.rets: list[tuple[str, str, str]] = rets if rets is not None else []
+
+
 class SymbolTable:
     """
     符号表。
@@ -3422,10 +3452,50 @@ class SymbolTable:
         return texts
 
     @staticmethod
+    def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
+        """获取内置数组类型的方法表（与ArrayTypeName构造方法中注册的方法一致）。
+
+        表用于生成方法的$async声明与实现（见开发疑问记录146）。接收者（_this）
+        不在表中：它总是形参元组的第一个成员，类型即数组类型自身。
+        """
+        arr_call: str = f"{arr_name} *"
+        elem_call: str = elem.c_calling_name
+        return [
+            ArrayMethodDesc("__getitem__$_0", [(SIZE_T.c_calling_name, "item", SIZE_T.name)],
+                            [(elem_call, "element", elem.name)]),
+            ArrayMethodDesc("__getitem__$_1",
+                            [(SliceTypeName.c_calling_name, "s", SliceTypeName.name)],
+                            [(arr_call, "subarray", arr_name)]),
+            ArrayMethodDesc("concat$_0", [(arr_call, "other", arr_name)],
+                            [(arr_call, "result", arr_name)]),
+            ArrayMethodDesc("append$_0", [(elem_call, "newElement", elem.name)],
+                            [(arr_call, "newArray", arr_name)]),
+            ArrayMethodDesc("insert$_0", [(INT64.c_calling_name, "location", INT64.name),
+                                          (elem_call, "newElement", elem.name)],
+                            [(arr_call, "newArray", arr_name)]),
+            ArrayMethodDesc("length$_0", [],
+                            [(SIZE_T.c_calling_name, "result", SIZE_T.name)]),
+            ArrayMethodDesc("__setitem__$_0", [(SIZE_T.c_calling_name, "index", SIZE_T.name),
+                                               (elem_call, "newElement", elem.name)],
+                            [(arr_call, "newArray", arr_name)]),
+            ArrayMethodDesc("__setitem__$_1",
+                            [(SliceTypeName.c_calling_name, "s", SliceTypeName.name),
+                             (arr_call, "newSubarray", arr_name)],
+                            [(arr_call, "newArray", arr_name)]),
+            ArrayMethodDesc("__del__$_0"),
+        ]
+
+    @staticmethod
+    def _tuple_type_name(type_names: list[str]) -> str:
+        """获取元组结构体的C名称（与编译器按成员类型名生成的元组一致）。"""
+        return TUPLE_T + "$" + "$".join(type_names)
+
+    @staticmethod
     def _array_type_decl_text(arr_name: str, elem: TypeName) -> str:
         """获取数组类型的结构体定义与方法声明文本。"""
         elem_asg: str = elem.c_assigning_name
         elem_call: str = elem.c_calling_name
+        descs: list[ArrayMethodDesc] = SymbolTable._array_method_descs(arr_name, elem)
         return "\n".join([
             f"#ifndef _VIOLA_ARRAY_T_{arr_name}",
             f"#define _VIOLA_ARRAY_T_{arr_name}",
@@ -3452,8 +3522,41 @@ class SymbolTable:
             f"void {arr_name}$__setitem__$_1({arr_name} *_this, viola$lang$slice *s, "
             f"{arr_name} *newSubarray, {arr_name} ** newArray, viola$threads$Listener *listener);",
             f"void {arr_name}$__del__({arr_name} *_this, viola$threads$Listener *listener);",
-            "#endif"
+            "#endif",
+            # $async包装所需的实参/返回元组结构体与$async声明（见开发疑问记录146）。
+            # 置于数组结构体的include guard之外：string[]等数组类型的结构体由运行库
+            # 头文件runtime.h定义（同名guard），其guard在本guard之前已被定义，
+            # 本块会被跳过，其中的$async声明便不会出现在任何编译单元中。
+            # 元组结构体自带include guard，函数声明重复出现不影响语义。
+            "\n\n".join(map(lambda desc: SymbolTable._array_async_tuple_defs_text(arr_name, desc),
+                            descs)),
+            "\n".join(map(lambda desc: SymbolTable._array_async_decl_text(arr_name, desc), descs))
         ])
+
+    @staticmethod
+    def _array_async_tuple_defs_text(arr_name: str, desc: ArrayMethodDesc) -> str:
+        """获取一个数组方法的$async实参/返回元组的结构体定义文本（见开发疑问记录146）。
+
+        元组结构体随方法声明一同输出到模块头文件（带include guard，与
+        type_def_texts生成的同名定义不冲突）：异步调用的实参/返回元组按被调
+        方法声明的类型构造，这些元组类型未必由编译器按需注册。
+        """
+        return "\n".join([
+            SymbolTable._tuple_typedef_text(
+                SymbolTable._tuple_type_name([arr_name] + [a[2] for a in desc.args]),
+                [f"{arr_name} *"] + [a[0] for a in desc.args]),
+            SymbolTable._tuple_typedef_text(
+                SymbolTable._tuple_type_name([r[2] for r in desc.rets]),
+                [r[0] for r in desc.rets])
+        ])
+
+    @staticmethod
+    def _array_async_decl_text(arr_name: str, desc: ArrayMethodDesc) -> str:
+        """获取一个数组方法的$async声明文本（见开发疑问记录146）。"""
+        args_tuple: str = SymbolTable._tuple_type_name([arr_name] + [a[2] for a in desc.args])
+        rets_tuple: str = SymbolTable._tuple_type_name([r[2] for r in desc.rets])
+        return f"void {arr_name}${desc.suffix}$async({args_tuple} * params, " \
+               f"{rets_tuple} * returns, viola$threads$Listener *listener);"
 
     @staticmethod
     def _array_check_text(condition: str, report: str,
@@ -3516,9 +3619,116 @@ class SymbolTable:
             ["*newArray = _this;"])
 
     @classmethod
+    def _array_async_impl_texts(cls, arr_name: str, elem: TypeName) -> list[str]:
+        """获取一个数组类型全部方法的$async实现文本（见开发疑问记录146）。
+
+        包装体与编译器为有函数体的函数生成的$async包装等价（声明式原生函数的
+        包装见build_tools/lib_tools/gen_async_wrappers.py）：解包实参元组
+        （接收者为$0）→ 调用同步实现 → 把返回值写回返回元组；同步实现上报的
+        异常经Exception$what()/perror报告后交回调用线程。
+        实参/返回元组按被调方法声明的形参/返回类型构造（见CallOp的
+        _async_arg_types/_async_ret_types），故包装体按声明类型解包/写回即可。
+
+        元组结构体的typedef在此一并输出（带与编译器一致的include guard，
+        与头文件中的同名定义不冲突）：本方法在类型定义文本生成之后调用，
+        此时再注册元组类型来不及输出到（已生成的）头文件。
+        """
+        results: list[str] = []
+        for desc in cls._array_method_descs(arr_name, elem):
+            args_desc: list[tuple[str, str]] = [("_this", f"{arr_name} *")] + \
+                [(a[1], a[0]) for a in desc.args]
+            rets_desc: list[tuple[str, str]] = [(r[1], r[0]) for r in desc.rets]
+            args_tuple: str = cls._tuple_type_name([arr_name] + [a[2] for a in desc.args])
+            rets_tuple: str = cls._tuple_type_name([r[2] for r in desc.rets])
+            results.append(cls._tuple_typedef_text(
+                args_tuple, [c_type for _, c_type in args_desc]))
+            results.append(cls._tuple_typedef_text(
+                rets_tuple, [c_type for _, c_type in rets_desc]))
+            indent: str = "\t\t"
+            lines: list[str] = [
+                f"void {arr_name}${desc.suffix}$async({args_tuple} * params, "
+                f"{rets_tuple} * returns, viola$threads$Listener *listener) {{",
+                f"\t{EXCEPTION_T} *$$exc = listener->exception;",
+                # 异步任务开始执行时压入B栈，结束时退栈（与编译器生成的包装体一致，
+                # 见开发疑问记录87）
+                f"\t{STACK_B_PUSH_FUNC}(listener->currentThreadId);",
+                "\tdo {",
+            ]
+            # 无实参/无返回值时不使用对应的元组，显式标记以避免-Wunused-parameter
+            if len(desc.args) == 0:
+                lines.append(f"{indent}(void)params;")
+            if len(desc.rets) == 0:
+                lines.append(f"{indent}(void)returns;")
+            # 形参/返回值的局部变量：对象的初值为NULL，其余为0
+            for name, c_type in args_desc + rets_desc:
+                zero: str = "NULL" if "*" in c_type else "0"
+                lines.append(f"{indent}{c_type}{name} = {zero};")
+            for i, (name, _) in enumerate(args_desc):
+                lines.append(f"{indent}{name} = params->${i};")
+            lines.append(f"{indent}if ($$exc) goto $$_async_err;")
+            call_args: list[str] = [name for name, _ in args_desc] + \
+                [f"&{name}" for name, _ in rets_desc] + ["listener"]
+            lines.append(f"{indent}{arr_name}${desc.suffix}({', '.join(call_args)});")
+            # 同步实现可能通过listener上报异常
+            lines.append(f"{indent}if ($$exc == NULL) {{ $$exc = listener->exception; }}")
+            for i, (name, _) in enumerate(rets_desc):
+                lines.append(f"{indent}returns->${i} = {name};")
+            lines.append(f"{indent}if ($$exc) goto $$_async_err;")
+            lines.append(f"{indent}goto $$_async_done;")
+            lines.append("\t} while (0);")
+            lines.extend([
+                "$$_async_err:",
+                f"\tif ({CONVERTIBLE_TO_FUNC}($$exc->$$vtable, "
+                f"&{EXCEPTION_VTABLE})) {{",
+                f"\t\t{EXCEPTION_T} *exc = $$exc;",
+                "\t\t$$exc = NULL;",
+                "\t\tlistener->exception = NULL;",
+                f"\t\t{STRING_T} *$$_msg = NULL;",
+                f"\t\t{EXCEPTION_WHAT_FUNC}(exc, &$$_msg, listener);",
+                "\t\tif ($$exc == NULL) { $$exc = listener->exception; }",
+                f"\t\t{PERROR_FUNC}($$_msg, listener);",
+                "\t\tif ($$exc == NULL) { $$exc = listener->exception; }",
+                "\t\tlistener->exception = exc;",
+                f"\t\t{EXCEPTION_DEL_FUNC}(exc, listener);",
+                "\t\texc = NULL;",
+                "\t}",
+                "$$_async_done:",
+                "$$_async_cleanup: ;",
+                "\tif ($$exc) { goto $$_async_cleanup; }",
+                f"\t{STACK_B_POP_FUNC}(listener->currentThreadId);",
+                "}"
+            ])
+            results.append("\n".join(lines))
+        return results
+
+    @staticmethod
+    def _tuple_typedef_text(name: str, member_c_types: list[str]) -> str:
+        """获取元组结构体的typedef文本（不构造元组对象，避免注册新类型）。
+
+        与TupleTypeName.c_typedef_text一致（含include guard），保证两处生成的
+        文本同名时互相兼容。
+        """
+        members: str = "\n".join(
+            f"\t{c_type} ${i};" for i, c_type in enumerate(member_c_types))
+        if members != "":
+            members += "\n"
+        return "\n".join([
+            f"#ifndef _VIOLA_TUPLE_T_{name}",
+            f"#define _VIOLA_TUPLE_T_{name}",
+            "typedef struct {",
+            "\tviola$lang$uint32 $refCount;",
+            "\tviola$lang$ptr $parent;",
+            "\tviola$lang$uint64 size;",
+            members,
+            f"}} {name};",
+            "#endif"
+        ])
+
+    @classmethod
     def array_type_impl_texts(cls) -> list[str]:
         """获取所有已注册数组类型方法的C实现文本（生成到唯一编译单元__main__.c中）。
 
+        含各方法的同步实现与$async包装（后者见开发疑问记录146）。
         按类型名排序，避免输出随并行编译的线程交错变化（见开发疑问记录117）。
         """
         results: list[str] = []
@@ -3637,6 +3847,12 @@ class SymbolTable:
                 "\t}",
                 "}"
             ]))
+        # 各方法的$async包装（见开发疑问记录146）：置于全部同步实现之后，
+        # 使其调用的同步函数已在本单元内定义——数组方法的声明可能因运行库头文件
+        # 先定义了同名的结构体guard而未出现在模块头文件中（如string[]、uint8[]），
+        # 此时无声明可用，靠先行的定义避免隐式声明警告
+        for arr_name in sorted(_ARRAY_TYPE_DEFS.keys()):
+            results.extend(cls._array_async_impl_texts(arr_name, _ARRAY_TYPE_DEFS[arr_name]))
         return results
 
     def __contains__(self, item: tuple[NamedSymbol | str, Optional[tuple[TypeName, ...]]]) -> bool:
