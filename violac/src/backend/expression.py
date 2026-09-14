@@ -21,6 +21,80 @@ LISTENER_WAIT_FUNC: str = "viola$threads$waitListener"
 I_SIZE_MAX: str = "I_SIZE_MAX"
 
 
+def implicit_cast_prefix(source: TypeName, target: TypeName) -> str:
+    """获取从源类型赋给目标类型所需的显式C转换（如"(Base *)"）。
+
+    Viola允许子类对象赋给父类（含object）类型的变量、形参、返回值、元组成员与
+    数组元素，但C层是各自的指针类型，直接赋值会报-Wincompatible-pointer-types
+    （见开发疑问记录159）。子类对象的C结构体以父类的完整布局开头（由编译器按
+    "先父类属性、后子类属性"生成），故显式转换在C层是安全的；动态类型检查
+    （viola$lang$convertibleTo按虚表判断）与虚表的使用都不受转换影响。
+
+    数组与元组不在转换之列：元素类型不同的数组不能按指针重解释（由逐元素转换
+    生成新数组处理，见开发疑问记录158），元组的各成员在构造处已按成员类型转换。
+
+    :param source: 赋值来源的类型。
+    :param target: 目标类型。
+    :return: 需要的显式C转换文本，无需转换时为空串。
+    """
+    if not isinstance(source, ClassName) or not isinstance(target, ClassName):
+        return ""
+    if isinstance(source, (ArrayTypeName, TupleTypeName)) or isinstance(target, (ArrayTypeName, TupleTypeName)):
+        return ""
+    if not source.is_object or not target.is_object:
+        return ""
+    if source.c_calling_name == target.c_calling_name:
+        return ""
+    return f"({target.c_calling_name})"
+
+
+def implicit_cast_text(value: "Expression", target: TypeName) -> str:
+    """获取表达式赋给目标类型时的C文本（类类型的向上转型补显式C转换，见上）。"""
+    return implicit_cast_prefix(value.return_type, target) + value.text
+
+
+def needs_array_conversion(source: TypeName, target: TypeName) -> bool:
+    """判断数组值赋给目标数组类型时是否需要逐元素转换（见开发疑问记录158）。
+
+    元素类型相同（含int/int32这类同一类型的不同名字）时不需要；空数组字面量的
+    元素类型由调用方推断，也不在此转换。
+
+    :param source: 赋值来源的类型。
+    :param target: 目标类型。
+    :return: 是否需要逐元素转换。
+    """
+    if not isinstance(source, ArrayTypeName) or not isinstance(target, ArrayTypeName):
+        return False
+    if isinstance(source, EmptyArrayTypeName) or isinstance(target, EmptyArrayTypeName):
+        return False
+    return source.element_type != target.element_type
+
+
+def convert_array_argument(value: "Expression", target: TypeName, symbol_table: SymbolTable) -> "Expression":
+    """数组元素类型不同时，把值表达式包装为逐元素转换（见开发疑问记录158）。
+
+    数组在C层是带元素类型的结构体指针（如int32$$array与int64$$array），元素类型
+    不同的数组直接赋值/传参只是把同一块内存按目标元素类型重解释（更宽的元素类型
+    会读到缓冲之外）。数据不可变，故按目标元素类型复制并转换出一个新数组
+    （ArrayConvertExpr）。
+
+    数组字面量不在此处理：其元素类型在解析结果确定后可直接按目标类型改写
+    （见ArrayRef.set_inferred_element_type），无需复制。
+
+    :param value: 值表达式。
+    :param target: 目标类型。
+    :param symbol_table: 符号表。
+    :return: 需要转换时返回转换表达式，否则返回原表达式。
+    """
+    source: TypeName = value.return_type
+    if not needs_array_conversion(source, target):
+        return value
+    if not source.convertible_to(target, symbol_table.symbols):
+        # 元素类型不可转换：保持原表达式，由调用方的类型检查报出
+        return value
+    return ArrayConvertExpr(value.src_info, symbol_table, value, target)
+
+
 class Expression(CompilingItem, ABC):
     """表达式抽象基类。
 
@@ -157,6 +231,36 @@ class Expression(CompilingItem, ABC):
         Returns:
             监听器名称，默认为 None 表示非异步。
         """
+        return None
+
+    def async_wait_lines(self, returns: Optional[list[VariableName]] = None) -> list[str]:
+        """生成本表达式"入队后立即等待并取回返回值"的代码（见开发疑问记录142）。
+
+        表达式的值被立即使用时（如更新表达式的源、数组元素类型转换的源）必须
+        等待异步调用完成，不能推迟到所在块的末尾。
+
+        :param returns: 返回值目标（其值由返回元组承载）；无返回值目标时不生成复制。
+        :return: 需要输出的代码行（非异步表达式返回空列表）。
+        """
+        if self.listener_name is None:
+            return []
+        lines: list[str] = []
+        if self.wait_text is not None:
+            lines.append(self.wait_text)
+        if returns is not None:
+            for var in returns:
+                restore_text: Optional[str] = self.restore_text(var)
+                if restore_text is not None:
+                    lines.append(restore_text)
+        return lines
+
+    @property
+    def wait_text(self) -> Optional[str]:
+        """获取异步调用的等待代码（非异步表达式为None）。"""
+        return None
+
+    def restore_text(self, var: VariableName) -> Optional[str]:
+        """生成等待之后把返回元组成员复制到目标变量的代码（非异步表达式为None）。"""
         return None
 
     @abstractmethod
@@ -1516,6 +1620,11 @@ class ArrayRef(ValueRef):
         self._temp_var = LocalVariableName(self._src_info, var_name, self._type)
         self._is_finished = True
 
+    @staticmethod
+    def _is_castable_class(t: TypeName) -> bool:
+        """判断类型是否为可做C指针转换的普通类类型（不含数组与元组）。"""
+        return isinstance(t, ClassName) and not isinstance(t, (ArrayTypeName, TupleTypeName)) and t.is_object
+
     def set_inferred_element_type(self, element_type: TypeName) -> bool:
         """按调用方给出的期望元素类型推断数组字面量的元素类型。
 
@@ -1536,11 +1645,17 @@ class ArrayRef(ValueRef):
         if not isinstance(self._type, EmptyArrayTypeName):
             if self._element_type == element_type:
                 return False
-            # 非空：仅当两边的元素类型都是基本数据类型时才按期望类型改写。
-            # 类类型的元素都是指针，元素宽度相同，按原类型构造不会有内存错误
-            # （读作父类数组安全），故保持原行为，不引入额外的C指针类型警告。
-            if not isinstance(self._element_type, BaseTypeName) or \
-                    not isinstance(element_type, BaseTypeName):
+            # 非空：仅当元素类型为基本数据类型、或为普通类类型（对象）时才按
+            # 期望类型改写。数组/元组等复合类型不能按元素类型改写（元素写入
+            # 处只做指针转换，改写会使元素按错误的类型解释，见
+            # convert_array_argument）；类类型元素在C层都是指针，改写后元素的
+            # 写入补显式C转换（见front_text与开发疑问记录159）
+            source_elem: TypeName = self._element_type
+            if isinstance(source_elem, BaseTypeName) and isinstance(element_type, BaseTypeName):
+                pass
+            elif self._is_castable_class(source_elem) and self._is_castable_class(element_type):
+                pass
+            else:
                 return False
             # 每个元素都能转换到期望的元素类型时才改用，否则保持原类型，
             # 由调用方的类型检查给出错误
@@ -1569,7 +1684,10 @@ class ArrayRef(ValueRef):
         )
         lines.append(f"{self._temp_var.name}->size = {len(self._values)};")
         for i, value in enumerate(self._values):
-            lines.append(f"{self._temp_var.name}->data[{i}] = {value.text};")
+            # 元素写入按元素类型转换：类类型元素为子类时补显式C转换
+            # （见开发疑问记录159）
+            lines.append(
+                f"{self._temp_var.name}->data[{i}] = {implicit_cast_text(value, self._type.element_type)};")
         return "\n".join(lines)
 
     @property
@@ -1650,6 +1768,171 @@ class ArrayRef(ValueRef):
                 exceptions_text.append(str(e))
         if len(exceptions_text) > 0:
             raise CompilerException("\n\n".join(exceptions_text), self._src_info)
+
+
+class ArrayConvertExpr(ValueRef):
+    """数组元素类型转换表达式：把源数组按元素逐个转换为目标元素类型的新数组。
+
+    用于元素类型不同的数组赋值/实参传递（见开发疑问记录158）。数组在C层是
+    带元素类型的结构体指针（如int32$$array与int64$$array），直接赋值只是把同一
+    块内存按目标元素类型重解释：更宽的元素类型会读到缓冲之外，更窄的会读到相邻
+    元素拼成的值。数据不可变，故此处按目标元素类型分配新缓冲并逐元素写入，
+    数值转换与类类型的向上转型分别由C的隐式转换与显式转换完成。
+
+    源表达式的值不落在临时变量中时（如函数调用）先物化到源临时变量（与更新
+    表达式对源的物化同理，见开发疑问记录137）；物化产生的源临时变量在转换后
+    释放，其对象的所有权已转交给目标数组（其元素已复制）。
+    """
+
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, value: Expression,
+                 target_type: ArrayTypeName) -> None:
+        """
+        创建数组元素类型转换表达式。
+        :param value: 源数组表达式。
+        :param target_type: 目标数组类型（元素类型与源不同）。
+        """
+        super().__init__(src_info, symbol_table)
+        self._value: Expression = value
+        self._target_type: ArrayTypeName = target_type
+        self._temp_name: str = symbol_table.get_counter()
+        # 源临时变量的名称：源表达式的值需要物化时才建立（见_materialize_src）
+        self._src_temp_name: Optional[str] = None
+        self._src_returns: Optional[list[VariableName]] = None
+
+    @property
+    def source(self) -> Expression:
+        """
+        获取源数组表达式（供调用方判断是否需要转换）。
+        """
+        return self._value
+
+    def _materialize_src(self) -> Optional[list[VariableName]]:
+        """把源表达式的值物化到源临时变量（与更新表达式同理）。
+
+        直接值表达式（变量引用、字面量等ValueRef）的text本身即有效的值表达式，
+        无需物化；函数调用等表达式的值经返回值目标写入。
+
+        :return: 源临时变量的返回值列表；源表达式的值不经过源临时变量时为None。
+        """
+        if isinstance(self._value, ValueRef):
+            return None
+        if self._src_returns is None:
+            self._src_temp_name = self._symbol_table.get_counter()
+            # 以全局变量名引用：内联复制时不重命名，与head_text中的声明一致
+            # （与更新表达式的源临时变量同理）
+            self._src_returns = [GlobalVariableName(
+                self._src_info, [], self._src_temp_name, self._value.return_type)]
+        return self._src_returns if self._value.set_returns(self._src_returns) else None
+
+    def _src_value_text(self) -> str:
+        """获取源数组的值文本（物化后的临时变量名，或源表达式自身的值文本）。"""
+        returns: Optional[list[VariableName]] = self._materialize_src()
+        return returns[0].name if returns is not None else self._value.text
+
+    def as_async(self) -> "Expression":
+        # 异步转换须传给源表达式：值为异步调用的源须在转换前等待
+        # （见开发疑问记录142、158）
+        new_expr: ArrayConvertExpr = copy(self)
+        new_expr._value = self._value.as_async()
+        return new_expr
+
+    def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
+        new_expr: ArrayConvertExpr = copy(self)
+        new_expr._value = self._value.as_inline(inline_mapping)
+        new_expr._inline_mapping.update(new_expr._value.inline_mapping)
+        return new_expr
+
+    @property
+    def front_text(self) -> Optional[str]:
+        source_type: TypeName = self._value.return_type
+        src_text: str = self._src_value_text()
+        elem: TypeName = self._target_type.element_type
+        # 元素写入的转换：类类型元素由子类转为父类时补显式C转换，
+        # 基本类型元素由C的隐式转换完成（见开发疑问记录159）
+        cast: str = implicit_cast_prefix(source_type.element_type, elem)
+        loop_var: str = f"$$_i${self._temp_name}"
+        lines: list[str] = list(filter(lambda x: x is not None, [self._value.front_text]))
+        # 源表达式为异步调用时，其值在此立即使用，故在转换之前等待并取回
+        # （等待不能推迟到所在块的末尾，见开发疑问记录142）
+        lines += self._value.async_wait_lines(self._src_returns)
+        lines.append(
+            f"{self._temp_name} = ({self._target_type.c_calling_name})"
+            f"malloc(sizeof({self._target_type.c_alloc_name}));")
+        lines.append(f"{self._temp_name}->$parent = NULL;")
+        lines.append(f"{self._temp_name}->$refCount = 1;")
+        lines.append(f"{self._temp_name}->size = {src_text}->size;")
+        lines.append(
+            f"{self._temp_name}->data = {self._temp_name}->size == 0 ? NULL : "
+            f"({elem.c_assigning_name})malloc(sizeof({elem.c_calling_name}) * {self._temp_name}->size);")
+        lines.append(
+            f"for (viola$lang$uint64 {loop_var} = 0; {loop_var} < {src_text}->size; {loop_var}++) "
+            f"{{ {self._temp_name}->data[{loop_var}] = {cast}{src_text}->data[{loop_var}]; }}")
+        if self._src_temp_name is not None:
+            # 物化出的源临时变量：其对象已不再被引用，按编译器临时对象的既有方式
+            # 释放（受引用计数保护，与其余临时对象一致）
+            src_temp = LocalVariableName(self._src_info, self._src_temp_name, source_type)
+            lines.append(f"if ({src_temp.name}) {{ {src_temp.free_text} }}")
+        return "\n".join(lines)
+
+    @property
+    def global_init_text(self) -> Optional[str]:
+        return self._value.global_init_text
+
+    @property
+    def head_text(self) -> Optional[str]:
+        results: list[str] = []
+        self._materialize_src()
+        if self._value.head_text is not None:
+            results.append(self._value.head_text)
+        if self._src_temp_name is not None:
+            results.append(LocalVariableName(
+                self._src_info, self._src_temp_name, self._value.return_type).declaration_text)
+        results.append(LocalVariableName(
+            self._src_info, self._temp_name, self._target_type).declaration_text)
+        return "\n".join(results)
+
+    def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
+        new_expr: ArrayConvertExpr = copy(self)
+        new_expr._value = self._value.instantiation(type_args)
+        new_expr._target_type = self._target_type.instantiation(type_args)
+        return new_expr
+
+    def optimize(self) -> "Expression":
+        self._value = self._value.optimize()
+        return self
+
+    @property
+    def outer_text(self) -> Optional[str]:
+        return self._value.outer_text
+
+    @property
+    def release_text(self) -> Optional[str]:
+        # 转换结果的所有权随赋值交给目标变量，故此处不释放（与数组字面量一致）
+        return None
+
+    @property
+    def return_type(self) -> TypeName:
+        return self._target_type
+
+    def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
+        result: ArrayConvertExpr = copy(self)
+        result._value = self._value.substitute(expr)
+        return result
+
+    @property
+    def tail_recursive_mark(self) -> Optional[str]:
+        return None
+
+    @property
+    def text(self) -> str:
+        return self._temp_name
+
+    @property
+    def used_variables(self) -> set[VariableName]:
+        return self._value.used_variables
+
+    def validate(self) -> None:
+        self._value.validate()
 
 
 class TupleRef(ValueRef):
@@ -1762,8 +2045,12 @@ class TupleRef(ValueRef):
         lines.append(f"{self._temp_var.name}->$refCount = 1;")
         lines.append(f"{self._temp_var.name}->$parent = NULL;")
         lines.append(f"{self._temp_var.name}->size = {len(self._values)};")
+        member_types: list[TypeName] = list(self._type.types)
         for i, value in enumerate(self._values):
-            lines.append(f"{self._temp_var.name}->${i} = {value.text};")
+            # 成员写入按成员类型转换：子类实参赋给父类形参的元组成员时补显式C转换
+            # （见开发疑问记录159）
+            target: TypeName = member_types[i] if i < len(member_types) else value.return_type
+            lines.append(f"{self._temp_var.name}->${i} = {implicit_cast_text(value, target)};")
         return "\n".join(lines)
 
     @property
@@ -2729,9 +3016,12 @@ class CallOp(Expression):
                 if index < len(self._ret_temps) else None
             if temp is None:
                 continue
-            # 返回值槽位在C层为指针形参，赋值需解引用（is_return）
+            # 返回值槽位在C层为指针形参，赋值需解引用（is_return）。
+            # 中转变量为被调函数的返回类型，赋给父类类型的目标时补显式C转换
+            # （见开发疑问记录159）
             deref: str = "*" if target.is_return else ""
-            results.append(f"{deref}{target.name} = {temp.name};")
+            results.append(
+                f"{deref}{target.name} = {implicit_cast_prefix(temp.type, target.type)}{temp.name};")
         return "\n".join(results)
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
@@ -2825,7 +3115,13 @@ class CallOp(Expression):
                     f"{closure_args.text}->${i}" for i in range(len(self._func_expr.return_type.args)))
                 args_str += ", " if args_str != "" else ""
             else:
-                args_str: str = ", ".join(map(lambda x: x.text, self._arg_list)) + ", " if len(self._arg_list) > 0 else ""
+                # 实参按被调函数声明的形参类型转换：子类实参赋给父类形参时补显式C转换
+                # （见开发疑问记录159）。形参类型不可得时（实参个数与声明不符）
+                # 保持原文本，由后续检查报出
+                declared_args: list[TypeName] = self._callee_arg_types
+                args_str: str = ", ".join(
+                    implicit_cast_text(arg, declared_args[i]) if i < len(declared_args) else arg.text
+                    for i, arg in enumerate(self._arg_list)) + ", " if len(self._arg_list) > 0 else ""
             rets_str: str = ", ".join(map(
                 self._ret_slot_text, range(len(self._returns_list)))) + ", " if len(
                 self._returns_list) > 0 else ""
@@ -3213,6 +3509,10 @@ class CallOp(Expression):
                 expected: TypeName = self._func.type.args[i]
                 if isinstance(arg, ArrayRef) and isinstance(expected, ArrayTypeName):
                     arg.set_inferred_element_type(expected.element_type)
+                    continue
+                # 元素类型不同的数组实参按形参的元素类型逐个转换（见开发疑问记录158）。
+                # 动态调用的首个实参是接收者，与形参列表的首个元素（接收者）对齐
+                self._arg_list[i] = convert_array_argument(arg, expected, self._symbol_table)
         if self._args_tuple is not None:
             self._args_tuple.finish()
         if self._returns_tuple is not None:
@@ -4617,19 +4917,7 @@ class UpdateExpr(Expression):
         :param returns: 返回值目标（其值由返回元组承载）；无返回值目标时不生成复制。
         :return: 需要输出的代码行（非异步表达式返回空列表）。
         """
-        listener: Optional[str] = expr.listener_name
-        if listener is None:
-            return []
-        lines: list[str] = []
-        wait_text: Optional[str] = expr.wait_text
-        if wait_text is not None:
-            lines.append(wait_text)
-        if returns is not None:
-            for var in returns:
-                restore_text: Optional[str] = expr.restore_text(var)
-                if restore_text is not None:
-                    lines.append(restore_text)
-        return lines
+        return expr.async_wait_lines(returns)
 
     def as_inline(self, inline_mapping: dict[str, str]) -> "Expression":
         # noinspection PyTypeChecker
@@ -4684,7 +4972,11 @@ class UpdateExpr(Expression):
                 # 下标/切片更新项：异步调用须在串接之前等待并取回新对象
                 lines += self._async_wait_lines(x[1], x[1].returns_list)
             if x[0] is not None:
-                lines.append(f"{self._temp_name}->{x[0].attr} = {x[1].text};")
+                # 属性写入按属性类型转换：类类型属性接收子类值时补显式C转换
+                # （见开发疑问记录159）
+                attr_type: TypeName = x[0].caller.return_type.properties[x[0].attr].type
+                lines.append(
+                    f"{self._temp_name}->{x[0].attr} = {implicit_cast_text(x[1], attr_type)};")
             else:
                 lines.append(f"{self._temp_name} = {x[1].text};")
         return "\n".join(lines)

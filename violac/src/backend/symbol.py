@@ -1702,6 +1702,128 @@ class EmptyArrayTypeName(ArrayTypeName):
         return set()
 
 
+class TypeAliasName(TypeName):
+    """类型别名（using 别名 = 类型;，见开发疑问记录157）。
+
+    别名在符号表中是独立条目：以别名自身的限定名注册，并保存被别名类型的名称
+    （target_name），因此可以查询"这个别名指向哪个类型"，便于调试（见
+    SymbolTable.type_aliases）。
+
+    类型名的查找一律解析到被别名的类型（SymbolTable._resolve_alias），因此别名
+    在编译期完全透明：类型检查、方法查找与生成的C代码都按被别名的类型进行，
+    别名自身不生成任何C代码。解析结果缓存于_resolved（同一别名对象可能被反复
+    查找），各类型接口委托给它，使得即便别名未被解析也不会静默地按错误类型处理。
+    """
+
+    def __init__(self, src_info: SourceInfo, namespace: list[NamespaceName], name: str, target_name: str,
+                 modifier: Modifier = Modifier.PUBLIC) -> None:
+        """
+        创建类型别名。
+        src_info: 源代码信息。
+        namespace: 命名空间。
+        name: 别名的名称。
+        target_name: 被别名类型的名称（限定名）。
+        modifier: 模块级访问修饰符。
+        """
+        super().__init__(src_info, namespace, name, SymbolType.CLASS)
+        self._target_name: str = target_name
+        self._resolved: Optional[TypeName] = None
+        self._is_resolving: bool = False
+        self._modifier: Modifier = modifier
+
+    @property
+    def modifier(self) -> Modifier:
+        """
+        获取该别名的模块级访问修饰符。
+        """
+        return self._modifier
+
+    @modifier.setter
+    def modifier(self, value: Modifier) -> None:
+        """
+        设置该别名的模块级访问修饰符。
+        """
+        self._modifier = value
+
+    @property
+    def target_name(self) -> str:
+        """
+        获取被别名类型的名称（解析前的记载，供调试查询）。
+        """
+        return self._target_name
+
+    @property
+    def resolved(self) -> Optional["TypeName"]:
+        """
+        获取已解析的被别名类型（尚未解析时为None）。
+        """
+        return self._resolved
+
+    @property
+    def is_resolving(self) -> bool:
+        """
+        获取本别名是否正在解析中（用于检出循环别名）。
+        """
+        return self._is_resolving
+
+    def set_resolving(self) -> None:
+        """
+        标记本别名开始解析（由SymbolTable在查找时调用）。
+        """
+        self._is_resolving = True
+
+    def set_resolved(self, target: "TypeName") -> None:
+        """
+        记录解析结果（由SymbolTable在查找时调用）。
+        """
+        self._resolved = target
+        self._is_resolving = False
+
+    @property
+    def _target(self) -> "TypeName":
+        """
+        获取被别名的类型，未解析时报错。
+        """
+        if self._resolved is None:
+            raise InternalCompilerException(f"Type alias {self.raw_name} is not resolved.", self._src_info)
+        return self._resolved
+
+    @property
+    def c_alloc_name(self) -> str:
+        return self._target.c_alloc_name
+
+    @property
+    def c_assigning_name(self) -> str:
+        return self._target.c_assigning_name
+
+    @property
+    def c_calling_name(self) -> str:
+        return self._target.c_calling_name
+
+    def convertible_to(self, target: "TypeName",
+                       symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
+        return self._target.convertible_to(target, symbol_dict)
+
+    def instantiation(self, real_types: dict["GenericArgument", "TypeName"]) -> "TypeName":
+        return self._target.instantiation(real_types)
+
+    @property
+    def is_generic(self) -> bool:
+        return self._target.is_generic
+
+    @property
+    def is_object(self) -> bool:
+        return self._target.is_object
+
+    @property
+    def short_name(self) -> str:
+        return self._target.short_name
+
+    @property
+    def used_types(self) -> set["TypeName"]:
+        return self._target.used_types
+
+
 class PointerTypeName(ClassName):
     """
     指针类型名称（unsafe Pointer::<T>）。
@@ -3527,6 +3649,9 @@ class SymbolTable:
         VIOLA_IO,
         VIOLA_COLLECTIONS
     )
+    # 类型别名解析的最大链长（见_resolve_alias）：别名可以指向别名，
+    # 超过此长度即判定为循环定义
+    _MAX_ALIAS_DEPTH: int = 32
     # viola.math绑定：一元与二元浮点函数（名称，参数类型，返回类型）
     _MATH_BINDINGS: list[tuple[str, list[TypeName], list[TypeName]]] = [
                                                                            (name, [FLOAT64], [FLOAT64]) for name in [
@@ -4022,7 +4147,15 @@ class SymbolTable:
 
     def __getitem__(self, items: tuple[str, Optional[tuple[TypeName, ...]]]) -> NamedSymbol:
         """
-        获取一个符号。
+        获取一个符号（类型别名会解析为被别名的类型，见_resolve_alias）。
+        item: 符号名称。
+        types: 符号的参数类型列表（如果不是函数则为None）。
+        """
+        return self._resolve_alias(self._lookup_symbol(items))
+
+    def _lookup_symbol(self, items: tuple[str, Optional[tuple[TypeName, ...]]]) -> NamedSymbol:
+        """
+        按名称查找一个符号（不解析类型别名）。
         item: 符号名称。
         types: 符号的参数类型列表（如果不是函数则为None）。
         """
@@ -4125,6 +4258,11 @@ class SymbolTable:
         self._func_overload_times: dict[str, int] = {}
         # 原生绑定类：wrapper类声明绑定到编译器内置类（实现由运行库提供，不生成C代码）
         self._native_class_names: set[str] = set()
+        # 类型别名条目（别名键 -> 别名对象）：别名在_symbols中另有独立条目，
+        # 这里另行保留，供调试时查询"别名指向哪个类型"（见type_aliases）
+        self._type_aliases: dict[str, TypeAliasName] = {}
+        # 本模块定义的、待解析校验的别名（见read_from与_read_type_alias_decl）
+        self._pending_aliases: list[TypeAliasName] = []
         self._current_cls: Optional[ClassName] = None
         if not src_path == "" and not workspace == "":
             # 元数据中的路径为缓存路径（含__viola_cache__与..段），
@@ -4183,17 +4321,25 @@ class SymbolTable:
         def __real_type_getter(name: str) -> Optional[TypeName]:
             name = name.strip()
             if (name, None) in self.symbols:
-                return self.symbols[name, None]
+                # 类型别名同样在符号表中，解析为被别名的类型（见开发疑问记录157）
+                resolved = self._resolve_alias(self.symbols[name, None])
+                return resolved if isinstance(resolved, TypeName) else None
             cleaned_name: str = self.clean_namespace(name)
             if (cleaned_name, None) in self.symbols:
-                return self.symbols[cleaned_name, None]
+                resolved = self._resolve_alias(self.symbols[cleaned_name, None])
+                return resolved if isinstance(resolved, TypeName) else None
             # 未限定的类名（如导入后使用的Array）：按自身名唯一匹配已注册的类。
             # 导入的符号按限定名注册（如viola.util.array.Array），仅当匹配唯一时
             # 才解析，避免歧义（见开发疑问记录102）
-            matches: list[TypeName] = [v for v in self.symbols.values()
-                                       if isinstance(v, ClassName) and v.self_name == name]
-            if len(matches) == 1:
-                return matches[0]
+            matches: list[NamedSymbol] = [v for v in self.symbols.values()
+                                          if isinstance(v, (ClassName, TypeAliasName)) and v.self_name == name]
+            resolved_matches: list[TypeName] = []
+            for match in matches:
+                resolved_match: NamedSymbol = self._resolve_alias(match)
+                if isinstance(resolved_match, TypeName):
+                    resolved_matches.append(resolved_match)
+            if len(resolved_matches) == 1:
+                return resolved_matches[0]
             return None
 
         self._type_name_parser: _TypeNameParser = _TypeNameParser(
@@ -4591,6 +4737,11 @@ class SymbolTable:
         for item in data[1:]:
             if item.strip():
                 self._read_item(item)
+        # 全部条目读入后解析本模块的类型别名：指向本模块之后才定义的类型的别名
+        # 同样可以解析，指向未知类型的别名在此报出（见开发疑问记录157）
+        for alias in self._pending_aliases:
+            self._resolve_alias(alias)
+        self._pending_aliases.clear()
         self.add(FunctionName(
             self._src_info,
             self.namespace,
@@ -4657,6 +4808,8 @@ class SymbolTable:
                 self._read_method_decl(item_args)
             case "ENUM":
                 self._read_enum_decl(item_args)
+            case "TYPE_ALIAS":
+                self._read_type_alias_decl(item_args)
 
     @staticmethod
     def _split_qualified_name(name: str) -> tuple[list[NamespaceName], str]:
@@ -4815,6 +4968,86 @@ class SymbolTable:
         if len(name_parts) > 1:
             var.modifier = self.__get_modifier(name_parts[1:])
         self.add(var, item_name, None)
+
+    def _read_type_alias_decl(self, item: list[str]) -> None:
+        """
+        读取类型别名（using 别名 = 类型;，见开发疑问记录157）。记载格式如下：
+        <别名>%<被别名的类型> [public | protected | private]
+
+        别名以独立条目注册（可在符号表中查到它，并由type_aliases查询其定义），
+        但类型名的查找会解析到被别名的类型（见_resolve_alias），因此别名不需要
+        被别名的类型在本条目读入时已经注册：解析在查找时按名称进行，故
+        using MyClass = Later; 这样"先别名后定义"的写法同样可用。
+        """
+        if item[0].strip() == "":
+            raise CompilerException("Type alias entry is empty.", self._src_info)
+        name_parts: list[str] = item[0].split(" ")
+        alias_parts: list[str] = name_parts[0].split("%")
+        item_name: str = alias_parts[0]
+        if len(alias_parts) < 2 or alias_parts[1] == "":
+            raise CompilerException(f"Type alias {item_name} has no target type.", self._src_info)
+        alias_namespace, alias_self_name = SymbolTable._split_qualified_name(item_name)
+        if len(alias_namespace) == 0:
+            # 未限定的别名使用本模块的命名空间
+            alias_namespace = self._namespace
+        alias = TypeAliasName(self._src_info, alias_namespace, alias_self_name, alias_parts[1],
+                              self.__get_modifier(name_parts[1:]))
+        alias_key_name: str = alias.self_name if alias.raw_name.startswith(self._namespace_without_import) \
+            else alias.raw_name
+        if (alias_key_name, None) in self.symbols:
+            # 同一模块同时以import与from...import导入时，符号表中会出现同一别名的
+            # 重复条目（与类同样）：指向同一类型时忽略，指向不同类型才是冲突
+            existing = self.symbols[alias_key_name, None]
+            if isinstance(existing, TypeAliasName) and existing.target_name == alias.target_name:
+                return
+            raise CompilerException(f"Type alias {alias_key_name} already exists.", self._src_info)
+        self.add(alias, alias_key_name, None)
+        self._type_aliases[alias_key_name] = alias
+        if alias_key_name == alias.self_name:
+            # 本模块定义的别名：模块的条目读完后统一解析校验（见read_from），
+            # 使指向本模块之后才定义的类型的别名同样可用，"指向未知类型"的别名
+            # 则即便从未使用也报出（导入的别名不校验：其目标未必随导入条目一同
+            # 加载，与类一样只在真正使用时报“找不到类型”）
+            self._pending_aliases.append(alias)
+
+    @property
+    def type_aliases(self) -> dict[str, str]:
+        """
+        获取本符号表中的类型别名（别名 -> 被别名的类型），供调试查询其定义。
+        """
+        return dict(map(lambda kv: (kv[1].raw_name, kv[1].target_name), self._type_aliases.items()))
+
+    def _resolve_alias(self, symbol: NamedSymbol) -> NamedSymbol:
+        """
+        把类型别名解析为被别名的类型（见开发疑问记录157）。
+
+        别名在符号表中是独立条目，但类型名的查找一律返回被别名的类型，使别名
+        在编译期完全透明（类型检查、方法查找与生成的C代码都按被别名的类型进行）。
+        别名可以指向另一个别名（using A = B;），故沿链解析；解析结果缓存在别名
+        对象上。链上的别名在此记录，同一别名再次出现即为循环定义（如
+        using A = B; using B = A;），报出而不进入无限解析。
+        """
+        seen: set[int] = set()
+        while isinstance(symbol, TypeAliasName):
+            if id(symbol) in seen:
+                raise CompilerException(f"Type alias {symbol.raw_name} is defined in a cycle.", self._src_info)
+            seen.add(id(symbol))
+            if symbol.resolved is not None:
+                symbol = symbol.resolved
+                continue
+            # 解析自身的目标类型时再次进入本别名（如using A = A[];）：判定为循环
+            if symbol.is_resolving or len(seen) > SymbolTable._MAX_ALIAS_DEPTH:
+                raise CompilerException(f"Type alias {symbol.raw_name} is defined in a cycle.", self._src_info)
+            symbol.set_resolving()
+            try:
+                target: NamedSymbol = self._lookup_symbol((symbol.target_name, None))
+            except CompilerException:
+                raise CompilerException(
+                    f"Type alias {symbol.raw_name} refers to unknown type {symbol.target_name}.",
+                    self._src_info)
+            symbol.set_resolved(target)
+            symbol = target
+        return symbol
 
     def _read_method_decl(self, item: list[str]) -> None:
         """
@@ -5048,14 +5281,24 @@ class SymbolTable:
         读取枚举类。记载格式如下：
         <枚举类名称>%<枚举类所基于的类名>
         """
-        item_name: str = item[0].split("%")[0]
-        based_type: str = item[0].split("%")[1]
-        if based_type not in self:
+        if item[0].strip() == "":
+            raise CompilerException("Enum entry is empty.", self._src_info)
+        name_parts: list[str] = item[0].split(" ")
+        enum_parts: list[str] = name_parts[0].split("%")
+        if len(enum_parts) < 2 or enum_parts[1] == "":
+            raise CompilerException(f"Enum {enum_parts[0]} has no based type.", self._src_info)
+        item_name: str = enum_parts[0]
+        based_type: str = enum_parts[1]
+        if (based_type, None) not in self:
             raise CompilerException(f"Based type {based_type} not found.", self._src_info)
         if (item_name, None) in self:
             raise CompilerException(f"Enum {item_name} already exists.", self._src_info)
+        enum_namespace, enum_self_name = SymbolTable._split_qualified_name(item_name)
+        if len(enum_namespace) == 0:
+            # 未限定的枚举名使用本模块的命名空间
+            enum_namespace = self._namespace
         # noinspection PyTypeChecker
-        enum = EnumName(self.namespace, item_name, self[based_type], self._src_info)
+        enum = EnumName(self._src_info, enum_namespace, enum_self_name, self[based_type, None])
         self.add(enum, item_name, None)
 
     def __get_interface(self, interface_name: str) -> ClassName:

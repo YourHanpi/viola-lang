@@ -67,6 +67,8 @@ class GlobalParser:
         # 由import引入的符号裸名集合（写入符号类型表时需过滤，避免
         # 把导入符号误当作本模块自身导出的符号）
         self._imported_names: set[str] = set()
+        # 已由import语句加载的符号条目正文（内容相同即重复导入，见_load_symbol）
+        self._loaded_entries: set[str] = set()
         self._parser_generic_table: ParserGenericTable = ParserGenericTable()
         self._symbol_types: dict[str, tuple[str, list[str]]] = {}
         self._logger: Logger = Logger(f"Parser[0]")
@@ -92,6 +94,7 @@ class GlobalParser:
         self._imports = {}
         self._import_module_paths.clear()
         self._imported_names.clear()
+        self._loaded_entries.clear()
         self._load_tokens(tokens)
         self._move_to_first_token()
         command: list[str] = []
@@ -479,7 +482,7 @@ class GlobalParser:
             matched: bool = load_all
             if head in ["BASE", "FUNC", "FUNCTION", "METHOD"]:
                 matched = matched or line.split(" ", 1)[0] in to_load
-            elif head in ["CLASS", "ENUM"]:
+            elif head in ["CLASS", "ENUM", "TYPE_ALIAS"]:
                 matched = matched or line.split("%", 1)[0] in to_load
             elif head == "VAR":
                 line_parts: list[str] = line.split("%")
@@ -510,8 +513,28 @@ class GlobalParser:
             # from...import的符号同样需要模块命名空间限定，
             # 否则后端会以导入方模块的命名空间注册符号
             qualified: list[str] = GlobalParser._qualify_symbol_entry(head, entry, namespace, module_names)
+            # 同一模块同时以import与from...import导入时（手册给出的两种形式），
+            # 同一符号会产生内容相同的重复条目：后端读回时以"Function ... already
+            # exists"拒绝非原生函数的重复声明（见开发疑问记录162），故此处只保留
+            # 首份。条目正文相同才是重复导入：同一模块内的重名定义仍会因条目内容
+            # 不同而照常报出
+            if not self._add_loaded_entry(head, qualified):
+                continue
             symbols.extend([head] + qualified + ["---"])
         return symbols
+
+    def _add_loaded_entry(self, head: str, entry: list[str]) -> bool:
+        """
+        登记一个已加载的符号条目。
+        :param head: 条目头（FUNCTION/METHOD/VAR/CLASS等）。
+        :param entry: 限定后的条目内容。
+        :return: 是否为首次加载（同一模块的重复导入只保留首份）。
+        """
+        text: str = head + "\n" + "\n".join(entry)
+        if text in self._loaded_entries:
+            return False
+        self._loaded_entries.add(text)
+        return True
 
     @staticmethod
     def _qualify_type_name(type_name: str, namespace: str, module_names: set[str]) -> str:
@@ -563,6 +586,17 @@ class GlobalParser:
                     if "." not in parts[1]:
                         parts[1] = namespace + "." + parts[1]
                     result[i] = "%".join(parts)
+        elif head == "TYPE_ALIAS":
+            # 名称行：别名%被别名的类型（后接修饰符）。两者都按需做模块限定：
+            # 别名属于被导入模块自身，被别名的类型若也在该模块中定义则同样限定
+            name_line: list[str] = result[0].split(" ")
+            alias_target: list[str] = name_line[0].split("%")
+            if "." not in alias_target[0]:
+                alias_target[0] = namespace + "." + alias_target[0]
+            if len(alias_target) > 1:
+                alias_target[1] = GlobalParser._qualify_type_name(alias_target[1], namespace, module_names)
+            name_line[0] = "%".join(alias_target)
+            result[0] = " ".join(name_line)
         elif head == "CLASS":
             # 名称行：类名%父类名（后接修饰符）
             name_line: list[str] = result[0].split(" ")
@@ -618,8 +652,12 @@ class GlobalParser:
             while current_line < total_lines and text_list[current_line].strip() != "---":
                 entry.append(text_list[current_line])
                 current_line += 1
+            qualified: list[str] = self._qualify_symbol_entry(head, entry, namespace, module_names)
+            if not self._add_loaded_entry(head, qualified):
+                # 同一模块的重复导入（见_load_symbol）：只保留首份
+                continue
             symbols.append(head)
-            symbols += self._qualify_symbol_entry(head, entry, namespace, module_names)
+            symbols += qualified
             symbols.append("---")
         return symbols
                 
@@ -1270,11 +1308,19 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_def(self) -> Optional[tuple[list[str], list[str]]]:
-        """解析顶层定义（声明式函数、过程式函数、类、枚举、常量）。"""
+        """解析顶层定义（声明式函数、过程式函数、类、枚举、常量、类型别名）。"""
         prefixes = self._parse_prefixes(["ABSTRACT", "CPART", "EXPORT", "STATIC", "FINAL", "UNSAFE", "WRAPPER",
                                          "PUBLIC", "PROTECTED", "PRIVATE"])
         if prefixes is None:
             return None
+        if self._match_type("USING"):
+            # 类型别名只有符号表条目、没有C代码，故不产生定义命令
+            result = self._parse_type_alias_def(prefixes)
+            if result is None:
+                return None
+            command, symbol = result
+            symbol.append("---")
+            return command, symbol
         if self._match_type("SQ"):
             if "cpart" in prefixes:
                 result = self._parse_c_part_sq(prefixes)
@@ -1308,36 +1354,26 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_enum(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
-        """解析枚举定义。"""
+        """解析枚举定义。
+
+        枚举（enum）尚未实现完成，此处显式报出，避免以内部异常的形式崩溃：
+        - 前端：本方法原先未跳过enum关键字（必然报"Unexpected token"且消息里
+          打印的是记号对象本身），枚举体的解析（_parse_enum_body/_parse_enum_item）
+          还有记号消费错位；符号表条目按空格分隔写"名称 基于类型"，与读侧的
+          "%"分隔不符；
+        - 后端：SymbolTable._read_enum_decl原先按"%`切分（读回时IndexError）、
+          EnumName的构造实参顺序有误、并误以字符串（而非(名称, 参数)元组）判断
+          基于类型是否已定义；枚举成员（如Color.RED）没有解析路径（AttrOp只
+          支持类类型），成员也从未注册到符号表。
+
+        条目格式与读回（_read_enum_decl）已按上述说明修正，便于实现时直接接续；
+        见开发疑问记录160。
+        """
         if len(prefixes) > 0:
             self._raise(f"Unexpected prefix: {' '.join(prefixes)}")
-        token: Token = self._get_current()
-        if not self._match_type("IDENTIFIER"):
-            self._raise(f"Unexpected token: {token}")
-        enum_name: str = token.text
-        command: list[str] = [f"MAKE DEF ENUM {token.text}"]
-        symbol: list[str] = ["ENUM"]
-        based_type: str = "uint32"
         self._next()
-        if self._match_type("EXTENDS"):
-            self._next()
-            name: Optional[str] = self._parse_name()
-            if name is None:
-                return None
-            based_type = name
-            self._next()
-        if self._match_type("L_CURLY_BRACKET"):
-            symbol += [f"{enum_name} {based_type}", "---"]
-        else:
-            self._raise("Unexpected token: " + self._get_current().text)
-            return None
-        body_result = self._parse_enum_body()
-        if body_result is None:
-            return None
-        body_result, _ = body_result
-        command += body_result
-        self._next()
-        return command, symbol
+        self._raise("Enum is not supported yet.")
+        return None
 
     @_set_loc_command
     def _parse_enum_body(self) -> Optional[tuple[list[str], list[str]]]:
@@ -2071,7 +2107,7 @@ class GlobalParser:
                     return self._imports[prefix] + type_str[len(prefix):]
             return type_str
         if first_identifier in self._imports and first_identifier in self._symbol_types and \
-                self._symbol_types[first_identifier][0] == "CLASS":
+                self._symbol_types[first_identifier][0] in ("CLASS", "TYPE_ALIAS"):
             return self._imports[first_identifier] + type_str[len(first_identifier):]
         return type_str
 
@@ -2079,16 +2115,67 @@ class GlobalParser:
     def _parse_typedef_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         """解析类型别名定义语句（using）。
 
-        类型别名（`using name = type;`）尚未实现：后端没有MAKE STMT TYPEDEF的
-        处理（报KeyError），模块级的写法还会写出符号表无法读回的条目
-        （读回时报IndexError，见开发疑问记录151、155）。此处显式报出，避免以
-        内部异常的形式崩溃。
+        类型别名（`using name = type;`）只在模块级定义：别名的符号条目与其他
+        模块级符号一同写入模块的符号表缓存（见_parse_type_alias_def），函数体内
+        的别名需要随作用域生灭的符号条目，当前未实现（见开发疑问记录157）。
         """
         if not self._match_type("USING"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
-        self._raise("Type alias (using) is not supported yet.")
+        self._raise("Type alias (using) can only be defined at module level.")
         return None
+
+    @_set_loc_command
+    def _parse_type_alias_def(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
+        """解析模块级的类型别名定义（using 别名 = 类型;）。
+
+        别名以独立条目写入符号表（TYPE_ALIAS，见开发疑问记录157）：后端据此
+        注册一个独立的别名符号，查找该名称时解析为被别名的类型。因此别名不需要
+        生成C代码，也不产生定义命令——本解析器返回空命令，由_parse_def跳过
+        ADD_DEF。
+
+        条目格式：`<别名>%<被别名的类型> [public | protected | private]`。
+        类型名与类/常量同样按模块命名空间限定，故别名可以跨模块导入使用。
+        """
+        unexpected: list[str] = list(filter(lambda p: p not in ["PUBLIC", "PROTECTED", "PRIVATE"], prefixes))
+        if len(unexpected) > 0:
+            self._raise(f"Unexpected prefix: {' '.join(unexpected)}")
+        parsed = self._parse_type_alias()
+        if parsed is None:
+            return None
+        alias_name, target_name = parsed
+        if alias_name in self._symbol_types:
+            self._raise(f"Symbol {alias_name} already exists.")
+            return None
+        # 别名与类一样是类型名：登记到符号类型表，使其可被其他模块导入与限定
+        self._symbol_types[alias_name] = "TYPE_ALIAS", []
+        modifier: str = " ".join(prefixes)
+        symbol: list[str] = ["TYPE_ALIAS", f"{alias_name}%{target_name}" + (" " + modifier if modifier != "" else "")]
+        return [], symbol
+
+    def _parse_type_alias(self) -> Optional[tuple[str, str]]:
+        """解析`using 别名 = 类型`（不含结尾的分号位置之后的记号）。"""
+        if not self._match_type("USING"):
+            self._raise("Unexpected token: " + self._get_current().text)
+            return None
+        self._next()
+        if not self._match_type("IDENTIFIER"):
+            self._raise("Expected an alias name. Unexpected token: " + self._get_current().text)
+            return None
+        alias_name: str = self._get_current().text
+        self._next()
+        if not self._match_type("ASSIGN"):
+            self._raise("Expected '='. Unexpected token: " + self._get_current().text)
+            return None
+        self._next()
+        target_name: Optional[str] = self._parse_type()
+        if target_name is None:
+            return None
+        if not self._match_type("SEMICOLON"):
+            self._raise("Unexpected token: " + self._get_current().text)
+            return None
+        self._next()
+        return alias_name, target_name
 
     @_set_loc_command
     def _parse_type_name_list(self, end_symbols: list[str]) -> Optional[tuple[list[str], list[str]]]:

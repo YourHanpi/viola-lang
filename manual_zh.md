@@ -659,6 +659,20 @@ int[] array2 = filter(arange2, fn(int x) -> (bool f) {f = x > 2}, async=false); 
 int[] array3 = map(arange0, fn(int x) -> (int f) {f = x * 2}, async=true); // array3 = [0, 2, 4, 6]
 ```
 
+### 元素类型不同的数组
+
+数组的元素类型不同时（如`int32[]`与`int64[]`），把前者赋给后者、或作为实参传给
+元素类型不同的形参，都会按目标元素类型**逐个元素转换并复制出一个新数组**：
+
+```viola
+int32[] source = [1, 2, 3];
+int64[] widened = source; // widened = [1, 2, 3]，元素类型为int64
+int64 total = sumOfInt64(source); // 实参同样按形参的元素类型转换
+```
+
+由于数据不可变，复制出的新数组与源数组互不影响；类元素数组按同样的方式转换
+（元素为子类对象、目标元素为父类时转换为父类，不需要复制元素对象本身）。
+
 ## 字符串
 
 字符串是两端带引号（单引号或双引号均可）的一段文本。
@@ -1401,6 +1415,48 @@ from 包名 import *;
 ```
 
 **注意：`import`关键字只能出现在源文件的最前面。并且如果出现了循环导入，会报错。**
+
+## 类型别名（using）
+
+可以使用`using`关键字为类型定义别名。格式如下：
+
+```viola
+using 别名 = 类型;
+```
+
+别名可以指向任何类型，包括基本数据类型、数组、类与泛型类型：
+
+```viola
+using MyInt = int32;
+using MyIntArray = int32[];
+using MyString = viola.lang.string;
+import viola.util.array as array;
+using IntArray = array.Array::<int32>;
+```
+
+**注意：类型别名只能定义在模块的最外层（模块级），不能定义在函数或方法体内。**
+
+别名与它指向的类型完全等价：声明变量、作为形参/返回值类型、参与类型检查与
+重载解析时都按被别名的类型处理，生成的C代码也使用被别名的类型，别名本身不
+产生任何运行时开销。
+
+类型别名可以出现在被别名类型之前，也可以指向另一个别名：
+
+```viola
+using EarlyAlias = LaterClass; // LaterClass在下面才定义
+using Doubled = MyInt;
+```
+
+指向未知类型的别名、以及形成循环的别名（如`using A = B; using B = A;`）会报错。
+
+别名是模块级的符号，因此可以像类与函数一样导出到其他模块使用：
+
+```viola
+import mylib; // 使用mylib.MyInt
+from mylib import MyInt; // 使用MyInt
+```
+
+别名也可以在符号表中查到其定义（被别名的类型），便于调试。
 
 ## C语言兼容
 

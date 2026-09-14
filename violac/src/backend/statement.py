@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
 from .expression import Expression, VariableRef, AttrOp, CallOp, UnpackExpr, CONVERTIBLE_TO_FUNC, TypeRef, ClassRef, \
-    StringLiteral, TupleRef, CExpr, ArrayRef, too_few_unpack_targets_error
+    StringLiteral, TupleRef, CExpr, ArrayRef, convert_array_argument, needs_array_conversion, \
+    too_few_unpack_targets_error, implicit_cast_prefix, implicit_cast_text
 from .symbol import (
     VariableName,
     TypeName,
@@ -62,6 +63,18 @@ def infer_array_literal_element_type(value: Optional[Expression], target: TypeNa
     """
     if isinstance(value, ArrayRef) and isinstance(target, ArrayTypeName):
         value.set_inferred_element_type(target.element_type)
+
+
+def convert_array_value(value: Optional[Expression], target: TypeName,
+                        symbol_table: SymbolTable) -> Optional[Expression]:
+    """数组字面量与数组转换的处理入口（见开发疑问记录155、158）。
+
+    数组字面量：按目标元素类型改写（无需复制，见infer_array_literal_element_type）。
+    其余数组表达式：元素类型不同时包装为逐元素转换（见convert_array_argument）。
+    """
+    if value is None or isinstance(value, ArrayRef):
+        return value
+    return convert_array_argument(value, target, symbol_table)
 
 
 class _Mark:
@@ -630,6 +643,13 @@ class DeclStmt(Statement):
                     if not t1.convertible_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
+                    if needs_array_conversion(t1, t0):
+                        # 解包处的数组元素类型不同：各目标由元组成员直接写入，没有
+                        # 插入转换的位置，按错误元素类型解释同一块内存会读到缓冲之外，
+                        # 故显式报出（见开发疑问记录158）
+                        raise CompilerException(
+                            f"Array element type conversion is not supported when unpacking a tuple: "
+                            f"{t1.raw_name} (param {i}) to {t0.raw_name}.", self._src_info)
             else:
                 # 目标数少于返回值数即尾部解包：暂不支持（见开发疑问记录147、150）。
                 # 原先此处要求最后一个目标的类型为"剩余返回值构成的元组"，而元组
@@ -643,6 +663,9 @@ class DeclStmt(Statement):
             # 数组字面量按声明类型的元素类型构造（推断可能改变字面量类型，
             # 须在类型检查之前进行，见开发疑问记录155）
             infer_array_literal_element_type(self._var_value, self._var[0].type)
+            # 元素类型不同的数组值按目标元素类型逐个转换（见开发疑问记录158）；
+            # 同样须在类型检查之前进行，使转换后的类型参与检查
+            self._var_value = convert_array_value(self._var_value, self._var[0].type, self._symbol_table)
             expr_type = self._var_value.return_type
             if self._var[0].type.name != "auto" and \
                     not expr_type.convertible_to(self._var[0].type, self._symbol_table.symbols):
@@ -850,7 +873,9 @@ class DeclStmt(Statement):
                     front_text = ""
                 if not isinstance(self._var_value, (CallOp, UnpackExpr)):
                     deref: str = "*" if self._var[0].is_return else ""
-                    front_text += f"{deref}{self._var[0].name} = {self._var_value.text};\n"
+                    # 类类型的子类值赋给父类变量时补显式C转换（见开发疑问记录159）
+                    front_text += f"{deref}{self._var[0].name} = " \
+                                  f"{implicit_cast_text(self._var_value, self._var[0].type)};\n"
             else:
                 self._var_value.set_returns(self._var)
                 # 头声明统一由语句块（或异步包装）的head_text输出，避免重复声明
@@ -959,6 +984,8 @@ class AssignStmt(Statement):
         if len(self._var) == 1:
             # 数组字面量按赋值目标的元素类型构造（见开发疑问记录155）
             infer_array_literal_element_type(self._var_value, self._var[0].type)
+            # 元素类型不同的数组值按目标元素类型逐个转换（见开发疑问记录158）
+            self._var_value = convert_array_value(self._var_value, self._var[0].type, self._symbol_table)
         expr_type = self._var_value.return_type
         if isinstance(expr_type, TupleTypeName) and len(expr_type.types) == 0:
             # 空元组即无返回值（void）调用：仅允许赋给丢弃变量，此时不声明
@@ -978,6 +1005,13 @@ class AssignStmt(Statement):
                     if not t1.convertible_to(t0, self._symbol_table.symbols):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
+                    if needs_array_conversion(t1, t0):
+                        # 解包处的数组元素类型不同：各目标由元组成员直接写入，没有
+                        # 插入转换的位置，按错误元素类型解释同一块内存会读到缓冲之外，
+                        # 故显式报出（见开发疑问记录158）
+                        raise CompilerException(
+                            f"Array element type conversion is not supported when unpacking a tuple: "
+                            f"{t1.raw_name} (param {i}) to {t0.raw_name}.", self._src_info)
             else:
                 # 目标数少于返回值数即尾部解包：暂不支持（见开发疑问记录147、150）。
                 # 与声明语句同样直接报出，不再间接地以"元组不能赋给…"拒绝
@@ -1202,7 +1236,9 @@ class AssignStmt(Statement):
                 front_text = ""
             if not isinstance(self._var_value, (CallOp, UnpackExpr)):
                 deref: str = "*" if self._var[0].is_return else ""
-                front_text += f"{deref}{self._var[0].name} = {self._var_value.text};\n"
+                # 类类型的子类值赋给父类变量时补显式C转换（见开发疑问记录159）
+                front_text += f"{deref}{self._var[0].name} = " \
+                              f"{implicit_cast_text(self._var_value, self._var[0].type)};\n"
             return front_text
         # 多变量赋值（元组解包）
         self._var_value.set_returns(self._var)

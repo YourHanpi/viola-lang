@@ -59,6 +59,23 @@ fn arraySum(int32[] values) -> (int32 result) {
     result = values[0] + values[1] + values[2];
 }
 
+// 以int32[]为形参单个元素：验证元素类型不同的数组实参的转换
+// （见开发疑问记录158）
+fn firstArrayElement(int32[] values) -> (int32 result) {
+    result = values[0];
+}
+
+// 返回int32[]：验证元素类型不同的函数返回值作为转换的源
+fn makeInt32Array() -> (int32[] result) {
+    result = [4, 5, 6];
+}
+
+// 类型别名（见开发疑问记录157）：基本类型、数组、类，以及别名指向别名
+using AliasInt = int32;
+using AliasIntArray = int32[];
+using AliasOfAlias = AliasInt;
+using AliasSquare = ShapeSquare;
+
 // 调用长度不等的dist（dist会抛出异常，本函数不捕获，用于验证跨函数传播）
 fn thrower(double[] a, double[] b) -> (double result) {
     result = dist(a, b);
@@ -768,6 +785,56 @@ sq main() -> () {
           "mixed class array literal");
     object[] shapeObjects = [baseShape, squareShape];
     check(shapeObjects.length() == 2, "class array literal to object array");
+
+    // 元素类型不同的数组之间赋值/传参：按目标元素类型逐个转换并复制出新数组
+    // （见开发疑问记录158：原先只是把同一块内存按目标元素类型重解释，int32[]
+    // 按int64[]读取会越界读取堆内存）
+    int32[] narrowSource = [7, 8, 9];
+    int64[] widenedFromVar = narrowSource;
+    check(widenedFromVar.length() == 3 && widenedFromVar[1] == 8 && widenedFromVar[2] == 9,
+          "int32[] to int64[] by declaration");
+    check(arraySum64(narrowSource) == 24, "widening array as argument");
+    int64[] wideSource = [11, 12, 13];
+    int32[] narrowedFromVar = wideSource;
+    check(narrowedFromVar.length() == 3 && narrowedFromVar[2] == 13, "int64[] to int32[] by declaration");
+    check(arraySum(narrowedFromVar) == 36, "narrowed array as argument");
+    check(firstArrayElement(wideSource) == 11, "narrowing array as argument");
+    int64[] assignedWidened;
+    assignedWidened = narrowSource;
+    check(assignedWidened.length() == 3 && assignedWidened[0] == 7, "widening by assignment");
+    int64[] widenedFromCall = makeInt32Array();
+    check(widenedFromCall.length() == 3 && widenedFromCall[2] == 6, "widening of a call result");
+    // 转换出的副本与源数组互不影响（数据不可变）
+    int32[] updatedSource = narrowSource => { [0] = 42 };
+    check(updatedSource[0] == 42 && widenedFromVar[0] == 7, "converted copy is independent of source");
+    // 类元素数组：子类元素数组转为父类元素数组（元素逐个向上转型）
+    ShapeSquare[] squares = [squareShape];
+    ShapeBase[] squaresAsBases = squares;
+    check(squaresAsBases.length() == 1 && shapeSide(squaresAsBases[0]) == 6,
+          "subclass element array to base element array");
+    // 更新表达式的结果数组元素类型不同：结果按目标元素类型转换
+    int32[] updateSource = [1, 2, 3];
+    int64[] updatedConverted = updateSource => { [0] = 9 };
+    check(updatedConverted.length() == 3 && updatedConverted[0] == 9 && updatedConverted[1] == 2,
+          "update expression result conversion");
+    int64[] literalUpdated = [1, 2, 3] => { [0] = 7 };
+    check(literalUpdated.length() == 3 && literalUpdated[0] == 7 && literalUpdated[2] == 3,
+          "literal update expression result conversion");
+    check(updateSource[0] == 1, "source array unchanged by update conversion");
+
+    // 类型别名（using，见开发疑问记录157）：别名与被别名的类型完全等价
+    AliasInt aliasInt = 5;
+    int32 aliasToPlain = aliasInt;
+    check(aliasToPlain == 5, "type alias of a base type");
+    AliasIntArray aliasArray = [1, 2, 3];
+    int32[] aliasToPlainArray = aliasArray;
+    check(arraySum(aliasArray) == 6 && aliasToPlainArray.length() == 3,
+          "type alias of an array type");
+    AliasSquare aliasSquare = ShapeSquare(8);
+    ShapeSquare plainSquare = aliasSquare;
+    check(shapeSide(plainSquare) == 8, "type alias of a class");
+    AliasOfAlias aliasOfAlias = aliasInt;
+    check(aliasOfAlias == 5, "alias of an alias");
 
     print("0.1 runtime library test completed\n");
 }
