@@ -264,6 +264,27 @@ sq triggerUpdateStatementAsync(string path) -> () {
     async recorder => { [0] = 9 };
 }
 
+// 异步调用的实参按被调函数声明的形参类型进入实参元组：子类实参向父类形参的
+// 隐式转换由C在元组填充处完成（语言允许子类向父类隐式转换，不允许反向，
+// 见开发疑问记录149）
+class ShapeBase {
+    public int side;
+
+    public sq __new__(int side) -> (this) {
+        this.side = side;
+    }
+}
+
+class ShapeSquare extends ShapeBase {
+    public sq __new__(int side) -> (this) {
+        super = ShapeBase(side);
+    }
+}
+
+fn shapeSide(ShapeBase shape) -> (int result) {
+    result = shape.side;
+}
+
 // 断言：条件不成立时打印并以致非零退出码结束（供测试脚本判定）
 sq check(bool condition, string label) -> () {
     if (condition) {
@@ -640,6 +661,46 @@ sq main() -> () {
     };
     check(asyncUpdatedIndex.length() == numbers.length() && asyncUpdatedIndex[0] == 9,
           "async array setitem");
+
+    // 方法表生成的其余数组方法（见开发疑问记录148）：concat、insert、
+    // 切片读取（__getitem__$_1）、切片赋值（__setitem__$_1）与其异常路径
+    int[] otherNumbers = [7, 8];
+    async int[] asyncConcat = numbers.concat(otherNumbers);
+    check(asyncConcat.length() == numbers.length() + otherNumbers.length() &&
+          asyncConcat[numbers.length()] == 7 && asyncConcat[numbers.length() + 1] == 8,
+          "async array concat");
+    async int[] asyncInserted = numbers.insert(1, 42);
+    check(asyncInserted.length() == numbers.length() + 1 && asyncInserted[0] == numbers[0] &&
+          asyncInserted[1] == 42 && asyncInserted[2] == numbers[1], "async array insert");
+    async int[] asyncSlice = numbers[1:3];
+    check(asyncSlice.length() == 2 && asyncSlice[0] == numbers[1] &&
+          asyncSlice[1] == numbers[2], "async array slice");
+    async int[] asyncSliceSet = numbers => {
+        [1:3] = [5, 6]
+    };
+    check(asyncSliceSet.length() == numbers.length() && asyncSliceSet[1] == 5 &&
+          asyncSliceSet[2] == 6 && numbers[1] == 2, "async array slice setitem");
+    try {
+        async int[] asyncBadIndex = numbers => {
+            [9] = 1
+        };
+        check(false, "async array index error");
+    } catch Exception e {
+        check(true, "async array index error");
+    }
+    try {
+        // 变量在块末尾等待；此处先使用该变量以触发等待，异常在等待处回传
+        async int[] asyncZeroStep = numbers[0:2:0];
+        check(asyncZeroStep.length() == numbers.length(), "async array slice step error");
+    } catch Exception e {
+        check(true, "async array slice step error");
+    }
+
+    // 异步实参的子类向父类隐式转换：元组成员按声明的形参类型构造
+    // （见开发疑问记录149）
+    ShapeSquare asyncSquare = ShapeSquare(3);
+    async int asyncShapeSide = shapeSide(asyncSquare);
+    check(asyncShapeSide == 3, "async arg upcast");
 
     print("0.1 runtime library test completed\n");
 }

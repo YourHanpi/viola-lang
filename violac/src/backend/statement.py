@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
 from .expression import Expression, VariableRef, AttrOp, CallOp, UnpackExpr, CONVERTIBLE_TO_FUNC, TypeRef, ClassRef, \
-    StringLiteral, TupleRef, CExpr
+    StringLiteral, TupleRef, CExpr, too_few_unpack_targets_error
 from .symbol import (
     VariableName,
     TypeName,
@@ -612,16 +612,12 @@ class DeclStmt(Statement):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
             else:
-                type_list: list[TypeName] = list(map(lambda var: var.type, self._var[:-1]))
-                for i, (t0, t1) in enumerate(zip(type_list, expr_type.types[:len(type_list)])):
-                    if not t1.convertible_to(t0, self._symbol_table.symbols):
-                        raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
-                                                self._src_info)
-                if not TupleTypeName(self._src_info, expr_type.types[len(type_list):]).convertible_to(
-                        self._var[-1].type, self._symbol_table.symbols):
-                    raise CompilerException(
-                        f"{TupleTypeName(self._src_info, expr_type.types[len(type_list):]).raw_name} cannot be assigned to {self._var[-1].type.raw_name}.",
-                        self._src_info)
+                # 目标数少于返回值数即尾部解包：暂不支持（见开发疑问记录147、150）。
+                # 原先此处要求最后一个目标的类型为"剩余返回值构成的元组"，而元组
+                # 类型的局部变量无法声明，故该形式一律报出"元组不能赋给…"的间接
+                # 错误；现直接给出尾部解包不受支持的说明与计划中的显式标记形式
+                raise too_few_unpack_targets_error(
+                    len(expr_type.types), len(self._var), self._src_info)
         else:
             if len(self._var) > 1:
                 raise CompilerException("Too many variables for unpacking.", self._src_info)
@@ -957,16 +953,10 @@ class AssignStmt(Statement):
                         raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
                                                 self._src_info)
             else:
-                type_list: list[TypeName] = list(map(lambda var: var.type, self._var[:-1]))
-                for i, (t0, t1) in enumerate(zip(type_list, expr_type.types[:len(type_list)])):
-                    if not t1.convertible_to(t0, self._symbol_table.symbols):
-                        raise CompilerException(f"{t1.raw_name} (param {i}) cannot be assigned to {t0.raw_name}.",
-                                                self._src_info)
-                if not TupleTypeName(self._src_info, expr_type.types[len(type_list):]).convertible_to(
-                        self._var[-1].type, self._symbol_table.symbols):
-                    raise CompilerException(
-                        f"{TupleTypeName(self._src_info, expr_type.types[len(type_list):]).raw_name} cannot be assigned to {self._var[-1].type.raw_name}.",
-                        self._src_info)
+                # 目标数少于返回值数即尾部解包：暂不支持（见开发疑问记录147、150）。
+                # 与声明语句同样直接报出，不再间接地以"元组不能赋给…"拒绝
+                raise too_few_unpack_targets_error(
+                    len(expr_type.types), len(self._var), self._src_info)
         self._is_finished = True
 
     def _infer_discard_types(self, expr_type: TypeName) -> None:

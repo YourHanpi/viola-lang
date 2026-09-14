@@ -341,6 +341,28 @@ class CExpr(Expression):
         pass
 
 
+def too_few_unpack_targets_error(returns_count: int, targets_count: int,
+                                 src_info: SourceInfo) -> CompilerException:
+    """构造尾部解包（目标数少于返回值数）不受支持的编译异常。
+
+    尾部解包需要显式标记（如double x, *(double, double) yz = ...;中的`*`），
+    尚未实现（见开发疑问记录147、150）：同步调用的调用约定按返回值逐个传指针，
+    无法物化出可供切片的整元组。错误信息给出该计划形式，便于了解将来的写法。
+    声明语句与赋值语句的类型检查、以及UnpackExpr的兜底检查共用本函数，
+    避免各自给出不一致的说法。
+    :param returns_count: 被调函数的返回值个数。
+    :param targets_count: 给出的目标个数。
+    :param src_info: 源代码信息。
+    :return: 编译异常。
+    """
+    return CompilerException(
+        f"Too few targets for unpacking: the function returns {returns_count} value(s), "
+        f"but only {targets_count} target(s) given (tail unpacking is not supported; the "
+        f"planned explicit form is a `*`-marked tuple target, "
+        f"e.g. `double x, *(double, double) yz = ...;`).",
+        src_info)
+
+
 class UnpackExpr(Expression):
     """元组解包表达式。
 
@@ -560,16 +582,10 @@ class UnpackExpr(Expression):
             )
         if len(returns) < len(expr_type.types):
             # 目标数少于返回值数（最后一个目标接收剩余元素）的尾部解包不受支持：
-            # 同步调用的调用约定按返回值逐个传指针，无法物化出可供切片的整元组
-            # （见开发疑问记录147）。原先不在此处报错，而由下方"最后一个元素的
-            # 类型"校验间接拒绝（目标类型恰与最后一个返回类型相同时会被放行并
-            # 生成不可用的代码），故显式报出（手册相应说明见manual_zh.md）
-            raise CompilerException(
-                f"Too few targets for unpacking: the function returns "
-                f"{len(expr_type.types)} value(s), but only {len(returns)} target(s) given "
-                f"(tail unpacking is not supported).",
-                self._src_info
-            )
+            # 声明语句与赋值语句的类型检查会先行报出同样的错误（见statement.py），
+            # 此处为兜底（见开发疑问记录147；消息见too_few_unpack_targets_error）
+            raise too_few_unpack_targets_error(
+                len(expr_type.types), len(returns), self._src_info)
         for ret, expected_type in zip(returns[:-1], expr_type.types[:len(returns) - 1]):
             if not ret.type.convertible_to(expected_type, self._symbol_table.symbols):
                 raise CompilerException(

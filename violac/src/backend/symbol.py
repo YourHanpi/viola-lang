@@ -1394,6 +1394,174 @@ def type_def_class_names() -> set[str]:
     return result
 
 
+class ArrayMethodDesc:
+    """内置数组类型的一个方法的描述（同步声明、同步实现与$async包装的唯一来源，
+    见开发疑问记录148）。
+
+    args/rets的元素为三元组(C类型文本, 形参/返回值名, 元组成员类型名)：
+    - C类型文本：该方法作为同步实现的形参/返回值时的C写法（c_calling_name）；
+    - 元组成员类型名：异步调用的实参/返回元组按被调函数声明的形参/返回类型
+      构造（见expression.py的CallOp._async_arg_types/_async_ret_types），元组
+      结构体的C名由各成员的类型名（TypeName.name）拼出，故此处按类型名给出。
+    描述用字符串而非TypeName对象：生成该文本时（输出阶段）构造TypeName会注册
+    新类型，影响已生成的类型定义顺序（见开发疑问记录117）。
+
+    body为同步实现的C语句模板（不含函数首行与结尾的"}"）；与元素类型相关的
+    文本写作占位符，由SymbolTable._array_method_body_text替换（表因此同时是同步
+    声明的来源：声明与实现的首行由同一个_array_sync_signature_text生成）。
+    新增方法时只需在此表添加一项：遗漏会被校验报出（占位符未替换、
+    ArrayTypeName构造时的_check_method_table不一致）。
+    """
+
+    def __init__(self, suffix: str, args: Optional[list[tuple[str, str, str]]] = None,
+                 rets: Optional[list[tuple[str, str, str]]] = None,
+                 body: Optional[list[str]] = None) -> None:
+        self.suffix: str = suffix
+        self.args: list[tuple[str, str, str]] = args if args is not None else []
+        self.rets: list[tuple[str, str, str]] = rets if rets is not None else []
+        self.body: list[str] = body if body is not None else []
+
+
+def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
+    """获取内置数组类型的方法表（同步声明、同步实现与$async包装的来源，
+    见开发疑问记录148；与ArrayTypeName构造方法中注册的方法一致，
+    由_check_method_table校验）。
+
+    接收者（_this）不在表中：它总是形参元组的第一个成员，类型即数组类型自身。
+    方法的先后顺序即$this$_{重载序号}的序号来源，与注册顺序一致，不可随意调换。
+    定义在模块级而非SymbolTable中：ArrayTypeName的构造（模块导入期间即会发生，
+    如StringTypeName的data属性为uint16[]）要调用本表，此时SymbolTable尚未定义。
+    """
+    arr_call: str = f"{arr_name} *"
+    elem_call: str = elem.c_calling_name
+    return [
+        ArrayMethodDesc(
+            "__getitem__$_0", [(SIZE_T.c_calling_name, "item", SIZE_T.name)],
+            [(elem_call, "element", elem.name)],
+            body=[
+                "@check_index_get@",
+                "\t*element = _this->data[item];",
+            ]),
+        ArrayMethodDesc(
+            "__getitem__$_1", [(SliceTypeName.c_calling_name, "s", SliceTypeName.name)],
+            [(arr_call, "subarray", arr_name)],
+            body=[
+                "\tviola$lang$uint64 start = s->start;",
+                "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
+                "\tviola$lang$uint64 step = s->step;",
+                # 结果对象先分配：步长为0的上报路径上也要给出确定值（空切片），
+                # 因为调用方的表达式求值可能有后续语句先于异常跳转执行
+                # （越界下标检查同理给出确定的元素值，见开发疑问记录124）
+                "\t@new_result@",
+                "@check_slice_step@",
+                "\tviola$lang$uint64 count = start < end ? (end - start + step - 1) / step : 0;",
+                "\tnewResult->size = count;",
+                "\tnewResult->data = count == 0 ? NULL : (@elem_assigning@)malloc(@elem_size@ * count);",
+                "\tviola$lang$uint64 j = 0;",
+                "\tfor (viola$lang$uint64 i = start; i < end; i += step) "
+                "{ newResult->data[j++] = _this->data[i]; }",
+                "\t*subarray = newResult;",
+            ]),
+        ArrayMethodDesc(
+            "concat$_0", [(arr_call, "other", arr_name)],
+            [(arr_call, "result", arr_name)],
+            body=[
+                "\t@new_result@",
+                "\tnewResult->size = _this->size + other->size;",
+                "\tnewResult->data = newResult->size == 0 ? NULL : "
+                "(@elem_assigning@)malloc(@elem_size@ * newResult->size);",
+                "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) "
+                "{ newResult->data[i] = _this->data[i]; }",
+                "\tfor (viola$lang$uint64 i = 0; i < other->size; i++) "
+                "{ newResult->data[_this->size + i] = other->data[i]; }",
+                "\t*result = newResult;",
+            ]),
+        ArrayMethodDesc(
+            "append$_0", [(elem_call, "newElement", elem.name)],
+            [(arr_call, "newArray", arr_name)],
+            body=[
+                "\t@new_result@",
+                "\tnewResult->size = _this->size + 1;",
+                "\tnewResult->data = (@elem_assigning@)malloc(@elem_size@ * newResult->size);",
+                "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) "
+                "{ newResult->data[i] = _this->data[i]; }",
+                "\tnewResult->data[_this->size] = newElement;",
+                "\t*newArray = newResult;",
+            ]),
+        ArrayMethodDesc(
+            "insert$_0", [(INT64.c_calling_name, "location", INT64.name),
+                          (elem_call, "newElement", elem.name)],
+            [(arr_call, "newArray", arr_name)],
+            body=[
+                "\tviola$lang$uint64 loc = location < 0 ? 0 : (viola$lang$uint64)location;",
+                "\tloc = loc > _this->size ? _this->size : loc;",
+                "\t@new_result@",
+                "\tnewResult->size = _this->size + 1;",
+                "\tnewResult->data = (@elem_assigning@)malloc(@elem_size@ * newResult->size);",
+                "\tfor (viola$lang$uint64 i = 0; i < loc; i++) "
+                "{ newResult->data[i] = _this->data[i]; }",
+                "\tnewResult->data[loc] = newElement;",
+                "\tfor (viola$lang$uint64 i = loc; i < _this->size; i++) "
+                "{ newResult->data[i + 1] = _this->data[i]; }",
+                "\t*newArray = newResult;",
+            ]),
+        ArrayMethodDesc(
+            "length$_0", [],
+            [(SIZE_T.c_calling_name, "result", SIZE_T.name)],
+            body=[
+                "\t*result = _this->size;",
+            ]),
+        ArrayMethodDesc(
+            "__setitem__$_0", [(SIZE_T.c_calling_name, "index", SIZE_T.name),
+                               (elem_call, "newElement", elem.name)],
+            [(arr_call, "newArray", arr_name)],
+            # 越界检查置于分配之前，越界时不分配新数组
+            body=[
+                "@check_index_set@",
+                "\t@new_result@",
+                "\tnewResult->size = _this->size;",
+                "\tnewResult->data = newResult->size == 0 ? NULL : "
+                "(@elem_assigning@)malloc(@elem_size@ * newResult->size);",
+                "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) "
+                "{ newResult->data[i] = _this->data[i]; }",
+                "\tnewResult->data[index] = newElement;",
+                "\t*newArray = newResult;",
+            ]),
+        ArrayMethodDesc(
+            "__setitem__$_1", [(SliceTypeName.c_calling_name, "s", SliceTypeName.name),
+                               (arr_call, "newSubarray", arr_name)],
+            [(arr_call, "newArray", arr_name)],
+            body=[
+                "\tviola$lang$uint64 start = s->start;",
+                "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
+                "@check_slice_range@",
+                "\t@new_result@",
+                "\tnewResult->size = _this->size - (end - start) + newSubarray->size;",
+                "\tnewResult->data = newResult->size == 0 ? NULL : "
+                "(@elem_assigning@)malloc(@elem_size@ * newResult->size);",
+                "\tviola$lang$uint64 j = 0;",
+                "\tfor (viola$lang$uint64 i = 0; i < start; i++) "
+                "{ newResult->data[j++] = _this->data[i]; }",
+                "\tfor (viola$lang$uint64 i = 0; i < newSubarray->size; i++) "
+                "{ newResult->data[j++] = newSubarray->data[i]; }",
+                "\tfor (viola$lang$uint64 i = end; i < _this->size; i++) "
+                "{ newResult->data[j++] = _this->data[i]; }",
+                "\t*newArray = newResult;",
+            ]),
+        ArrayMethodDesc(
+            "__del__$_0",
+            body=[
+                "\tif (_this->$refCount == 0) {",
+                "\t\tif (_this->$parent) { ((viola$lang$uint32 *)_this->$parent)[0]--; }",
+                "\t\telse {",
+                "\t\t\tfree(_this->data); _this->data = NULL;",
+                "\t\t\tfree(_this); _this = NULL;",
+                "\t\t}",
+                "\t}",
+            ]),
+    ]
+
+
 class ArrayTypeName(ClassName):
     """
     数组类型名称。
@@ -1458,6 +1626,43 @@ class ArrayTypeName(ClassName):
             )
         )
         register_array_type(self)
+        self._check_method_table()
+
+    def _check_method_table(self) -> None:
+        """校验此处注册的方法与数组方法表（_array_method_descs）一致。
+
+        方法表是同步声明、同步实现与$async包装的来源（见开发疑问记录148），
+        此处注册的方法则供调用解析使用：新增/修改方法时若只改一处，生成代码与
+        调用解析会错配（原先要到gcc阶段才以隐式声明或链接错误报出），故在此
+        显式报出。返回值名不参与校验：包装体按下标写回元组成员，与名称无关。
+
+        元素类型尚无法给出C类型时（泛型参数如T[]、any等）跳过：此时表中同样
+        无C类型可比，且该形式的数组在输出阶段本就会受限。
+        """
+        try:
+            descs: list[ArrayMethodDesc] = _array_method_descs(
+                self.c_alloc_name, self._element_type)
+        except CompilerException:
+            return
+        methods: list["MethodName"] = list(self.methods.values())
+        if len(methods) != len(descs):
+            raise InternalCompilerException(
+                f"Array type {self.c_alloc_name} registers {len(methods)} method(s), "
+                f"but the method table has {len(descs)}.", self._src_info)
+        for method, desc in zip(methods, descs):
+            expected_name: str = f"{self.c_alloc_name}${desc.suffix}"
+            # 方法的形参表以接收者（_this）为首个元素
+            actual_args: list[tuple[str, str]] = list(zip(
+                [t.c_calling_name for t in method.type.args[1:]], method.arg_names[1:]))
+            expected_args: list[tuple[str, str]] = [(a[0], a[1]) for a in desc.args]
+            actual_rets: list[str] = [t.c_calling_name for t in method.type.returns]
+            expected_rets: list[str] = [r[0] for r in desc.rets]
+            if method.name != expected_name or actual_args != expected_args or \
+                    actual_rets != expected_rets:
+                raise InternalCompilerException(
+                    f"Array method {method.name} does not match the method table: "
+                    f"table has {expected_name} {expected_args} -> {expected_rets}, "
+                    f"registered {actual_args} -> {actual_rets}.", self._src_info)
 
     @property
     def c_alloc_name(self) -> str:
@@ -3322,25 +3527,6 @@ class _TypeNameParser:
         return result
 
 
-class ArrayMethodDesc:
-    """内置数组类型的一个方法的描述（用于生成方法声明与$async包装，见开发疑问记录146）。
-
-    args/rets的元素为三元组(C类型文本, 形参/返回值名, 元组成员类型名)：
-    - C类型文本：该方法作为同步实现的形参/返回值时的C写法（c_calling_name）；
-    - 元组成员类型名：异步调用的实参/返回元组按被调函数声明的形参/返回类型
-      构造（见expression.py的CallOp._async_arg_types/_async_ret_types），元组
-      结构体的C名由各成员的类型名（TypeName.name）拼出，故此处按类型名给出。
-    描述用字符串而非TypeName对象：生成该文本时（输出阶段）构造TypeName会注册
-    新类型，影响已生成的类型定义顺序（见开发疑问记录117）。
-    """
-
-    def __init__(self, suffix: str, args: Optional[list[tuple[str, str, str]]] = None,
-                 rets: Optional[list[tuple[str, str, str]]] = None) -> None:
-        self.suffix: str = suffix
-        self.args: list[tuple[str, str, str]] = args if args is not None else []
-        self.rets: list[tuple[str, str, str]] = rets if rets is not None else []
-
-
 class SymbolTable:
     """
     符号表。
@@ -3451,39 +3637,90 @@ class SymbolTable:
                 texts.append(_FUNCTION_TYPE_DEFS[name].c_typedef_text)
         return texts
 
-    @staticmethod
-    def _array_method_descs(arr_name: str, elem: TypeName) -> list[ArrayMethodDesc]:
-        """获取内置数组类型的方法表（与ArrayTypeName构造方法中注册的方法一致）。
 
-        表用于生成方法的$async声明与实现（见开发疑问记录146）。接收者（_this）
-        不在表中：它总是形参元组的第一个成员，类型即数组类型自身。
+    @staticmethod
+    def _array_method_substitutions(arr_name: str) -> dict[str, str]:
+        """获取数组方法体模板中占位符的替换文本（见ArrayMethodDesc.body）。
+
+        替换文本与元素类型无关的部分在此给出；元素类型相关的占位符见
+        _array_method_body_text的两个参数。模板中出现的每个占位符都必须在此
+        有对应项，否则_array_method_body_text报错（避免新增方法时漏替换）。
         """
-        arr_call: str = f"{arr_name} *"
+        return {
+            # 检查代码：越界/非法范围时上报异常并提前返回，不写出结果
+            # （调用方的表达式求值可能有后续语句先于异常跳转执行）
+            "@check_index_get@": SymbolTable._array_bounds_check_text(
+                "item", ["memset(element, 0, sizeof(*element));"]),
+            "@check_index_set@": SymbolTable._array_bounds_check_text(
+                "index", ["*newArray = _this;"]),
+            "@check_slice_step@": SymbolTable._array_check_text(
+                "step == 0", "viola$lang$exception$sliceStepError(step, listener);",
+                ["newResult->size = 0;", "newResult->data = NULL;", "*subarray = newResult;"]),
+            "@check_slice_range@": SymbolTable._array_slice_range_check_text(),
+            # 结果数组的分配（各方法在此之后填充data与size）
+            "@new_result@": f"{arr_name} *newResult = ({arr_name} *)malloc(sizeof({arr_name})); "
+                            f"newResult->$refCount = 1; newResult->$parent = NULL;",
+        }
+
+    @staticmethod
+    def _array_method_body_text(arr_name: str, elem: TypeName, desc: ArrayMethodDesc) -> list[str]:
+        """获取数组方法体的C语句行（替换模板中的占位符）。
+
+        元素类型相关的占位符在此替换：@elem_assigning@为元素的赋值形式
+        （c_assigning_name，用于内存分配的转换与data的写回）、@elem_size@为
+        sizeof(元素类型)。替换后若仍留有占位符（表中写错名字）则报错，避免
+        生成无法编译的C代码。
+        """
+        substitutions: dict[str, str] = SymbolTable._array_method_substitutions(arr_name)
         elem_call: str = elem.c_calling_name
-        return [
-            ArrayMethodDesc("__getitem__$_0", [(SIZE_T.c_calling_name, "item", SIZE_T.name)],
-                            [(elem_call, "element", elem.name)]),
-            ArrayMethodDesc("__getitem__$_1",
-                            [(SliceTypeName.c_calling_name, "s", SliceTypeName.name)],
-                            [(arr_call, "subarray", arr_name)]),
-            ArrayMethodDesc("concat$_0", [(arr_call, "other", arr_name)],
-                            [(arr_call, "result", arr_name)]),
-            ArrayMethodDesc("append$_0", [(elem_call, "newElement", elem.name)],
-                            [(arr_call, "newArray", arr_name)]),
-            ArrayMethodDesc("insert$_0", [(INT64.c_calling_name, "location", INT64.name),
-                                          (elem_call, "newElement", elem.name)],
-                            [(arr_call, "newArray", arr_name)]),
-            ArrayMethodDesc("length$_0", [],
-                            [(SIZE_T.c_calling_name, "result", SIZE_T.name)]),
-            ArrayMethodDesc("__setitem__$_0", [(SIZE_T.c_calling_name, "index", SIZE_T.name),
-                                               (elem_call, "newElement", elem.name)],
-                            [(arr_call, "newArray", arr_name)]),
-            ArrayMethodDesc("__setitem__$_1",
-                            [(SliceTypeName.c_calling_name, "s", SliceTypeName.name),
-                             (arr_call, "newSubarray", arr_name)],
-                            [(arr_call, "newArray", arr_name)]),
-            ArrayMethodDesc("__del__$_0"),
-        ]
+        substitutions["@elem_assigning@"] = elem.c_assigning_name
+        substitutions["@elem_size@"] = f"sizeof({elem_call.strip()})"
+        lines: list[str] = []
+        for template in desc.body:
+            text: str = template
+            for token, value in substitutions.items():
+                text = text.replace(token, value)
+            remaining: list[str] = re.findall(r"@[a-zA-Z_]+@", text)
+            if len(remaining) > 0:
+                raise InternalCompilerException(
+                    f"Unknown placeholder {remaining[0]} in the body of array method {desc.suffix}.",
+                    SourceInfo(""))
+            lines.append(text)
+        return lines
+
+    @staticmethod
+    def _array_param_text(c_type: str, name: str, is_return_slot: bool = False) -> str:
+        """拼接数组方法形参的类型与名字。
+
+        基本类型的c_calling_name带尾随空格（如"viola$lang$int "）、类类型以"*"
+        结尾（如"viola$lang$string *"），故不能一律插入空格：类型以标识符字符
+        结尾时补空格（避免类型与形参名粘连成同一个标识符），否则直接相接。
+        返回值槽位在其后附加"*"（声明返回类型的指针形式，见
+        _array_sync_signature_text），总是跟着空格。
+        """
+        if is_return_slot:
+            return f"{c_type}* {name}"
+        if c_type != "" and (c_type[-1].isalnum() or c_type[-1] in "_$"):
+            return f"{c_type} {name}"
+        return f"{c_type}{name}"
+
+    @staticmethod
+    def _array_sync_signature_text(arr_name: str, desc: ArrayMethodDesc, terminator: str) -> str:
+        """获取数组方法同步声明/实现的首行文本（两者的形参表一致，仅结尾不同）。
+
+        接收者为第一个形参；返回值以指针形参接收，其C类型为声明返回类型的
+        指针形式（c_calling_name加"*"，对基本类型与类类型均即c_assigning_name）。
+        """
+        params: list[str] = [f"{arr_name} *_this"]
+        params += [SymbolTable._array_param_text(c_type, name) for c_type, name, _ in desc.args]
+        params += [SymbolTable._array_param_text(c_type, name, True) for c_type, name, _ in desc.rets]
+        params.append(f"{LISTENER_T} *listener")
+        return f"void {arr_name}${desc.suffix}({', '.join(params)}){terminator}"
+
+    @staticmethod
+    def _array_sync_decl_text(arr_name: str, desc: ArrayMethodDesc) -> str:
+        """获取数组方法同步声明的文本（与同步实现同源，见开发疑问记录148）。"""
+        return SymbolTable._array_sync_signature_text(arr_name, desc, ";")
 
     @staticmethod
     def _tuple_type_name(type_names: list[str]) -> str:
@@ -3492,10 +3729,13 @@ class SymbolTable:
 
     @staticmethod
     def _array_type_decl_text(arr_name: str, elem: TypeName) -> str:
-        """获取数组类型的结构体定义与方法声明文本。"""
+        """获取数组类型的结构体定义与方法声明文本。
+
+        方法声明由方法表生成（见_array_sync_decl_text），与同步实现、$async包装
+        同源，不再各自维护一份文本（见开发疑问记录148）。
+        """
         elem_asg: str = elem.c_assigning_name
-        elem_call: str = elem.c_calling_name
-        descs: list[ArrayMethodDesc] = SymbolTable._array_method_descs(arr_name, elem)
+        descs: list[ArrayMethodDesc] = _array_method_descs(arr_name, elem)
         return "\n".join([
             f"#ifndef _VIOLA_ARRAY_T_{arr_name}",
             f"#define _VIOLA_ARRAY_T_{arr_name}",
@@ -3505,23 +3745,7 @@ class SymbolTable:
             f"\t{elem_asg} data;",
             "\tviola$lang$uint64 size;",
             f"}} {arr_name};",
-            f"void {arr_name}$__getitem__$_0({arr_name} *_this, viola$lang$uint64 item, "
-            f"{elem_asg} element, viola$threads$Listener *listener);",
-            f"void {arr_name}$__getitem__$_1({arr_name} *_this, viola$lang$slice *s, "
-            f"{arr_name} ** subarray, viola$threads$Listener *listener);",
-            f"void {arr_name}$concat$_0({arr_name} *_this, {arr_name} *other, "
-            f"{arr_name} ** result, viola$threads$Listener *listener);",
-            f"void {arr_name}$append$_0({arr_name} *_this, {elem_call} newElement, "
-            f"{arr_name} ** newArray, viola$threads$Listener *listener);",
-            f"void {arr_name}$insert$_0({arr_name} *_this, viola$lang$int64 location, "
-            f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener);",
-            f"void {arr_name}$length$_0({arr_name} *_this, viola$lang$uint64 * result, "
-            f"viola$threads$Listener *listener);",
-            f"void {arr_name}$__setitem__$_0({arr_name} *_this, viola$lang$uint64 index, "
-            f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener);",
-            f"void {arr_name}$__setitem__$_1({arr_name} *_this, viola$lang$slice *s, "
-            f"{arr_name} *newSubarray, {arr_name} ** newArray, viola$threads$Listener *listener);",
-            f"void {arr_name}$__del__({arr_name} *_this, viola$threads$Listener *listener);",
+            *map(lambda desc: SymbolTable._array_sync_decl_text(arr_name, desc), descs),
             "#endif",
             # $async包装所需的实参/返回元组结构体与$async声明（见开发疑问记录146）。
             # 置于数组结构体的include guard之外：string[]等数组类型的结构体由运行库
@@ -3634,7 +3858,7 @@ class SymbolTable:
         此时再注册元组类型来不及输出到（已生成的）头文件。
         """
         results: list[str] = []
-        for desc in cls._array_method_descs(arr_name, elem):
+        for desc in _array_method_descs(arr_name, elem):
             args_desc: list[tuple[str, str]] = [("_this", f"{arr_name} *")] + \
                 [(a[1], a[0]) for a in desc.args]
             rets_desc: list[tuple[str, str]] = [(r[1], r[0]) for r in desc.rets]
@@ -3728,125 +3952,18 @@ class SymbolTable:
     def array_type_impl_texts(cls) -> list[str]:
         """获取所有已注册数组类型方法的C实现文本（生成到唯一编译单元__main__.c中）。
 
+        同步实现由方法表生成（与同步声明、$async包装同源，见开发疑问记录148），
         含各方法的同步实现与$async包装（后者见开发疑问记录146）。
         按类型名排序，避免输出随并行编译的线程交错变化（见开发疑问记录117）。
         """
         results: list[str] = []
         for arr_name in sorted(_ARRAY_TYPE_DEFS.keys()):
             elem: TypeName = _ARRAY_TYPE_DEFS[arr_name]
-            elem_asg: str = elem.c_assigning_name
-            elem_call: str = elem.c_calling_name
-            elem_size: str = f"sizeof({elem_call.strip()})"
-            new_arr: str = (
-                f"{arr_name} *newResult = ({arr_name} *)malloc(sizeof({arr_name})); "
-                f"newResult->$refCount = 1; newResult->$parent = NULL;"
-            )
-            results.append("\n".join([
-                # 下标访问（越界检查由VIOLA_ARRAY_BOUNDS_CHECK控制，见开发疑问记录124）
-                f"void {arr_name}$__getitem__$_0({arr_name} *_this, viola$lang$uint64 item, "
-                f"{elem_asg} element, viola$threads$Listener *listener) {{",
-                SymbolTable._array_bounds_check_text("item", ["memset(element, 0, sizeof(*element));"]),
-                "\t*element = _this->data[item];",
-                "}",
-                # 切片访问
-                f"void {arr_name}$__getitem__$_1({arr_name} *_this, viola$lang$slice *s, "
-                f"{arr_name} ** subarray, viola$threads$Listener *listener) {{",
-                "\tviola$lang$uint64 start = s->start;",
-                "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
-                "\tviola$lang$uint64 step = s->step;",
-                # 结果对象先分配：步长为0的上报路径上也要给出确定值（空切片），
-                # 因为调用方的表达式求值可能有后续语句先于异常跳转执行
-                # （越界下标检查同理给出确定的元素值，见开发疑问记录124）
-                f"\t{new_arr}",
-                # 步长为0的检查：元素个数按(end - start + step - 1) / step计算，
-                # 步长为0时除以0（见开发疑问记录135）
-                SymbolTable._array_check_text(
-                    "step == 0",
-                    "viola$lang$exception$sliceStepError(step, listener);",
-                    ["newResult->size = 0;", "newResult->data = NULL;", "*subarray = newResult;"]),
-                "\tviola$lang$uint64 count = start < end ? (end - start + step - 1) / step : 0;",
-                "\tnewResult->size = count;",
-                f"\tnewResult->data = count == 0 ? NULL : ({elem_asg})malloc({elem_size} * count);",
-                "\tviola$lang$uint64 j = 0;",
-                "\tfor (viola$lang$uint64 i = start; i < end; i += step) { newResult->data[j++] = _this->data[i]; }",
-                "\t*subarray = newResult;",
-                "}",
-                # 连接
-                f"void {arr_name}$concat$_0({arr_name} *_this, {arr_name} *other, "
-                f"{arr_name} ** result, viola$threads$Listener *listener) {{",
-                f"\t{new_arr}",
-                "\tnewResult->size = _this->size + other->size;",
-                f"\tnewResult->data = newResult->size == 0 ? NULL : ({elem_asg})malloc({elem_size} * newResult->size);",
-                "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) { newResult->data[i] = _this->data[i]; }",
-                "\tfor (viola$lang$uint64 i = 0; i < other->size; i++) { newResult->data[_this->size + i] = other->data[i]; }",
-                "\t*result = newResult;",
-                "}",
-                # 追加
-                f"void {arr_name}$append$_0({arr_name} *_this, {elem_call} newElement, "
-                f"{arr_name} ** newArray, viola$threads$Listener *listener) {{",
-                f"\t{new_arr}",
-                "\tnewResult->size = _this->size + 1;",
-                f"\tnewResult->data = ({elem_asg})malloc({elem_size} * newResult->size);",
-                "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) { newResult->data[i] = _this->data[i]; }",
-                "\tnewResult->data[_this->size] = newElement;",
-                "\t*newArray = newResult;",
-                "}",
-                # 插入
-                f"void {arr_name}$insert$_0({arr_name} *_this, viola$lang$int64 location, "
-                f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener) {{",
-                "\tviola$lang$uint64 loc = location < 0 ? 0 : (viola$lang$uint64)location;",
-                "\tloc = loc > _this->size ? _this->size : loc;",
-                f"\t{new_arr}",
-                "\tnewResult->size = _this->size + 1;",
-                f"\tnewResult->data = ({elem_asg})malloc({elem_size} * newResult->size);",
-                "\tfor (viola$lang$uint64 i = 0; i < loc; i++) { newResult->data[i] = _this->data[i]; }",
-                "\tnewResult->data[loc] = newElement;",
-                "\tfor (viola$lang$uint64 i = loc; i < _this->size; i++) { newResult->data[i + 1] = _this->data[i]; }",
-                "\t*newArray = newResult;",
-                "}",
-                # 长度
-                f"void {arr_name}$length$_0({arr_name} *_this, viola$lang$uint64 * result, "
-                f"viola$threads$Listener *listener) {{",
-                "\t*result = _this->size;",
-                "}",
-                # 索引赋值（越界检查同上；检查置于分配之前，越界时不分配新数组）
-                f"void {arr_name}$__setitem__$_0({arr_name} *_this, viola$lang$uint64 index, "
-                f"{elem_call} newElement, {arr_name} ** newArray, viola$threads$Listener *listener) {{",
-                SymbolTable._array_bounds_check_text("index", ["*newArray = _this;"]),
-                f"\t{new_arr}",
-                "\tnewResult->size = _this->size;",
-                f"\tnewResult->data = newResult->size == 0 ? NULL : ({elem_asg})malloc({elem_size} * newResult->size);",
-                "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) { newResult->data[i] = _this->data[i]; }",
-                "\tnewResult->data[index] = newElement;",
-                "\t*newArray = newResult;",
-                "}",
-                # 切片赋值
-                f"void {arr_name}$__setitem__$_1({arr_name} *_this, viola$lang$slice *s, "
-                f"{arr_name} *newSubarray, {arr_name} ** newArray, viola$threads$Listener *listener) {{",
-                "\tviola$lang$uint64 start = s->start;",
-                "\tviola$lang$uint64 end = s->end > _this->size ? _this->size : s->end;",
-                # 范围检查（start > end时长度计算下溢，见开发疑问记录129）
-                SymbolTable._array_slice_range_check_text(),
-                f"\t{new_arr}",
-                "\tnewResult->size = _this->size - (end - start) + newSubarray->size;",
-                f"\tnewResult->data = newResult->size == 0 ? NULL : ({elem_asg})malloc({elem_size} * newResult->size);",
-                "\tviola$lang$uint64 j = 0;",
-                "\tfor (viola$lang$uint64 i = 0; i < start; i++) { newResult->data[j++] = _this->data[i]; }",
-                "\tfor (viola$lang$uint64 i = 0; i < newSubarray->size; i++) { newResult->data[j++] = newSubarray->data[i]; }",
-                "\tfor (viola$lang$uint64 i = end; i < _this->size; i++) { newResult->data[j++] = _this->data[i]; }",
-                "\t*newArray = newResult;",
-                "}",
-                # 析构
-                f"void {arr_name}$__del__$_0({arr_name} *_this, viola$threads$Listener *listener) {{",
-                "\tif (_this->$refCount == 0) {",
-                "\t\tif (_this->$parent) { ((viola$lang$uint32 *)_this->$parent)[0]--; }",
-                "\t\telse {",
-                "\t\t\tfree(_this->data); _this->data = NULL;",
-                "\t\t\tfree(_this); _this = NULL;",
-                "\t\t}",
-                "\t}",
-                "}"
-            ]))
+            for desc in _array_method_descs(arr_name, elem):
+                results.append("\n".join(
+                    [cls._array_sync_signature_text(arr_name, desc, " {")]
+                    + cls._array_method_body_text(arr_name, elem, desc)
+                    + ["}"]))
         # 各方法的$async包装（见开发疑问记录146）：置于全部同步实现之后，
         # 使其调用的同步函数已在本单元内定义——数组方法的声明可能因运行库头文件
         # 先定义了同名的结构体guard而未出现在模块头文件中（如string[]、uint8[]），
