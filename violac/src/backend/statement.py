@@ -243,6 +243,14 @@ class Statement(CompilingItem, ABC):
         """获取语句的头代码（变量声明等）。"""
         pass
 
+    @property
+    def value_expression(self) -> Optional[Expression]:
+        """获取本语句携带的值表达式（无则为None）。
+
+        供函数级统一释放收集语句经head_text声明的临时变量（见开发疑问记录191）。
+        """
+        return None
+
     def indent(self) -> None:
         """增加语句的缩进级别。"""
         self._indent += 1
@@ -779,6 +787,11 @@ class DeclStmt(Statement):
         """按声明顺序获取本语句新增的变量（见开发疑问记录115）。"""
         return list(self._var)
 
+    @property
+    def value_expression(self) -> Optional[Expression]:
+        """获取本语句携带的值表达式（无则为None，供函数级清理收集变量用）。"""
+        return self._var_value
+
     def optimize(self) -> "Statement":
         if self._var_value is not None:
             self._var_value = self._var_value.optimize()
@@ -1164,6 +1177,11 @@ class AssignStmt(Statement):
         """按声明顺序获取本语句新增的变量（见开发疑问记录115）。"""
         return [] if self._is_void_assign else list(self._var)
 
+    @property
+    def value_expression(self) -> Optional[Expression]:
+        """获取本语句携带的值表达式（供函数级清理收集变量用）。"""
+        return self._var_value
+
     def optimize(self, foldable: Optional[set[VariableName]] = None) -> "Statement":
         """
         :param foldable: 允许被常量折叠移除赋值语句的变量集合（本块内定义的变量）。
@@ -1343,6 +1361,11 @@ class OpStmt(Statement):
     @property
     def head_text(self) -> Optional[str]:
         return self._indent_text(self._expr.head_text) if self._expr.head_text is not None else None
+
+    @property
+    def value_expression(self) -> Optional[Expression]:
+        """获取本语句携带的值表达式（供函数级清理收集变量用）。"""
+        return self._expr
 
     @property
     def input_variables(self) -> set[VariableName]:
@@ -2993,6 +3016,27 @@ class BlockStmt(Statement):
     @property
     def head_text(self) -> Optional[str]:
         return None
+
+    @property
+    def value_expression(self) -> Optional[Expression]:
+        """获取本语句携带的值表达式（无则为None）。"""
+        return None
+
+    @property
+    def body_statements(self) -> list[Statement]:
+        """获取本块直接包含的语句（展开常量折叠产生的_StmtList）。
+
+        用于函数级统一释放时收集"本函数体直接声明的变量"：这些变量的C声明位于
+        本块自己的C块内，故在本块末尾的清理标签处仍在作用域内；嵌套块内声明的
+        变量不在其中（其声明在嵌套C块内，见开发疑问记录115）。
+        """
+        result: list[Statement] = []
+        for stmt in self._stmt:
+            if isinstance(stmt, _StmtList):
+                result.extend(stmt.stmts)
+            else:
+                result.append(stmt)
+        return result
 
     @property
     def input_variables(self) -> set[VariableName]:

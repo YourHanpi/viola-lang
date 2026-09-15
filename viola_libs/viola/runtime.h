@@ -116,8 +116,12 @@ typedef std::atomic<viola$lang$uint32> viola$lang$atomic_uint32;
 /* GCC/Clang在C99等更早的标准模式下也提供_Atomic与<stdatomic.h>扩展 */
 #include <stdatomic.h>
 typedef _Atomic viola$lang$uint32 viola$lang$atomic_uint32;
-#define VIOLA_REFCOUNT_ADD_FETCH(p, value) atomic_fetch_add_explicit((p), (value), memory_order_seq_cst)
-#define VIOLA_REFCOUNT_SUB_FETCH(p, value) atomic_fetch_sub_explicit((p), (value), memory_order_seq_cst)
+/* atomic_fetch_*返回的是操作前的值，而refcount_inc/dec约定"返回操作后的值"
+   （dec返回0即本次递减丢弃了最后一个引用），故在此补齐差值。
+   其余分支（C++的fetch_add、MSVC的_InterlockedExchangeAdd、退化分支的复合赋值）
+   本来就返回操作后的值，四个分支的语义由此一致。 */
+#define VIOLA_REFCOUNT_ADD_FETCH(p, value) (atomic_fetch_add_explicit((p), (value), memory_order_seq_cst) + (value))
+#define VIOLA_REFCOUNT_SUB_FETCH(p, value) (atomic_fetch_sub_explicit((p), (value), memory_order_seq_cst) - (value))
 #define VIOLA_REFCOUNT_LOAD(p) atomic_load_explicit((p), memory_order_seq_cst)
 #define VIOLA_REFCOUNT_STORE(p, value) atomic_store_explicit((p), (value), memory_order_seq_cst)
 #elif defined(_MSC_VER)

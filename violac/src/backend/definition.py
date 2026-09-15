@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 from .compiling_item import CompilingItem
 from .expression import UnpackExpr, VariableRef, Expression, CallOp, AttrOp, ClassRef, TypeRef
-from .statement import Statement, BlockStmt, DeclStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, ReturnStmt, \
-    STACK_B_POP_FUNC, STACK_B_PUSH_FUNC, CleanupBlock, THIS_OBJ_NAME, SUPER_NEW_SUFFIX
+from .statement import Statement, BlockStmt, DeclStmt, AssignStmt, FnBlockStmt, CStmt, TryStmt, CatchStmt, OpStmt, \
+    ReturnStmt, STACK_B_POP_FUNC, STACK_B_PUSH_FUNC, CleanupBlock, THIS_OBJ_NAME, SUPER_NEW_SUFFIX
 from .symbol import FunctionName, VariableName, LocalVariableName, VariableState, TupleTypeName, NamespaceName, \
     ClassName, MethodName, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, TypeName, EXCEPTION_T_NAME, \
     EnumName, GlobalVariableName, GenericArgument, \
@@ -548,6 +548,41 @@ class SqDef(Definition):
         """获取函数名。"""
         return self._decl.name
 
+    def _cleanup_variables(self) -> list[VariableName]:
+        """获取函数退出时统一释放的变量（见开发疑问记录191第1条）。
+
+        除new_variables_ordered（本块内首次赋值的块外变量）外，还包含本函数体
+        各语句直接声明的对象变量、以及它们经head_text声明的临时变量：这些变量
+        若在声明之后再未被使用，不会出现在任何语句的used_variables中，因而不会
+        进入"最后一次使用"的释放点，只分配不释放。
+
+        范围内只取本块直接声明的变量：它们的C声明位于函数体自己的C块内，在本块
+        末尾的清理标签处仍在作用域内；嵌套块内声明的变量由嵌套块自行释放
+        （见开发疑问记录115）。返回值槽位不在此列——其所有权随返回值交给调用方；
+        unsafe变量由用户手动管理内存，同样排除。
+        """
+        result: list[VariableName] = list(self._body.new_variables_ordered)
+        seen: set[VariableName] = set(result)
+        body_statements = getattr(self._body, "body_statements", [])
+        for stmt in body_statements:
+            candidates: list[VariableName] = []
+            if isinstance(stmt, (DeclStmt, AssignStmt)):
+                # 只有这两类语句的declared_variables是"本语句直接声明"的变量：
+                # 复合语句（如try）的declared_variables会递归并入嵌套块内声明的
+                # 变量（如catch的异常变量），那些变量的C声明在嵌套C块内，在函数
+                # 级清理处引用会超出作用域
+                candidates.extend(stmt.declared_variables)
+            value: Optional[Expression] = stmt.value_expression
+            if value is not None:
+                candidates.extend(value.declared_temporaries)
+            for var in candidates:
+                if var in seen:
+                    continue
+                seen.add(var)
+                if var.is_object and not var.is_return and not var.is_unsafe_managed:
+                    result.append(var)
+        return result
+
     def optimize(self) -> "SqDef":
         """优化函数定义。"""
         self._body = self._body.optimize()
@@ -648,7 +683,7 @@ class SqDef(Definition):
             if self._body.tail_recursive_mark is not None else self._body.head_text or "",
             f"\t{EXCEPTION_T_NAME} *$$exc = listener->exception;",
             self._body.text,
-            CleanupBlock(self._src_info, self._symbol_table, self._var_states, self._body.new_variables_ordered).text,
+            CleanupBlock(self._src_info, self._symbol_table, self._var_states, self._cleanup_variables()).text,
             "}"
         ]
         async_text: list[str] = [
@@ -888,7 +923,7 @@ class ConstructorDef(SqDef):
             lambda stmt: stmt is not self._alloc_stmt and stmt is not self._vtable_stmt and
             stmt is not self._write_back_stmt, self._body._stmt))
         cleanup: str = CleanupBlock(self._src_info, self._symbol_table, self._var_states,
-                                    self._body.new_variables_ordered).text
+                                    self._cleanup_variables()).text
         return "\n".join(filter(lambda line: line != "", [
             f"void {self.super_init_name}({self._super_init_params_text()}) {{",
             self._body.head_text or "",
@@ -940,6 +975,12 @@ class DestructorDef(SqDef):
                                                               self._decl.arg_types[0])
         self._free_stmt: Optional[CStmt] = None
         if cls.is_c_part:
+            return
+        if cls.is_wrapper:
+            # wrapper类的__del__由用户实现（其中的del(super)经__del__super完成
+            # 成员释放与对象回收），故不在此生成"转发+释放成员+回收对象"的前缀：
+            # 该前缀会在用户语句之前先把对象free掉，随后的del(super)对已释放的
+            # _this解引用（见开发疑问记录191）。
             return
         self._free_stmt = CStmt(src_info, self._symbol_table, self._var_states)
         self._free_stmt.set_text(self._forward_text(cls) + self._member_free_text(cls))

@@ -319,6 +319,46 @@ class Expression(CompilingItem, ABC):
         pass
 
     @property
+    def _own_declared_temporaries(self) -> list[VariableName]:
+        """获取本表达式自身（不含子表达式）经head_text声明的临时变量。"""
+        return []
+
+    @property
+    def declared_temporaries(self) -> list[VariableName]:
+        """获取该表达式及其子表达式经head_text声明的临时变量。
+
+        供函数级统一释放使用（见开发疑问记录191）：这些变量若在声明之后再未
+        被使用，不会出现在任何语句的used_variables中，也就不会进入"最后一次
+        使用"的释放点，只分配不释放。
+
+        遍历跳过_parent_item（父级引用会使遍历沿语句树向上走）。
+        """
+        result: list[VariableName] = []
+        seen: set[int] = {id(self)}
+        stack: list[Expression] = [self]
+        while stack:
+            expr = stack.pop()
+            result.extend(expr._own_declared_temporaries)
+            for key, value in vars(expr).items():
+                if key == "_parent_item":
+                    continue
+                if isinstance(value, Expression):
+                    if id(value) not in seen:
+                        seen.add(id(value))
+                        stack.append(value)
+                elif isinstance(value, (list, tuple)):
+                    for item in value:
+                        if isinstance(item, Expression) and id(item) not in seen:
+                            seen.add(id(item))
+                            stack.append(item)
+                elif isinstance(value, dict):
+                    for item in value.values():
+                        if isinstance(item, Expression) and id(item) not in seen:
+                            seen.add(id(item))
+                            stack.append(item)
+        return result
+
+    @property
     def transfers_ownership(self) -> bool:
         """获取该表达式的求值结果是否把所有权直接交给接收它的槽位。
 
@@ -1936,6 +1976,7 @@ class ArrayConvertExpr(ValueRef):
 
 
 class TupleRef(ValueRef):
+    # 元组是否持有其对象成员：仅异步实参元组为True（见开发疑问记录191）
     """元组字面量表达式。
 
     表示 (v1, v2, ...) 形式的元组构造，编译为运行时元组对象。
@@ -1965,6 +2006,8 @@ class TupleRef(ValueRef):
         self._values: list[Expression] = []
         self._type: Optional[TypeName] = None
         self._temp_var: Optional[VariableName] = None
+        # 是否持有对象成员（存入时retain、释放时递减）：异步实参元组为True
+        self._owns_elements: bool = False
 
     def __len__(self) -> int:
         """返回元组中元素的数量。"""
@@ -2050,7 +2093,13 @@ class TupleRef(ValueRef):
             # 成员写入按成员类型转换：子类实参赋给父类形参的元组成员时补显式C转换
             # （见开发疑问记录159）
             target: TypeName = member_types[i] if i < len(member_types) else value.return_type
-            lines.append(f"{self._temp_var.name}->${i} = {implicit_cast_text(value, target)};")
+            element: str = f"{self._temp_var.name}->${i}"
+            lines.append(f"{element} = {implicit_cast_text(value, target)};")
+            if self._owns_elements and target.is_object:
+                # 异步实参元组需持有对象实参：调用方的槽位在任务完成前就可能被释放
+                # （其"最后一次使用"即发起调用之处），元组释放时再递减
+                # （见开发疑问记录191）
+                lines.append(retain_text(element))
         return "\n".join(lines)
 
     @property
@@ -2086,8 +2135,18 @@ class TupleRef(ValueRef):
 
     @property
     def release_text(self) -> Optional[str]:
-        return refcount_release_text(
-            self._temp_var.name, f"free({self._temp_var.name});\n{self._temp_var.name} = NULL;")
+        elements: list[str] = []
+        if self._owns_elements and self._is_finished:
+            # 先释放元组持有的对象成员，再回收元组本身（见开发疑问记录191）
+            for i, member_type in enumerate(self._type.types):
+                if not member_type.is_object:
+                    continue
+                member: LocalVariableName = LocalVariableName(
+                    self._src_info, f"{self._temp_var.name}->${i}", member_type)
+                elements.append(member.free_text)
+        body: str = "\n".join(filter(lambda x: x != "", elements + [
+            f"free({self._temp_var.name});\n{self._temp_var.name} = NULL;"]))
+        return refcount_release_text(self._temp_var.name, body)
 
     @property
     def return_type(self) -> TypeName:
@@ -2819,6 +2878,9 @@ class CallOp(Expression):
         # 见开发疑问记录145）：与_returns_list一一对应，无需中转的为None
         self._ret_temps: list[Optional[LocalVariableName]] = []
         self._ret_temp_decls: list[str] = []
+        # 调用无返回值目标时按需建立的临时变量（见_ensure_lazy_ret）：
+        # 其对象只被该临时变量持有，需纳入函数级统一释放（见开发疑问记录191）
+        self._lazy_ret_temp: Optional[LocalVariableName] = None
         # 已据此建立中转变量的返回值目标列表（按对象身份判断是否需要重建）
         self._ret_temps_source: Optional[list[VariableName]] = None
 
@@ -2890,6 +2952,9 @@ class CallOp(Expression):
         result._listener_name = self._symbol_table.get_counter()
         result._call_name = result._listener_name + "$$_call"
         result._args_tuple = TupleRef(self._src_info, self._symbol_table)
+        # 实参元组由被调方（另一个线程上的任务）使用，其生命周期可能长于调用方
+        # 各实参槽位的生命周期，故元组持有对象实参（见开发疑问记录191）
+        result._args_tuple._owns_elements = True
         for arg in self._arg_list:
             result._args_tuple.add_value(arg)
         result._args_tuple.finish(self._async_arg_types())
@@ -2961,6 +3026,11 @@ class CallOp(Expression):
     def returns_list(self) -> list[VariableName]:
         """获取返回值目标列表（供等待之后按目标取回返回元组成员使用）。"""
         return self._returns_list
+
+    @property
+    def _own_declared_temporaries(self) -> list[VariableName]:
+        """无返回值目标的调用按需建立的临时变量（见_ensure_lazy_ret）。"""
+        return [self._lazy_ret_temp] if self._lazy_ret_temp is not None else []
 
     @property
     def _callee_return_types(self) -> list[TypeName]:
@@ -3278,6 +3348,7 @@ class CallOp(Expression):
                 self._src_info, self._symbol_table.get_counter(), ret_type)
             self.set_returns([temp])
             self._lazy_ret_decl = temp.declaration_text
+            self._lazy_ret_temp = temp
             return
         if self._call_struct:
             # 函数值（Function结构体）调用同样需要返回值目标
@@ -3292,6 +3363,7 @@ class CallOp(Expression):
                     self._src_info, self._symbol_table.get_counter(), ret_type)
                 self.set_returns([temp])
                 self._lazy_ret_decl = temp.declaration_text
+                self._lazy_ret_temp = temp
 
     @property
     def head_text(self) -> Optional[str]:
@@ -3412,8 +3484,14 @@ class CallOp(Expression):
         result: list[Optional[str]] = [
             # 实参元组仅在真正分配时释放：无实参的异步调用以args=NULL入队，
             # 其元组从未分配，对NULL解引用会崩溃（语句形式的表达式语句会输出
-            # 本释放代码，见开发疑问记录138的附带发现）
-            self._args_tuple.release_text if self._args_tuple is not None and self._has_args_tuple else None,
+            # 本释放代码，见开发疑问记录138的附带发现）。
+            # 异步调用的实参元组不在此释放：本处代码位于等待（waitListener）之前，
+            # 而任务此时可能仍在读取元组及其成员（提前释放会使工作线程读到
+            # 已释放的对象）。当前版本对异步调用的实参元组与其中的对象实参
+            # 不做释放（元组持有它们一次，随进程存续），以保证任务期间有效
+            # （见开发疑问记录191）。
+            self._args_tuple.release_text
+            if self._args_tuple is not None and self._has_args_tuple and not self._is_async else None,
             self._closure_args.release_text if self._closure_args is not None else None,
             self._unpack_expr.release_text if self._unpack_expr is not None else None,
             # 返回元组仅由异步调用分配，同步调用不释放
