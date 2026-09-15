@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from typing import Optional
 
@@ -87,11 +86,87 @@ PERROR_NAME: str = "viola$io$print$perror"
 WHAT_NAME: str = "viola$lang$exception$Exception$what$_0"
 EXCEPTION_DEL_NAME: str = "viola$lang$exception$Exception$__del__$_0"
 
-DECL_PATTERN = re.compile(
-    r"^\s*(?:sq|fn)\s+([A-Za-z_][A-Za-z0-9_]*)\s*"
-    r"\((.*?)\)\s*->\s*\((.*?)\)\s*(?:cname\s+\"([^\"]+)\")?\s*;\s*$")
-# 形如 "string text = \"\"" 的参数/返回值：去掉默认值部分
-DEFAULT_VALUE_PATTERN = re.compile(r"\s*=.*$")
+def is_c_identifier_start(c: str) -> bool:
+    """判断字符能否作为C标识符的首字符（等价于正则的[A-Za-z_]）。"""
+    return c == "_" or ("a" <= c <= "z") or ("A" <= c <= "Z")
+
+
+def is_c_identifier_char(c: str) -> bool:
+    """判断字符能否作为C标识符的后续字符（等价于正则的[A-Za-z0-9_]）。"""
+    return is_c_identifier_start(c) or ("0" <= c <= "9")
+
+
+def strip_default_value(text: str) -> str:
+    """去掉参数/返回值写法中的默认值部分（形如"string text = \\"\\""）。
+
+    等价于原先的DEFAULT_VALUE_PATTERN.sub("", ...)：删除首个"="及其后的全部内容，
+    并去掉"="之前的空白。
+    """
+    index: int = text.find("=")
+    if index < 0:
+        return text
+    return text[:index].rstrip()
+
+
+def parse_decl_text(line: str) -> Optional[tuple[str, str, str, Optional[str]]]:
+    """解析原生函数声明行。
+
+    对应原DECL_PATTERN：
+        ^\\s*(?:sq|fn)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*
+        \\((.*?)\\)\\s*->\\s*\\((.*?)\\)\\s*(?:cname\\s+"([^"]+)")?\\s*;\\s*$
+    返回(函数名, 参数列表文本, 返回值列表文本, 显式C名)，非声明行返回None。
+    """
+    # 行尾的分号之后允许有空白（含换行）
+    text: str = line.strip()
+    if not text.endswith(";"):
+        return None
+    text = text[:-1].rstrip()
+    for keyword in ("sq", "fn"):
+        if not text.startswith(keyword):
+            continue
+        rest: str = text[len(keyword):]
+        if not rest[:1].isspace():
+            continue
+        rest = rest.lstrip()
+        name_end: int = 0
+        while name_end < len(rest) and is_c_identifier_char(rest[name_end]):
+            name_end += 1
+        name: str = rest[:name_end]
+        if name == "" or not is_c_identifier_start(name[0]):
+            return None
+        rest = rest[name_end:].lstrip()
+        if not rest.startswith("("):
+            return None
+        # 参数列表与返回值列表均取到本层的第一个右括号（声明中不含嵌套括号）
+        args_end: int = rest.find(")", 1)
+        if args_end < 0:
+            return None
+        args_text: str = rest[1:args_end]
+        rest = rest[args_end + 1:].lstrip()
+        if not rest.startswith("->"):
+            return None
+        rest = rest[2:].lstrip()
+        if not rest.startswith("("):
+            return None
+        rets_end: int = rest.find(")", 1)
+        if rets_end < 0:
+            return None
+        rets_text: str = rest[1:rets_end]
+        rest = rest[rets_end + 1:].strip()
+        explicit_c_name: Optional[str] = None
+        if rest.startswith("cname"):
+            rest = rest[len("cname"):].lstrip()
+            if not rest.startswith('"'):
+                return None
+            quote_end: int = rest.find('"', 1)
+            if quote_end < 0:
+                return None
+            explicit_c_name = rest[1:quote_end]
+            rest = rest[quote_end + 1:].strip()
+        if rest != "":
+            return None
+        return name, args_text, rets_text, explicit_c_name
+    return None
 
 
 class FuncDecl:
@@ -111,8 +186,12 @@ class FuncDecl:
 
 
 def c_safe_type_name(c_type: str) -> str:
-    """与编译器FunctionTypeName._c_safe_type_name一致的C名安全化。"""
-    return re.sub(r"[^A-Za-z0-9_$]", "$", c_type)
+    """与编译器FunctionTypeName._c_safe_type_name一致的C名安全化。
+
+    与编译器侧utils.text_utils.sanitize_c_identifier保持同样的规则：
+    不属于[A-Za-z0-9_$]的字符逐个替换为"$"（非ASCII字符同样替换）。
+    """
+    return "".join(c if (c == "$" or is_c_identifier_char(c)) else "$" for c in c_type)
 
 
 def tuple_c_name(types: list[str]) -> str:
@@ -171,7 +250,7 @@ def gen_array_def(array_type: CType) -> str:
         f"#ifndef {guard}",
         f"#define {guard}",
         f"typedef struct {array_type.name} {{",
-        "\tviola$lang$uint32 $refCount;",
+        "\tviola$lang$atomic_uint32 $refCount;",
         "\tviola$lang$ptr $parent;",
         f"\t{data_type} data;",
         "\tviola$lang$uint64 size;",
@@ -182,13 +261,13 @@ def gen_array_def(array_type: CType) -> str:
 
 def parse_decl_line(line: str, namespace: str, overload_counts: dict[str, int]) -> Optional[FuncDecl]:
     """解析一行原生函数声明，非声明行返回None。"""
-    match = DECL_PATTERN.match(line)
+    match = parse_decl_text(line)
     if match is None:
         return None
-    name, args_text, rets_text, explicit_c_name = match.groups()
+    name, args_text, rets_text, explicit_c_name = match
     args: list[tuple[str, CType]] = []
     for item in filter(lambda x: x.strip() != "", args_text.split(",")):
-        parts = DEFAULT_VALUE_PATTERN.sub("", item.strip()).rsplit(" ", 1)
+        parts = strip_default_value(item.strip()).rsplit(" ", 1)
         if len(parts) != 2:
             raise ValueError(f"{line.strip()}: 参数写法无法识别：{item!r}")
         args.append((parts[1].strip(), parse_type(parts[0], name)))
@@ -212,7 +291,8 @@ def namespace_of(path: str, root: str) -> str:
     """由.vla路径相对根目录得到命名空间（与编译器的规则一致）。"""
     rel = os.path.relpath(os.path.abspath(path), os.path.abspath(root))
     rel = os.path.splitext(rel)[0]
-    parts = re.split(r"[\\/]", rel)
+    # 等价于原先的re.split(r"[\\/]", rel)：两种路径分隔符均作为分隔符
+    parts = rel.replace("\\", "/").split("/")
     return "$".join(parts)
 
 
@@ -234,7 +314,7 @@ def collect_decls(paths: list[str], root: str) -> list[FuncDecl]:
 # $refCount/$parent来自object类（见symbol.py中Object.add_property），
 # $$vtable由编译器为每个类自动添加
 WRAPPER_STRUCT_PREFIX: list[tuple[str, str]] = [
-    ("$refCount", "viola$lang$uint32"),
+    ("$refCount", "viola$lang$atomic_uint32"),
     ("$parent", "viola$lang$ptr"),
     ("$$vtable", "viola$lang$ptr"),
 ]
@@ -249,12 +329,77 @@ LAYOUT_NOT_FROM_VLA: dict[str, str] = {
     "viola$lang$string": "编译器内置类型StringTypeName，布局由编译器与运行库维护",
 }
 
-WRAPPER_CLASS_PATTERN = re.compile(r"^\s*wrapper\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{")
-CLASS_END_PATTERN = re.compile(r"^\s*\}\s*$")
-# 属性声明：可选修饰符 + 类型 + 名称 + ";"
-WRAPPER_PROPERTY_PATTERN = re.compile(
-    r"^\s*((?:public|private|protected|static)\s+)*([^(){};]+?)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;\s*$")
-STRUCT_PATTERN = re.compile(r"typedef\s+struct\s+([A-Za-z0-9_$]+)\s*\{([^}]*)\}\s*([A-Za-z0-9_$]+)\s*;")
+def parse_wrapper_class_line(line: str) -> Optional[str]:
+    """识别wrapper类声明的起始行，返回类名。
+
+    对应原WRAPPER_CLASS_PATTERN：
+        ^\\s*wrapper\\s+class\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\{
+    （名称之后只需出现左花括号，其后的内容不参与匹配）。
+    """
+    text: str = line.strip()
+    for keyword in ("wrapper", "class"):
+        if not text.startswith(keyword):
+            return None
+        text = text[len(keyword):]
+        if not text[:1].isspace():
+            return None
+        text = text.lstrip()
+    name_end: int = 0
+    while name_end < len(text) and is_c_identifier_char(text[name_end]):
+        name_end += 1
+    name: str = text[:name_end]
+    if name == "" or not is_c_identifier_start(name[0]):
+        return None
+    return name if text[name_end:].lstrip().startswith("{") else None
+
+
+def is_class_end_line(line: str) -> bool:
+    """判断该行是否为单独的右花括号（对应原CLASS_END_PATTERN：^\\s*\\}\\s*$）。"""
+    return line.strip() == "}"
+
+
+def parse_wrapper_property_line(line: str) -> Optional[tuple[str, str, str]]:
+    """解析wrapper类的属性声明行，返回(修饰符文本, 类型文本, 字段名)。
+
+    对应原WRAPPER_PROPERTY_PATTERN：
+        ^\\s*((?:public|private|protected|static)\\s+)*([^(){};]+?)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*;\\s*$
+    与原实现的不同之处：修饰符文本收集全部修饰符（原实现的捕获组在重复时
+    只保留最后一个），故"static public uint32 x;"也能被识别为静态属性。
+    """
+    text: str = line.strip()
+    if not text.endswith(";"):
+        return None
+    text = text[:-1].rstrip()
+    modifiers: list[str] = []
+    while True:
+        matched: str = ""
+        for keyword in ("public", "private", "protected", "static"):
+            if text.startswith(keyword) and text[len(keyword):len(keyword) + 1].isspace():
+                matched = keyword
+                break
+        if matched == "":
+            break
+        modifiers.append(matched)
+        text = text[len(matched):].lstrip()
+    # 字段名位于行尾
+    name_end: int = len(text)
+    name_start: int = name_end
+    while name_start > 0 and is_c_identifier_char(text[name_start - 1]):
+        name_start -= 1
+    name: str = text[name_start:name_end]
+    if name == "" or not is_c_identifier_start(name[0]):
+        return None
+    raw_type_text: str = text[:name_start]
+    # 类型与名称之间必须有空白分隔（对应正则中的\s+）
+    if raw_type_text == "" or not raw_type_text[-1].isspace():
+        return None
+    type_text: str = raw_type_text.strip()
+    if type_text == "":
+        return None
+    for c in type_text:
+        if c in "(){};":
+            return None
+    return " ".join(modifiers), type_text, name
 
 
 def parse_wrapper_classes(paths: list[str], root: str) -> dict[str, list[tuple[str, str]]]:
@@ -270,28 +415,79 @@ def parse_wrapper_classes(paths: list[str], root: str) -> dict[str, list[tuple[s
             lines = f.readlines()
         i = 0
         while i < len(lines):
-            match = WRAPPER_CLASS_PATTERN.match(lines[i])
-            if match is None:
+            cls_name = parse_wrapper_class_line(lines[i])
+            if cls_name is None:
                 i += 1
                 continue
-            cls_name = match.group(1)
             c_name = f"{namespace}${cls_name}"
             fields: list[tuple[str, str]] = []
             i += 1
-            while i < len(lines) and CLASS_END_PATTERN.match(lines[i]) is None:
+            while i < len(lines) and not is_class_end_line(lines[i]):
                 body = lines[i].strip()
                 if body != "" and not body.startswith("//") and "(" not in body:
-                    prop = WRAPPER_PROPERTY_PATTERN.match(lines[i])
+                    prop = parse_wrapper_property_line(lines[i])
                     if prop is not None:
-                        modifiers = prop.group(1) or ""
+                        modifiers, type_name, field_name = prop
                         if "static" not in modifiers:
-                            c_type = parse_type(prop.group(2), f"{path}:{cls_name}")
-                            fields.append((prop.group(3), c_type.calling))
+                            c_type = parse_type(type_name, f"{path}:{cls_name}")
+                            fields.append((field_name, c_type.calling))
                 i += 1
             if c_name in result:
                 raise ValueError(f"{path}: wrapper类 {cls_name} 重复声明（C名 {c_name}）")
             result[c_name] = fields
     return result
+
+
+def strip_c_comments(text: str) -> str:
+    """去掉C块注释。
+
+    等价于原先的re.sub(r"/\\*.*?\\*/", "", text, flags=re.S)：
+    跨行匹配、按最短匹配（不支持嵌套注释，也不处理字符串字面量中的"/*"）。
+    """
+    result: list[str] = []
+    index: int = 0
+    while True:
+        start: int = text.find("/*", index)
+        if start < 0:
+            result.append(text[index:])
+            return "".join(result)
+        end: int = text.find("*/", start + 2)
+        if end < 0:
+            result.append(text[index:start])
+            return "".join(result)
+        result.append(text[index:start])
+        index = end + 2
+
+
+def skip_whitespace(text: str, pos: int) -> int:
+    """从pos起跳过空白字符，返回第一个非空白字符的位置。"""
+    while pos < len(text) and text[pos].isspace():
+        pos += 1
+    return pos
+
+
+def parse_struct_field(field_text: str) -> tuple[str, str]:
+    """解析结构体中的一个字段，返回(字段名, C类型)。
+
+    对应原先的re.match(r"^(.+?)\\s*(\\**)\\s*([A-Za-z_$][A-Za-z0-9_$]*)$", field_text)：
+    字段名是行尾的标识符串，"*"紧随其后（如"viola$lang$uint16 *data"）。
+    """
+    name_end: int = len(field_text)
+    name_start: int = name_end
+    while name_start > 0 and (is_c_identifier_char(field_text[name_start - 1]) or field_text[name_start - 1] == "$"):
+        name_start -= 1
+    name: str = field_text[name_start:name_end]
+    if name == "" or not (is_c_identifier_start(name[0]) or name[0] == "$"):
+        raise ValueError(f"无法解析字段：{field_text!r}")
+    stars_end: int = name_start
+    stars_start: int = stars_end
+    while stars_start > 0 and field_text[stars_start - 1] == "*":
+        stars_start -= 1
+    stars: str = field_text[stars_start:stars_end]
+    type_text: str = field_text[:stars_start].rstrip()
+    if type_text == "":
+        raise ValueError(f"无法解析字段：{field_text!r}")
+    return name, (type_text + " " + stars).strip()
 
 
 def parse_runtime_structs(path: str) -> dict[str, list[tuple[str, str]]]:
@@ -301,10 +497,44 @@ def parse_runtime_structs(path: str) -> dict[str, list[tuple[str, str]]]:
     """
     with open(path, encoding="utf-8") as f:
         # 先去掉注释，避免结构体外的说明文字干扰匹配
-        text = re.sub(r"/\*.*?\*/", "", f.read(), flags=re.S)
+        text = strip_c_comments(f.read())
     result: dict[str, list[tuple[str, str]]] = {}
-    for match in STRUCT_PATTERN.finditer(text):
-        struct_name, body, alias = match.group(1), match.group(2), match.group(3)
+    index: int = 0
+    while True:
+        start: int = text.find("typedef", index)
+        if start < 0:
+            break
+        pos: int = skip_whitespace(text, start + len("typedef"))
+        if not text.startswith("struct", pos):
+            index = pos
+            continue
+        pos = skip_whitespace(text, pos + len("struct"))
+        name_start: int = pos
+        while pos < len(text) and (is_c_identifier_char(text[pos]) or text[pos] == "$"):
+            pos += 1
+        struct_name: str = text[name_start:pos]
+        if struct_name == "":
+            index = pos
+            continue
+        pos = skip_whitespace(text, pos)
+        if not text.startswith("{", pos):
+            # typedef struct X Y;（前置声明）等形式，不作为结构体定义
+            index = pos
+            continue
+        body_end: int = text.find("}", pos + 1)
+        if body_end < 0:
+            break
+        body: str = text[pos + 1:body_end]
+        pos = skip_whitespace(text, body_end + 1)
+        alias_start: int = pos
+        while pos < len(text) and (is_c_identifier_char(text[pos]) or text[pos] == "$"):
+            pos += 1
+        alias: str = text[alias_start:pos]
+        pos = skip_whitespace(text, pos)
+        if not text.startswith(";", pos):
+            index = body_end + 1
+            continue
+        index = pos + 1
         if struct_name != alias:
             # typedef struct X {...} Y;形式（如匿名结构体）不作为wrapper类定义
             continue
@@ -313,12 +543,10 @@ def parse_runtime_structs(path: str) -> dict[str, list[tuple[str, str]]]:
             field_text = " ".join(field_text.split())
             if field_text == "":
                 continue
-            # 字段形如"<类型> <名称>"，声明符可能带*（如"viola$lang$uint16 *data"）
-            field_match = re.match(r"^(.+?)\s*(\**)\s*([A-Za-z_$][A-Za-z0-9_$]*)$", field_text)
-            if field_match is None:
-                raise ValueError(f"{path}: 无法解析结构体 {struct_name} 的字段：{field_text!r}")
-            field_type: str = (field_match.group(1).strip() + " " + field_match.group(2)).strip()
-            fields.append((field_match.group(3), field_type))
+            try:
+                fields.append(parse_struct_field(field_text))
+            except ValueError:
+                raise ValueError(f"{path}: 无法解析结构体 {struct_name} 的字段：{field_text!r}") from None
         result[struct_name] = fields
     return result
 
@@ -370,7 +598,7 @@ def gen_tuple_def(types: list[CType]) -> str:
         f"#ifndef {guard}",
         f"#define {guard}",
         "typedef struct {",
-        "\tviola$lang$uint32 $refCount;",
+        "\tviola$lang$atomic_uint32 $refCount;",
         "\tviola$lang$ptr $parent;",
         "\tviola$lang$uint64 size;",
     ]

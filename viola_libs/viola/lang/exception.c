@@ -4,8 +4,15 @@
  */
 #include "string.h"
 
-/* 异常基类的TypeInfo（子类的$parent链指向此处） */
-viola$dynamic$TypeInfo viola$lang$exception$Exception$$vtable = {NULL, NULL};
+/* 异常基类的析构函数（前置声明：下面的TypeInfo需要取其地址） */
+void viola$lang$exception$Exception$__del__$_0(viola$lang$exception$Exception *_this,
+                                               viola$threads$Listener *listener);
+
+/* 异常基类的TypeInfo（子类的$parent链指向此处）。
+   $del为虚析构入口（见开发疑问记录170(a)）；$name为类名（见开发疑问记录175(b)）；
+   异常类不实现接口，故$interfaces为NULL（见开发疑问记录170(c)） */
+viola$dynamic$TypeInfo viola$lang$exception$Exception$$vtable = {
+    NULL, NULL, (void *)&viola$lang$exception$Exception$__del__$_0, "exception.Exception", NULL};
 
 /* 构造异常：__new__(string message) -> Exception */
 void viola$lang$exception$Exception$__new__$_0(viola$lang$string *message,

@@ -1,0 +1,156 @@
+from viola.io import *;
+// Viola Interface Test Template
+// Tests: interface declaration, implementation, interface-typed variables,
+// parameters and return values, interface inheritance, and dispatch through
+// an interface type to the actual type's implementation
+
+interface ${IFACE_1} {
+    fn ${IFACE_METHOD_1}() -> (string result);
+    fn ${IFACE_METHOD_2}() -> (int32 result);
+}
+
+interface ${IFACE_2} extends ${IFACE_1} {
+    fn ${IFACE_METHOD_3}() -> (string result);
+}
+
+class ${CLS_1} {
+    public sq __new__() -> (this) {
+    }
+
+    public fn ${IFACE_METHOD_1}() -> (string result) {
+        result = "${CLS_1}-1";
+    }
+
+    public fn ${IFACE_METHOD_2}() -> (int32 result) {
+        result = 10;
+    }
+}
+
+class ${CLS_2} impl ${IFACE_2} {
+    public sq __new__() -> (this) {
+    }
+
+    public fn ${IFACE_METHOD_1}() -> (string result) {
+        result = "${CLS_2}-1";
+    }
+
+    public fn ${IFACE_METHOD_2}() -> (int32 result) {
+        result = 20;
+    }
+
+    public fn ${IFACE_METHOD_3}() -> (string result) {
+        result = "${CLS_2}-3";
+    }
+}
+
+// 基类实现接口，子类重写其方法（子类不重复声明接口）
+class ${CLS_3} impl ${IFACE_1} {
+    public sq __new__() -> (this) {
+    }
+
+    public fn ${IFACE_METHOD_1}() -> (string result) {
+        result = "${CLS_3}-1";
+    }
+
+    public fn ${IFACE_METHOD_2}() -> (int32 result) {
+        result = 30;
+    }
+}
+
+class ${CLS_4} extends ${CLS_3} {
+    public sq __new__() -> (this) {
+        super = ${CLS_3}();
+    }
+
+    public fn ${IFACE_METHOD_1}() -> (string result) {
+        result = "${CLS_4}-1";
+    }
+}
+
+fn nameOf(${IFACE_1} value) -> (string result) {
+    result = value.${IFACE_METHOD_1}();
+}
+
+fn numOf(${IFACE_1} value) -> (int32 result) {
+    result = value.${IFACE_METHOD_2}();
+}
+
+fn extraOf(${IFACE_2} value) -> (string result) {
+    result = value.${IFACE_METHOD_3}();
+}
+
+sq main() -> () {
+    // 接口类型的变量
+    ${IFACE_2} v = ${CLS_2}();
+    if (v.${IFACE_METHOD_1}() == "${CLS_2}-1") {
+        print("iface-var-ok");
+    } else {
+        print("iface-var-FAIL");
+    }
+    if (v.${IFACE_METHOD_2}() == 20) {
+        print("iface-var-num-ok");
+    } else {
+        print("iface-var-num-FAIL");
+    }
+    // 派生接口类型可调用基接口与自身的方法
+    if (v.${IFACE_METHOD_3}() == "${CLS_2}-3") {
+        print("iface-derived-ok");
+    } else {
+        print("iface-derived-FAIL");
+    }
+
+    // 派生接口类型的值可赋给基接口类型
+    ${IFACE_1} base = v;
+    if (base.${IFACE_METHOD_1}() == "${CLS_2}-1") {
+        print("iface-upcast-ok");
+    } else {
+        print("iface-upcast-FAIL");
+    }
+
+    // 接口类型的形参
+    if (nameOf(${CLS_2}()) == "${CLS_2}-1" && numOf(${CLS_3}()) == 30) {
+        print("iface-arg-ok");
+    } else {
+        print("iface-arg-FAIL");
+    }
+    if (extraOf(${CLS_2}()) == "${CLS_2}-3") {
+        print("iface-arg-derived-ok");
+    } else {
+        print("iface-arg-derived-FAIL");
+    }
+
+    // 基类实现接口、子类重写：经接口类型分派到子类的实现
+    ${CLS_4} child = ${CLS_4}();
+    ${IFACE_1} viaIface = child;
+    if (viaIface.${IFACE_METHOD_1}() == "${CLS_4}-1") {
+        print("iface-inherit-ok");
+    } else {
+        print("iface-inherit-FAIL");
+    }
+    // 继承自基类的实现仍然可用
+    if (viaIface.${IFACE_METHOD_2}() == 30) {
+        print("iface-inherit-base-ok");
+    } else {
+        print("iface-inherit-base-FAIL");
+    }
+
+    // 接口类型的返回值
+    ${IFACE_1} made = make(${CLS_3}());
+    if (made.${IFACE_METHOD_1}() == "${CLS_3}-1") {
+        print("iface-return-ok");
+    } else {
+        print("iface-return-FAIL");
+    }
+
+    // 未实现接口的类不能被当作接口类型使用（见negative测试）
+    ${CLS_1} plain = ${CLS_1}();
+    if (plain.${IFACE_METHOD_1}() == "${CLS_1}-1") {
+        print("plain-ok");
+    } else {
+        print("plain-FAIL");
+    }
+}
+
+fn make(${IFACE_1} value) -> (${IFACE_1} result) {
+    result = value;
+}

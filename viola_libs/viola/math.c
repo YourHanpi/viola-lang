@@ -205,7 +205,7 @@ void viola$math$comb(viola$lang$uint32 n, viola$lang$uint32 k, viola$lang$uint64
 #ifndef _VIOLA_ARRAY_T_viola$lang$float64$$array
 #define _VIOLA_ARRAY_T_viola$lang$float64$$array
 typedef struct viola$lang$float64$$array {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$float64 *data;
     viola$lang$uint64 size;

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-import tomllib
+"""编译器参数配置。
+
+原先从TOML文件读取参数：TOML解析不是C语言原生的标准库功能，为将来能够自举
+（见README_zh.md与versions_dev_plan_zh.md"漏洞修复"）不再使用，改为只提供
+内置默认值。若将来需要参数文件，应改为编译期本身可实现的简单格式。
+"""
 
 
 _SingleItemType = str | int | float | bool
@@ -13,16 +18,9 @@ class CompilerParams:
         """获取指定键对应的参数值。"""
         return self._params[key]
 
-    def __init__(self, param_path: str = "") -> None:
-        """
-        初始化CompilerParams。
-        :param param_path: 参数文件路径，为空则使用默认参数。
-        """
+    def __init__(self) -> None:
+        """初始化CompilerParams（使用内置默认参数）。"""
         self._params: dict[str, ItemType] = CompilerParams._get_default()
-        if param_path == "":
-            return
-        with open(param_path, "rb") as f:
-            self._params.update(tomllib.load(f)["compiling"])
 
     @staticmethod
     def _get_default() -> dict[str, ItemType]:

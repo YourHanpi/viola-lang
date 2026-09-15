@@ -1,0 +1,70 @@
+from viola.io import *;
+// Viola Generic Overload Test Template
+// Tests: overloaded methods in a generic class. Instantiating a class used to
+// rebuild its methods with a hardcoded overload index 0, so any method whose
+// real index was not 0 got a generated name different from the call site's
+// (the slice overload of Array::<T>::__getitem__ was the recorded case) and
+// the link failed with an undefined symbol.
+
+class ${GENERIC_CLASS}::<${TYPE_PARAM}> {
+    ${TYPE_PARAM}[] items;
+
+    public sq __new__(${TYPE_PARAM}[] items) -> (this) {
+        this.items = items;
+    }
+
+    // 重载1：按下标取元素
+    public fn pick(int32 index) -> (${TYPE_PARAM} result) {
+        result = this.items[index];
+    }
+
+    // 重载2：按下标范围取子序列（与前者同名、序号为1）
+    public fn pick(int32 start, int32 stop) -> (${TYPE_PARAM}[] result) {
+        result = this.items[start:stop];
+    }
+
+    // 重载1：计数
+    public fn total() -> (int32 result) {
+        result = this.items.length();
+    }
+
+    // 重载2：计数加倍后加偏移（同名、序号为1）
+    public fn total(int32 offset) -> (int32 result) {
+        result = this.items.length() * 2 + offset;
+    }
+}
+
+sq main() -> () {
+    int32[] raw = [${VALUE_1}, ${VALUE_2}, ${VALUE_3}, ${VALUE_4}];
+    ${GENERIC_CLASS}::<int32> box(raw);
+
+    // 序号为0的重载
+    if (box.pick(1) == ${VALUE_2}) {
+        print("gen-overload-index0-ok");
+    } else {
+        print("gen-overload-index0-FAIL");
+    }
+    // 序号为1的重载：其生成函数名必须与调用点一致，否则链接失败
+    int32[] sliced = box.pick(1, 3);
+    if (sliced.length() == 2) {
+        print("gen-overload-index1-ok");
+    } else {
+        print("gen-overload-index1-FAIL");
+    }
+    if (sliced[0] == ${VALUE_2}) {
+        print("gen-overload-index1-value-ok");
+    } else {
+        print("gen-overload-index1-value-FAIL");
+    }
+    // 同一泛型类的另一个同名重载对
+    if (box.total() == 4) {
+        print("gen-overload-total0-ok");
+    } else {
+        print("gen-overload-total0-FAIL");
+    }
+    if (box.total(7) == 15) {
+        print("gen-overload-total1-ok");
+    } else {
+        print("gen-overload-total1-FAIL");
+    }
+}

@@ -8,11 +8,11 @@ from copy import copy, deepcopy
 from enum import Enum
 import heapq
 import os
-import re
 import threading
 from typing import Optional, Callable
 
 from utils.logger import Logger
+from utils.text_utils import sanitize_c_identifier, strip_trailing_overload_suffix, find_placeholder
 
 # 函数值结构体（0.1起原Closure更名为Function，见versions_dev_plan_zh.md）
 FUNCTION_T: str = "viola$lang$function$Function"
@@ -604,10 +604,10 @@ class VariableName(NamedSymbol):
         """获取将该变量定义在文件作用域（模块级全局变量）的代码文本。
 
         不带初值：文件作用域的静态存储本就零初始化，故无需declaration_text中
-        对象类型的"= NULL"；更重要的是，不带初值的形式在C中是暂定定义，可按
-        共同符号合并规则与运行库中提供存储的同名变量（如viola.os.path的pathsep、
-        viola.os的O_*常量）合并，而带初值的形式是强符号定义，重复定义会链接失败
-        （见开发疑问记录167）。
+        对象类型的"= NULL"。存储确实由本模块提供的模块级变量（有初值，或本模块
+        给它赋过值）使用本形式；其余（无初值且本模块从未赋值）只是声明，其存储
+        由其他翻译单元提供（典型情形是运行库的C实现），生成extern声明而非定义，
+        以免与那份定义重复（见开发疑问记录168）。
         """
         return f"{self.type_name_pair_calling};"
 
@@ -905,6 +905,10 @@ class ClassName(TypeName):
                 if self_parent == target:
                     return True
                 self_parent = self_parent.parent
+            if target.is_interface:
+                # 接口实现的检查：本类（含祖先类）实现该接口即可赋值
+                # （接口不在父类链上，见开发疑问记录170(c)）
+                return any(interface.name == target.name for interface in self.all_interfaces)
             return False
         return False
 
@@ -1068,6 +1072,43 @@ class ClassName(TypeName):
         return self._interfaces
 
     @property
+    def all_interfaces(self) -> list["ClassName"]:
+        """获取该类（含其祖先类）实现的全部接口，以及这些接口自身继承的接口。
+
+        接口只由声明它的类以`impl`/`extends`列出，不随继承自动复制到子类的
+        _interfaces中，故此处沿父类链与接口自身的父链/接口表求并集：
+        - 声明接口变量的赋值检查（convertible_to）需要它；
+        - 该类为虚方法分派生成的"接口->槽位数组"表（见ClassDef）需要为
+          继承自父类的接口同样提供条目。
+        以访问集合防止接口之间循环继承时无限递归。
+        """
+        result: list["ClassName"] = []
+        visited: set[str] = set()
+        self._collect_interfaces(result, visited)
+        return result
+
+    def _collect_interfaces(self, result: list["ClassName"], visited: set[str]) -> None:
+        """把本类、祖先类与各接口所继承的接口依次加入result（去重，见all_interfaces）。"""
+        visited.add(self.name)
+        # 接口的父链也是接口（接口的extends列表中首个为父接口，见_read_class_decl）
+        if self._parent is not None and self._parent.is_interface \
+                and self._parent.name not in visited:
+            visited.add(self._parent.name)
+            result.append(self._parent)
+            self._parent._collect_interfaces(result, visited)
+        for interface in self._interfaces:
+            if interface.name in visited:
+                continue
+            visited.add(interface.name)
+            result.append(interface)
+            interface._collect_interfaces(result, visited)
+        # 类的父类是类：沿父链收集祖先类实现的接口
+        if self._parent is not None and not self._parent.is_interface \
+                and self._parent.name not in visited:
+            visited.add(self._parent.name)
+            self._parent._collect_interfaces(result, visited)
+
+    @property
     def is_abstract(self) -> bool:
         """
         获取该类是否为抽象类。
@@ -1141,6 +1182,17 @@ class ClassName(TypeName):
         return self._generic_origin is not None
 
     @property
+    def has_vtable_property(self) -> bool:
+        """获取本类的实例结构体是否含$$vtable字段。
+
+        编译器生成的类（含异常类）都有该字段（由_read_class_decl添加，
+        见symbol.py中"实例中保存其类型的TypeInfo指针"）；编译器内置的
+        string等类型与运行库共用C结构体，其布局中没有该字段，故不能经
+        $$vtable分派（见开发疑问记录170(a)）。
+        """
+        return "$$vtable" in self._properties
+
+    @property
     def virtual_slots(self) -> list[tuple[str, tuple[str, ...]]]:
         """获取虚方法槽位表（父类槽位在前，其后为本类新增的槽位）。
 
@@ -1151,7 +1203,10 @@ class ClassName(TypeName):
         不缓存结果：泛型实例化先登记空壳、再填充成员（见开发疑问记录102），
         缓存会在成员填充之前形成错误（偏少）的槽位表。
 
-        泛型实例本身没有槽位表（不参与虚方法分派，见is_generic_instance）。
+        泛型实例不参与虚方法分派：其方法名与调用点不一致的问题（实例化时恒用
+        重载序号0）已修复（见开发疑问记录170(b)），但直接放开会让
+        Array::<int>这类实例在运行期崩溃（$$vtable尚未就绪），故保持现状，
+        待虚函数表对泛型实例一并就绪后再放开。
         """
         if self.is_generic_instance:
             return []
@@ -1199,6 +1254,34 @@ class ClassName(TypeName):
             if index < len(parent_slots) and parent_slots[index] == identity:
                 return self._parent.virtual_slot_impl(index)
         return None
+
+    def method_implementation(self, identity: tuple[str, tuple[str, ...]]) -> Optional["MethodName"]:
+        """按虚方法身份获取本类（含祖先类）的实现（无则返回None）。
+
+        与virtual_slot_impl的区别是按下标查找，本方法按身份查找：
+        接口的槽位表由接口自身的方法顺序决定，与实现类的槽位表无关，
+        故实现类需要按身份找到自己对该方法的实现（见开发疑问记录170(c)）。
+        """
+        own_prefix: str = self.name + "$"
+        # noinspection PyUnresolvedReferences
+        for (name, _), method in self._methods.items():
+            if not method.is_virtual or method.is_abstract:
+                continue
+            if method.cls is not self and not method.name.startswith(own_prefix):
+                continue
+            if (name, method.virtual_arg_types) == identity:
+                return method
+        if self._parent is not None:
+            return self._parent.method_implementation(identity)
+        return None
+
+    def interface_slots(self, interface: "ClassName") -> list[Optional["MethodName"]]:
+        """获取本类对某接口各槽位的实现列表（未实现的位置为None）。
+
+        下标与接口自身的virtual_slots一致，故同一个接口在所有实现类中的
+        下标相同，接口类型的接收者据此分派（见开发疑问记录170(c)）。
+        """
+        return [self.method_implementation(identity) for identity in interface.virtual_slots]
 
     def shared_parent(
             self,
@@ -1965,7 +2048,7 @@ class TupleTypeName(ClassName):
 
     C语言层的表示为按元素类型生成唯一名称的结构体（$为合法C标识符字符）：
         typedef struct {
-            viola$lang$uint32 $refCount;
+            viola$lang$atomic_uint32 $refCount;
             viola$lang$ptr $parent;
             viola$lang$uint64 size;
             <元素0的c_calling_type> $0;
@@ -2015,7 +2098,7 @@ class TupleTypeName(ClassName):
             f"#ifndef _VIOLA_TUPLE_T_{self.name}",
             f"#define _VIOLA_TUPLE_T_{self.name}",
             "typedef struct {",
-            "\tviola$lang$uint32 $refCount;",
+            "\tviola$lang$atomic_uint32 $refCount;",
             "\tviola$lang$ptr $parent;",
             "\tviola$lang$uint64 size;",
             members,
@@ -2176,7 +2259,7 @@ class FunctionTypeName(TypeName):
     @staticmethod
     def _c_safe_type_name(t: TypeName) -> str:
         """将类型名转换为合法的C标识符片段。"""
-        return re.sub(r"[^A-Za-z0-9_$]", "$", t.name)
+        return sanitize_c_identifier(t.name)
 
     @classmethod
     def _make_c_name(cls, args: list[TypeName], returns: list[TypeName]) -> str:
@@ -3034,7 +3117,7 @@ class MethodName(PropertyVariableName):
         重载序号可能出现两次（声明时的前置序号与set_cls追加的序号），
         故需去掉末尾连续的序号。
         """
-        return re.sub(r"(\$_\d+)+$", "", self._method_name)
+        return strip_trailing_overload_suffix(self._method_name)
 
     @property
     def virtual_arg_types(self) -> tuple[str, ...]:
@@ -3262,6 +3345,9 @@ _add_native_method(StringTypeName, "_float64ToString", [FLOAT64], [StringTypeNam
 _add_native_method(StringTypeName, "_boolToString", [BOOL], [StringTypeName], ["value"], ["result"], is_static=True)
 _add_native_method(StringTypeName, "_stringToString", [StringTypeName], [StringTypeName], ["value"], ["result"],
                    is_static=True)
+# 未定义toString的类的默认转换：返回"<类名>"（见开发疑问记录175(b)）
+_add_native_method(StringTypeName, "_objectToString", [VOID_PTR], [StringTypeName], ["value"], ["result"],
+                   is_static=True)
 
 # x.toString()的类型映射：基本类型名 -> (string类上的静态转换函数名, 该函数的形参类型)。
 # 较窄的整型/浮点型按C的隐式转换传给更宽的形参（见开发疑问记录166）。
@@ -3287,11 +3373,21 @@ def get_to_string_method(caller_type: TypeName) -> Optional[MethodName]:
 
     见开发疑问记录166：基本类型不是类、没有方法表，x.toString()由编译器按
     x的静态类型解析到string类上的静态转换函数。
+
+    见开发疑问记录175(b)：类类型的toString约定——类自身（含继承）定义了
+    `fn toString() -> (string result);`时由其方法表解析（此处返回None），
+    否则用默认转换返回类名。
     """
     helper: Optional[tuple[str, TypeName]] = _TO_STRING_HELPERS.get(caller_type.name)
-    if helper is None:
-        return None
-    return StringTypeName.methods.get((helper[0], (helper[1],)))
+    if helper is not None:
+        return StringTypeName.methods.get((helper[0], (helper[1],)))
+    if isinstance(caller_type, ClassName) and not caller_type.is_generic \
+            and not caller_type.is_c_part:
+        # 继承了toString的类由常规方法查找解析（含继承来的方法）
+        if any(name == "toString" for (name, _) in caller_type.methods):
+            return None
+        return StringTypeName.methods.get(("_objectToString", (VOID_PTR,)))
+    return None
 
 # 函数值类型（viola.lang.function，0.1起，见versions_dev_plan_zh.md）。
 # 所有函数（无论静态还是动态）作为值使用时均封装为
@@ -3990,10 +4086,10 @@ class SymbolTable:
             text: str = template
             for token, value in substitutions.items():
                 text = text.replace(token, value)
-            remaining: list[str] = re.findall(r"@[a-zA-Z_]+@", text)
-            if len(remaining) > 0:
+            remaining: str = find_placeholder(text)
+            if remaining != "":
                 raise InternalCompilerException(
-                    f"Unknown placeholder {remaining[0]} in the body of array method {desc.suffix}.",
+                    f"Unknown placeholder {remaining} in the body of array method {desc.suffix}.",
                     SourceInfo(""))
             lines.append(text)
         return lines
@@ -4059,7 +4155,7 @@ class SymbolTable:
             f"#ifndef _VIOLA_ARRAY_T_{arr_name}",
             f"#define _VIOLA_ARRAY_T_{arr_name}",
             "typedef struct {",
-            "\tviola$lang$uint32 $refCount;",
+            "\tviola$lang$atomic_uint32 $refCount;",
             "\tviola$lang$ptr $parent;",
             f"\t{elem_asg} data;",
             "\tviola$lang$uint64 size;",
@@ -4257,7 +4353,7 @@ class SymbolTable:
             f"#ifndef _VIOLA_TUPLE_T_{name}",
             f"#define _VIOLA_TUPLE_T_{name}",
             "typedef struct {",
-            "\tviola$lang$uint32 $refCount;",
+            "\tviola$lang$atomic_uint32 $refCount;",
             "\tviola$lang$ptr $parent;",
             "\tviola$lang$uint64 size;",
             members,
@@ -4470,6 +4566,14 @@ class SymbolTable:
         # 本模块定义的、待解析校验的别名（见read_from与_read_type_alias_decl）
         self._pending_aliases: list[TypeAliasName] = []
         self._current_cls: Optional[ClassName] = None
+        # 被本编译单元赋值/读取过的模块级变量（按限定后的C名称记录）。
+        # 模块级变量的存储由定义它的模块提供：无初值且本模块既未赋值也未读取时，
+        # 它只是"声明"（存储由运行库的C实现等其他翻译单元提供，如viola.os的
+        # STDIN_FILENO与O_*常量），文件作用域上生成extern声明而非定义，从而
+        # 无需依赖C的共同符号合并（见开发疑问记录168）。
+        # 键为变量的限定C名称（含模块前缀），故跨模块也不会混淆。
+        self._assigned_globals: set[str] = set()
+        self._read_globals: set[str] = set()
         if not src_path == "" and not workspace == "":
             # 元数据中的路径为缓存路径（含__viola_cache__与..段），
             # 还原为真实的源文件路径
@@ -4605,6 +4709,24 @@ class SymbolTable:
         if symbol.kw_type != SymbolType.FUNCTION and symbol.kw_type != SymbolType.METHOD and types is not None:
             raise InternalCompilerException("Symbol must not have types.", self._src_info)
         self._symbols[-1][name, tuple(types) if types is not None else None] = symbol
+
+    def mark_global_assigned(self, name: str) -> None:
+        """记录本编译单元给某个模块级变量赋过值（见_assigned_globals）。"""
+        self._assigned_globals.add(name)
+
+    def mark_global_read(self, name: str) -> None:
+        """记录本编译单元读取过某个模块级变量（见_read_globals）。"""
+        self._read_globals.add(name)
+
+    def needs_global_storage(self, name: str) -> bool:
+        """判断本模块是否要为某个模块级变量提供存储（否则只生成extern声明）。
+
+        有初值（由调用方另行判断）、被本模块赋值、或被本模块读取时都需要存储：
+        读取意味着该模块确实把它当作本模块的变量使用，生成定义（零初始化）
+        与改动前的行为一致；只有"既无初值、又从未在本模块出现"的变量才是
+        纯粹的声明（其存储由其他翻译单元提供，见_assigned_globals的说明）。
+        """
+        return name in self._assigned_globals or name in self._read_globals
 
     def add_to_root(self, symbol: NamedSymbol, name: str, types: Optional[list[TypeName]]) -> None:
         """

@@ -6,7 +6,7 @@
 #ifndef _VIOLA_ARRAY_T_viola$lang$float64$$array
 #define _VIOLA_ARRAY_T_viola$lang$float64$$array
 typedef struct viola$lang$float64$$array {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$float64 data;
 	viola$lang$uint64 size;
@@ -16,7 +16,7 @@ typedef struct viola$lang$float64$$array {
 #ifndef _VIOLA_ARRAY_T_viola$lang$uint8$$array
 #define _VIOLA_ARRAY_T_viola$lang$uint8$$array
 typedef struct viola$lang$uint8$$array {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint8 data;
 	viola$lang$uint64 size;
@@ -26,7 +26,7 @@ typedef struct viola$lang$uint8$$array {
 #ifndef _VIOLA_ARRAY_T_viola$lang$string$$array
 #define _VIOLA_ARRAY_T_viola$lang$string$$array
 typedef struct viola$lang$string$$array {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$string ** data;
 	viola$lang$uint64 size;
@@ -36,7 +36,7 @@ typedef struct viola$lang$string$$array {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$float64  $0;
@@ -47,7 +47,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$float64
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$float64  $0;
@@ -59,7 +59,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$uint32  $0;
@@ -70,7 +70,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint64
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint64
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$uint64  $0;
@@ -81,7 +81,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$int32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$viola$lang$int32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$float64  $0;
@@ -93,7 +93,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int64$viola$lang$int64
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int64$viola$lang$int64
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$int64  $0;
@@ -105,7 +105,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int64
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int64
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$int64  $0;
@@ -116,7 +116,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32$viola$lang$uint32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint32$viola$lang$uint32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$uint32  $0;
@@ -128,7 +128,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$$array
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$$array
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$float64$$array *  $0;
@@ -139,7 +139,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$$array$viola$lang$float64$$array
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$float64$$array$viola$lang$float64$$array
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$float64$$array *  $0;
@@ -151,7 +151,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$bool
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$bool  $0;
@@ -162,7 +162,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$string *  $0;
@@ -173,7 +173,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 
@@ -183,7 +183,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$object
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$object
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$object *  $0;
@@ -194,7 +194,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$string$viola$lang$string
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$string$viola$lang$string
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$string *  $0;
@@ -207,7 +207,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$io$file *  $0;
@@ -218,7 +218,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint8$$array
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$uint8$$array
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$uint8$$array *  $0;
@@ -229,7 +229,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file$viola$lang$string
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file$viola$lang$string
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$io$file *  $0;
@@ -241,7 +241,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file$viola$lang$uint8$$array
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$io$file$viola$lang$uint8$$array
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$io$file *  $0;
@@ -253,7 +253,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$uint32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$uint32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$string *  $0;
@@ -265,7 +265,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$uint32$viola$lang$uint32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$string *  $0;
@@ -278,7 +278,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$int32  $0;
@@ -289,7 +289,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$int32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$int32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$int32  $0;
@@ -301,7 +301,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$uint32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$uint32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$int32  $0;
@@ -313,7 +313,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$uint32$viola$lang$uint32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$uint32$viola$lang$uint32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$int32  $0;
@@ -326,7 +326,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$os$Stat
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$os$Stat
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$os$Stat *  $0;
@@ -337,7 +337,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$string
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$string
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$string *  $0;
@@ -349,7 +349,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$$array
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$$array
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$string$$array *  $0;
@@ -360,7 +360,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$int32$viola$lang$int32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$int32$viola$lang$int32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$int32  $0;
@@ -373,7 +373,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$int32
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$string$viola$lang$int32
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$string *  $0;
@@ -385,7 +385,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$os$StatVFS
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$os$StatVFS
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$os$StatVFS *  $0;
@@ -396,7 +396,7 @@ typedef struct {
 #ifndef _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$string
 #define _VIOLA_TUPLE_T_viola$collections$Tuple$viola$lang$int32$viola$lang$string
 typedef struct {
-	viola$lang$uint32 $refCount;
+	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
 	viola$lang$int32  $0;

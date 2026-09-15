@@ -1466,7 +1466,7 @@ class GlobalParser:
         语法：`enum 名称 [extends 基于类型] { 项名 [= 值] [, 或 ;] ... }`。
         省略取值的项取前一项的值加一（第一项从0开始）；前一项的取值不是
         整数字面量时代码里无法推算，此时后续项必须显式给出取值。
-        基于类型默认为uint32，条目格式为`<名称>%<基于类型>`（见开发疑问记录160）。
+        基于类型默认为int32，条目格式为`<名称>%<基于类型>`（见开发疑问记录160、171）。
         """
         if len(prefixes) > 0:
             self._raise(f"Unexpected prefix: {' '.join(prefixes)}")
@@ -1476,7 +1476,7 @@ class GlobalParser:
             self._raise("Unexpected token: " + self._get_current().text)
             return None
         enum_name: str = self._get_current().text
-        based_type: str = "uint32"
+        based_type: str = "int32"
         self._next()
         if self._match_type("EXTENDS"):
             self._next()

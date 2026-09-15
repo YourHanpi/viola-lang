@@ -11,7 +11,7 @@
 #ifndef _VIOLA_ARRAY_T_viola$lang$string$$array
 #define _VIOLA_ARRAY_T_viola$lang$string$$array
 typedef struct viola$lang$string$$array {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$string **data;
     viola$lang$uint64 size;
@@ -21,7 +21,7 @@ typedef struct viola$lang$string$$array {
 #ifndef _VIOLA_ARRAY_T_viola$lang$uint16$$array
 #define _VIOLA_ARRAY_T_viola$lang$uint16$$array
 typedef struct viola$lang$uint16$$array {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$uint16 *data;
     viola$lang$uint64 size;

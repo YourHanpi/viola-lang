@@ -17,6 +17,8 @@ from typing import Optional, Callable
 CONVERTIBLE_TO_FUNC = "viola$lang$convertibleTo"
 # 动态类型信息（虚函数表）类型：虚方法调用经对象的$$vtable按实际类型分派
 TYPE_INFO_T: str = "viola$dynamic$TypeInfo"
+# 取某类型对某接口的槽位数组的运行库入口（见开发疑问记录170(c)）
+INTERFACE_VFUNC_FUNC: str = "viola$lang$interfaceVfunc"
 FUNC_CALL_T: str = "viola$threads$FuncCall"
 FUNC_ENQUEUE_FUNC: str = "viola$threads$enqueue"
 LISTENER_WAIT_FUNC: str = "viola$threads$waitListener"
@@ -854,6 +856,10 @@ class VariableRef(ValueRef):
         self._value: Optional[Expression] = None
         # 函数引用（FunctionName）作为值使用时封装的Function结构体临时变量名
         self._wrap_name: Optional[str] = None
+        if isinstance(var, GlobalVariableName):
+            # 本模块读取了该模块级变量：它按本模块的变量使用，需要在文件作用域
+            # 生成存储定义而非extern声明（见SymbolTable.needs_global_storage）
+            symbol_table.mark_global_read(var.name)
 
     def as_async(self) -> "VariableRef":
         return self
@@ -3222,16 +3228,33 @@ class CallOp(Expression):
             return None
         return receiver_type.virtual_slot_index(self._method.virtual_identity)
 
+    def _interface_slot_text(self, receiver_text: str, slot: int) -> str:
+        """获取接口类型的接收者上的虚方法槽位文本。
+
+        接口不在类的继承链上，其槽位数组按"接口名"另行登记（见开发疑问记录
+        170(c)），故经viola$lang$interfaceVfunc按接口的TypeInfo取出该类对应该
+        接口的槽位数组，下标为接口自身方法表中的位置（同一个接口在所有实现类中
+        下标一致）。
+        """
+        receiver_type: TypeName = self._arg_list[0].return_type
+        return (f"{INTERFACE_VFUNC_FUNC}(({receiver_text})->$$vtable, "
+                f"(void *)&{receiver_type.vtable_name})[{slot}]")
+
     def _callee_text(self, is_async: bool, receiver_text: Optional[str]) -> str:
         """获取被调方文本。
 
         虚方法经接收者对象的虚函数表槽位调用（同步取槽位的$sync、异步取
-        $async），其余情况按静态解析的函数名调用。
+        $async）：接收者的静态类型是类时取其自身的vfunc，是接口时取其接口条目中
+        的槽位数组；其余情况按静态解析的函数名调用。
         """
         if receiver_text is not None:
             slot: Optional[int] = self._virtual_slot
             if slot is not None:
-                slot_text: str = f"(({TYPE_INFO_T} *)({receiver_text})->$$vtable)->vfunc[{slot}]"
+                receiver_type: Optional[TypeName] = self._arg_list[0].return_type
+                if isinstance(receiver_type, ClassName) and receiver_type.is_interface:
+                    slot_text: str = self._interface_slot_text(receiver_text, slot)
+                else:
+                    slot_text = f"(({TYPE_INFO_T} *)({receiver_text})->$$vtable)->vfunc[{slot}]"
                 if is_async:
                     # 异步调用的函数指针由工作线程按统一签名调用，无需类型转换
                     return f"{slot_text}.$async"

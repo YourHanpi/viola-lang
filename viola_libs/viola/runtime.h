@@ -52,13 +52,37 @@ typedef struct viola$dynamic$VFuncSlot {
     void *$async;  /* 异步包装（方法C名称 + "$async"） */
 } viola$dynamic$VFuncSlot;
 
+/* 接口条目：某个类（的TypeInfo）对某接口提供的槽位数组。
+   接口不在类的继承链上（一个类可实现多个接口），故接口的实现单独列在此表中，
+   槽位下标由接口自身的方法顺序决定，因而同一个接口在各类中的下标一致
+   （见开发疑问记录170(c)）。 */
+typedef struct viola$dynamic$InterfaceEntry {
+    struct viola$dynamic$TypeInfo *$interface;  /* 接口的类型信息 */
+    viola$dynamic$VFuncSlot *vfunc;             /* 该类对应该接口的槽位数组 */
+} viola$dynamic$InterfaceEntry;
+
 typedef struct viola$dynamic$TypeInfo {
     struct viola$dynamic$TypeInfo *$parent;
     viola$dynamic$VFuncSlot *vfunc;  /* 虚方法槽位数组；无虚方法时为NULL */
+    /* 虚析构入口：签名与析构函数一致（void (*)(<类> *, viola$threads$Listener *)）。
+       编译器生成的析构函数在开头比较对象的$$vtable与自身的TypeInfo：不同则经此
+       转交对象的实际类型的析构函数，从而实现虚析构（见开发疑问记录170(a)）。 */
+    void *$del;
+    /* 类的名称（UTF-8的C字符串，由编译器在__global__中写入）。未定义toString的类
+       由默认转换返回该名称（见开发疑问记录175(b)）。 */
+    const char *$name;
+    /* 本类型实现的接口条目数组，以$interface为NULL的条目结尾；
+       未实现任何接口时为NULL（见开发疑问记录170(c)）。 */
+    const viola$dynamic$InterfaceEntry *$interfaces;
 } viola$dynamic$TypeInfo;
 
-/* 判断对象类型是否为目标的子类型（沿$parent链查找） */
+/* 判断对象类型是否为目标的子类型（沿$parent链与接口表查找） */
 int viola$lang$convertibleTo(void *obj_vtable, void *target_vtable);
+/* 取某类型对某接口提供的槽位数组（无则返回NULL）。
+   供接口类型的接收者上的方法调用按接口的槽位下标分派（见开发疑问记录170(c)）。 */
+viola$dynamic$VFuncSlot *viola$lang$interfaceVfunc(void *vtable, void *interface_vtable);
+/* 取对象的类名（未参与虚分派或无名字时返回"object"），供默认的toString使用 */
+const char *viola$lang$objectTypeName(viola$lang$ptr object);
 
 /* ================= 数组越界检查 ================= */
 /* 数组下标访问（__getitem__/__setitem__）的越界检查由本符号控制：
@@ -70,17 +94,82 @@ int viola$lang$convertibleTo(void *obj_vtable, void *target_vtable);
 #define VIOLA_ARRAY_BOUNDS_CHECK 1
 #endif
 
+/* ================= 原子引用计数 ================= */
+/* 对象的引用计数$refCount以系统提供的原子设施进行增减：多线程（viola.thread）
+   可并发持有同一对象，非原子的计数会发生丢失更新，进而导致提前释放或重复释放
+   （见versions_dev_plan_zh.md"漏洞修复"）。
+   各编译环境下所用的系统原子设施：
+     - C11及以上的C：_Atomic（<stdatomic.h>）与atomic_fetch_*_explicit；
+     - C++11及以上：std::atomic（<atomic>）；
+     - 其它（C99等）：GCC/Clang的__atomic内建函数、MSVC的_Interlocked内建函数。
+   无论采用哪一种，viola$lang$atomic_uint32的大小与对齐都与viola$lang$uint32相同，
+   故各结构体的布局（以及编译器侧的结构体布局校验）不受影响。 */
+#if defined(__cplusplus) && (__cplusplus >= 201103L)
+#include <atomic>
+typedef std::atomic<viola$lang$uint32> viola$lang$atomic_uint32;
+#define VIOLA_REFCOUNT_ADD_FETCH(p, value) ((p)->fetch_add((value), std::memory_order_seq_cst) + (value))
+#define VIOLA_REFCOUNT_SUB_FETCH(p, value) ((p)->fetch_sub((value), std::memory_order_seq_cst) - (value))
+#define VIOLA_REFCOUNT_LOAD(p) ((p)->load(std::memory_order_seq_cst))
+#define VIOLA_REFCOUNT_STORE(p, value) ((p)->store((value), std::memory_order_seq_cst))
+#elif (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__STDC_NO_ATOMICS__)) \
+    || (defined(__GNUC__) && (__GNUC__ >= 5))
+/* GCC/Clang在C99等更早的标准模式下也提供_Atomic与<stdatomic.h>扩展 */
+#include <stdatomic.h>
+typedef _Atomic viola$lang$uint32 viola$lang$atomic_uint32;
+#define VIOLA_REFCOUNT_ADD_FETCH(p, value) atomic_fetch_add_explicit((p), (value), memory_order_seq_cst)
+#define VIOLA_REFCOUNT_SUB_FETCH(p, value) atomic_fetch_sub_explicit((p), (value), memory_order_seq_cst)
+#define VIOLA_REFCOUNT_LOAD(p) atomic_load_explicit((p), memory_order_seq_cst)
+#define VIOLA_REFCOUNT_STORE(p, value) atomic_store_explicit((p), (value), memory_order_seq_cst)
+#elif defined(_MSC_VER)
+#include <intrin.h>
+typedef volatile viola$lang$uint32 viola$lang$atomic_uint32;
+#define VIOLA_REFCOUNT_ADD_FETCH(p, value) ((viola$lang$uint32)(_InterlockedExchangeAdd((volatile long *)(p), \
+    (long)(value)) + (long)(value)))
+#define VIOLA_REFCOUNT_SUB_FETCH(p, value) ((viola$lang$uint32)(_InterlockedExchangeAdd((volatile long *)(p), \
+    -(long)(value)) - (long)(value)))
+#define VIOLA_REFCOUNT_LOAD(p) (*(p))
+#define VIOLA_REFCOUNT_STORE(p, value) (*(p) = (value))
+#else
+typedef viola$lang$uint32 viola$lang$atomic_uint32;
+#define VIOLA_REFCOUNT_ADD_FETCH(p, value) (*(p) += (value))
+#define VIOLA_REFCOUNT_SUB_FETCH(p, value) (*(p) -= (value))
+#define VIOLA_REFCOUNT_LOAD(p) (*(p))
+#define VIOLA_REFCOUNT_STORE(p, value) (*(p) = (value))
+#endif
+
+/* 增减引用计数（返回操作后的值） */
+static inline viola$lang$uint32 viola$lang$refcount_inc(viola$lang$atomic_uint32 *ref_count) {
+    return VIOLA_REFCOUNT_ADD_FETCH(ref_count, 1);
+}
+
+/* 递减引用计数，返回递减后的值：返回0表示此次递减丢弃了最后一个引用，
+   调用方应随即释放对象。整个"递减并判断是否归零"是一次原子操作，
+   避免两个线程各自递减后都读到0而重复释放（见versions_dev_plan_zh.md"漏洞修复"）。 */
+static inline viola$lang$uint32 viola$lang$refcount_dec(viola$lang$atomic_uint32 *ref_count) {
+    return VIOLA_REFCOUNT_SUB_FETCH(ref_count, 1);
+}
+
+/* 读取引用计数 */
+static inline viola$lang$uint32 viola$lang$refcount_get(const viola$lang$atomic_uint32 *ref_count) {
+    return VIOLA_REFCOUNT_LOAD(ref_count);
+}
+
+/* 写入引用计数（仅在对象尚未被其他线程共享时使用，如分配点） */
+static inline void viola$lang$refcount_set(viola$lang$atomic_uint32 *ref_count, viola$lang$uint32 value) {
+    VIOLA_REFCOUNT_STORE(ref_count, value);
+}
+
 /* ================= 对象基类 ================= */
 /* 所有类实例以$refCount、$parent开头（用户类的结构体由编译器生成，
    并继承object的字段布局；此处提供object类型供元组等组合类型引用） */
 typedef struct viola$lang$object {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
 } viola$lang$object;
 
 /* ================= 字符串 ================= */
 typedef struct viola$lang$string {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$uint64 length;
     viola$lang$uint16 *data;
@@ -95,7 +184,7 @@ viola$lang$string *viola$lang$string$$array$decode(const char *str, const char *
 
 /* ================= 切片 ================= */
 typedef struct viola$lang$slice {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$uint64 start;
     viola$lang$uint64 end;
@@ -105,7 +194,7 @@ typedef struct viola$lang$slice {
 /* ================= 异常 ================= */
 typedef struct viola$lang$exception$Exception viola$lang$exception$Exception;
 struct viola$lang$exception$Exception {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$ptr $$vtable;
     viola$lang$string *message;
@@ -125,7 +214,7 @@ typedef void (*viola$lang$function$AsyncPtr)(void);
 #ifndef _VIOLA_ARRAY_T_viola$lang$string$$array
 #define _VIOLA_ARRAY_T_viola$lang$string$$array
 typedef struct viola$lang$string$$array {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$string **data;
     viola$lang$uint64 size;
@@ -136,7 +225,7 @@ typedef struct viola$lang$string$$array {
    所有函数（无论静态还是动态）作为值使用时均封装为本结构体；
    调用静态函数时仍然直接传递函数指针。 */
 typedef struct viola$lang$function$Function {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$function$AsyncPtr *asyncPtr;
     viola$lang$function$SyncPtr *syncPtr;
@@ -149,7 +238,7 @@ typedef struct viola$lang$function$Function {
 /* 具体的元组结构体由编译器按元素类型生成（成员为$0、$1等）；
    此处定义无元素的通用元组结构体前缀。 */
 typedef struct viola$collections$Tuple {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$uint64 size;
 } viola$collections$Tuple;
@@ -165,7 +254,7 @@ void viola$collections$Tuple$__del__(void *_this, viola$threads$Listener *listen
 #ifndef _VIOLA_CLASS_T_viola$io$file
 #define _VIOLA_CLASS_T_viola$io$file
 typedef struct viola$io$file {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$ptr $$vtable;
     void *fp;
@@ -178,7 +267,7 @@ typedef struct viola$io$file {
 #ifndef _VIOLA_CLASS_T_viola$os$Stat
 #define _VIOLA_CLASS_T_viola$os$Stat
 typedef struct viola$os$Stat {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$ptr $$vtable;
     viola$lang$uint32 st_mode;
@@ -196,7 +285,7 @@ typedef struct viola$os$Stat {
 #ifndef _VIOLA_CLASS_T_viola$os$StatVFS
 #define _VIOLA_CLASS_T_viola$os$StatVFS
 typedef struct viola$os$StatVFS {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$ptr $$vtable;
     viola$lang$uint64 f_bsize;
@@ -217,7 +306,7 @@ typedef struct viola$os$StatVFS {
 #ifndef _VIOLA_ARRAY_T_viola$lang$uint8$$array
 #define _VIOLA_ARRAY_T_viola$lang$uint8$$array
 typedef struct viola$lang$uint8$$array {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$uint8 *data;
     viola$lang$uint64 size;

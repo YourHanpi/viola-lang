@@ -322,6 +322,84 @@ fn shapeSide(ShapeBase shape) -> (int result) {
     result = shape.side;
 }
 
+// 接口（见开发疑问记录170(c)）：接口是类型，可声明接口类型的变量/形参/返回值，
+// 经接口类型调用按对象的实际类型分派
+interface HasSide {
+    fn sideOf() -> (int result);
+}
+
+class SideSquare impl HasSide {
+    public int side;
+
+    public sq __new__(int side) -> (this) {
+        this.side = side;
+    }
+
+    public fn sideOf() -> (int result) {
+        result = this.side;
+    }
+}
+
+// 派生接口：继承 HasSide 并新增方法
+interface HasTwice extends HasSide {
+    fn twiceOf() -> (int result);
+}
+
+// 基类实现接口，子类重写其实现（子类不重复声明接口）
+class SideBase impl HasSide {
+    public int side;
+
+    public sq __new__(int side) -> (this) {
+        this.side = side;
+    }
+
+    public fn sideOf() -> (int result) {
+        result = this.side;
+    }
+}
+
+class SideDerived extends SideBase impl HasTwice {
+    public sq __new__(int side) -> (this) {
+        super = SideBase(side);
+    }
+
+    public fn sideOf() -> (int result) {
+        result = this.side + 100;
+    }
+
+    public fn twiceOf() -> (int result) {
+        result = this.side * 2;
+    }
+}
+
+fn sideViaInterface(HasSide value) -> (int result) {
+    result = value.sideOf();
+}
+
+fn twiceViaInterface(HasTwice value) -> (int result) {
+    result = value.twiceOf();
+}
+
+fn passThrough(HasSide value) -> (HasSide result) {
+    result = value;
+}
+
+// toString约定（见开发疑问记录175(b)）：未定义toString的类返回类名，
+// 定义了toString的类返回其实现
+class PlainNamed {
+    public sq __new__() -> (this) {
+    }
+}
+
+class CustomNamed {
+    public sq __new__() -> (this) {
+    }
+
+    public fn toString() -> (string result) {
+        result = "custom-named";
+    }
+}
+
 // 断言：条件不成立时打印并以致非零退出码结束（供测试脚本判定）
 sq check(bool condition, string label) -> () {
     if (condition) {
@@ -835,6 +913,56 @@ sq main() -> () {
     check(shapeSide(plainSquare) == 8, "type alias of a class");
     AliasOfAlias aliasOfAlias = aliasInt;
     check(aliasOfAlias == 5, "alias of an alias");
+
+    // 接口类型（见开发疑问记录170(c)）：变量、形参、返回值与数组元素
+    SideSquare ifaceSquare = SideSquare(4);
+    HasSide ifaceVar = ifaceSquare;
+    check(ifaceVar.sideOf() == 4, "interface-typed variable dispatch");
+    check(sideViaInterface(ifaceSquare) == 4, "interface-typed parameter");
+    check(passThrough(ifaceSquare).sideOf() == 4, "interface-typed return value");
+    HasSide[] ifaceArray = [ifaceSquare, SideSquare(9)];
+    check(ifaceArray.length() == 2 && ifaceArray[1].sideOf() == 9,
+          "interface-typed array elements");
+    // 派生接口类型的值可赋给基接口类型；接口继承是传递的
+    SideDerived ifaceDerived = SideDerived(5);
+    HasTwice derivedIface = ifaceDerived;
+    check(derivedIface.sideOf() == 105 && derivedIface.twiceOf() == 10,
+          "derived interface methods");
+    HasSide upcastIface = derivedIface;
+    check(upcastIface.sideOf() == 105, "derived interface to base interface");
+    HasSide transitiveIface = ifaceDerived;
+    check(twiceViaInterface(ifaceDerived) == 10, "derived interface parameter");
+    // 基类实现接口、子类重写：经接口类型分派到子类的实现
+    SideBase baseThroughIface = SideBase(7);
+    HasSide baseAsIface = baseThroughIface;
+    check(baseAsIface.sideOf() == 7, "base class implementing an interface");
+    check(transitiveIface.sideOf() == 105, "interface dispatch reaches the override");
+    // 异步调用经接口类型分派
+    async int ifaceAsync = sideViaInterface(ifaceSquare);
+    check(ifaceAsync == 4, "interface dispatch in an async call");
+
+    // 类的toString约定（见开发疑问记录175(b)）
+    PlainNamed plainNamed = PlainNamed();
+    check(plainNamed.toString().count("PlainNamed") == 1, "default toString returns the class name");
+    CustomNamed customNamed = CustomNamed();
+    check(customNamed.toString() == "custom-named", "class-defined toString");
+    // 基本类型的toString与字面量后接成员访问（见开发疑问记录175(a)附带修复）
+    check(1.toString() == "1" && 0.toString() == "0", "member access after an int literal");
+    check(2.5.toString() == "2.5", "member access after a float literal");
+    check((3 + 4).toString() == "7", "member access after a parenthesized expression");
+
+    // 泛型类中同名重载方法的实例化命名（见开发疑问记录170(b)）：
+    // viola.util.array 的 Array::<T> 其 __getitem__ 有下标与切片两个重载
+    int[] arrayRaw = [10, 20, 30, 40];
+    array.Array::<int> genWrapped = array.Array::<int>(arrayRaw);
+    check(genWrapped.length() == 4, "generic array length");
+    check(genWrapped[1] == 20, "generic array indexed overload");
+    array.Array::<int> genSliced = genWrapped[1:3];
+    check(genSliced.length() == 2 && genSliced[0] == 20 && genSliced[1] == 30,
+          "generic array slice overload");
+    array.Array::<int> genAppended = genWrapped.append(50);
+    check(genAppended.length() == 5 && genAppended[4] == 50, "generic array append");
+    check(genWrapped.concat(array.Array::<int>(arrayRaw)).length() == 8, "generic array concat");
 
     print("0.1 runtime library test completed\n");
 }

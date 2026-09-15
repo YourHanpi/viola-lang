@@ -1307,6 +1307,15 @@ void viola$lang$string$_stringToString$_0(viola$lang$string *value, viola$lang$s
     /* 字符串的toString返回自身：结果由调用方持有，引用计数加一 */
     *result = value;
     if (value != NULL) {
-        value->$refCount++;
+        viola$lang$refcount_inc(&value->$refCount);
     }
+}
+
+/* 未定义toString的类的默认转换（见开发疑问记录175(b)）：返回"<类名>"。
+   类的toString约定：类可以定义`fn toString() -> (string result);`，
+   x.toString()按x的静态类型解析到该方法；未定义时用本函数返回类名。 */
+void viola$lang$string$_objectToString$_0(viola$lang$ptr value, viola$lang$string **result,
+                                          viola$threads$Listener *listener) {
+    (void)listener;
+    *result = viola$lang$string$fromCharString(viola$lang$objectTypeName(value));
 }

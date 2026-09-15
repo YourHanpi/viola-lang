@@ -1,0 +1,106 @@
+from viola.io import *;
+// Viola Class toString Test Template
+// Tests: the class toString convention (a class-defined toString is used;
+// classes without one fall back to the class name), inheritance of toString,
+// and member access directly after an integer/float literal
+
+class ${PLAIN_CLASS} {
+    ${PROP_TYPE} ${PROP_NAME};
+
+    public sq __new__(${PROP_TYPE} ${PROP_NAME}) -> (this) {
+        this.${PROP_NAME} = ${PROP_NAME};
+    }
+}
+
+class ${CUSTOM_CLASS} {
+    ${PROP_TYPE} ${PROP_NAME};
+
+    public sq __new__(${PROP_TYPE} ${PROP_NAME}) -> (this) {
+        this.${PROP_NAME} = ${PROP_NAME};
+    }
+
+    public fn toString() -> (string result) {
+        result = "${CUSTOM_CLASS}-" + this.${PROP_NAME}.toString();
+    }
+}
+
+class ${SUB_CLASS} extends ${CUSTOM_CLASS} {
+    public sq __new__(${PROP_TYPE} ${PROP_NAME}) -> (this) {
+        super = ${CUSTOM_CLASS}(${PROP_NAME});
+    }
+}
+
+class ${PLAIN_SUB_CLASS} extends ${PLAIN_CLASS} {
+    public sq __new__(${PROP_TYPE} ${PROP_NAME}) -> (this) {
+        super = ${PLAIN_CLASS}(${PROP_NAME});
+    }
+}
+
+sq main() -> () {
+    // A class without toString: the default conversion yields the class name
+    ${PLAIN_CLASS} plain = ${PLAIN_CLASS}(${VALUE_1});
+    string plainText = plain.toString();
+    if (plainText.count("${PLAIN_CLASS}") == 1) {
+        print("class-tostring-default-ok");
+    } else {
+        print("class-tostring-default-FAIL");
+    }
+
+    // A class with toString: its own implementation is used
+    ${CUSTOM_CLASS} custom = ${CUSTOM_CLASS}(${VALUE_1});
+    if (custom.toString() == "${CUSTOM_CLASS}-${VALUE_1}") {
+        print("class-tostring-custom-ok");
+    } else {
+        print("class-tostring-custom-FAIL");
+    }
+
+    // A subclass inherits the custom toString
+    ${SUB_CLASS} sub = ${SUB_CLASS}(${VALUE_1});
+    if (sub.toString() == "${CUSTOM_CLASS}-${VALUE_1}") {
+        print("class-tostring-inherit-ok");
+    } else {
+        print("class-tostring-inherit-FAIL");
+    }
+
+    // A subclass without its own toString uses the default conversion, which
+    // reports the subclass name (the object's actual type)
+    ${PLAIN_SUB_CLASS} plainSub = ${PLAIN_SUB_CLASS}(${VALUE_1});
+    string subText = plainSub.toString();
+    if (subText.count("${PLAIN_SUB_CLASS}") == 1) {
+        print("class-tostring-subclass-ok");
+    } else {
+        print("class-tostring-subclass-FAIL");
+    }
+
+    // toString of built-in values still works
+    int32 builtin = ${VALUE_1};
+    if (builtin.toString() == "${VALUE_1}") {
+        print("class-tostring-builtin-ok");
+    } else {
+        print("class-tostring-builtin-FAIL");
+    }
+
+    // Member access straight after a literal
+    if (42.toString() == "42") {
+        print("literal-int-member-ok");
+    } else {
+        print("literal-int-member-FAIL");
+    }
+    if (0.toString() == "0") {
+        print("literal-zero-member-ok");
+    } else {
+        print("literal-zero-member-FAIL");
+    }
+    if (2.5.toString() == "2.5") {
+        print("literal-float-member-ok");
+    } else {
+        print("literal-float-member-FAIL");
+    }
+
+    // Parenthesized expressions followed by postfix calls still work
+    if ((1 + 1).toString() == "2") {
+        print("paren-member-ok");
+    } else {
+        print("paren-member-FAIL");
+    }
+}

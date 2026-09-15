@@ -11,6 +11,9 @@
 #define VIOLA_GLOBAL_RESOURCE_MANAGER_H
 
 #include <stdint.h>
+/* 请求的引用计数使用原子类型（viola$lang$atomic_uint32及其操作，
+   见runtime.h"原子引用计数"） */
+#include "../runtime.h"
 
 /* 前置声明 */
 typedef struct viola$threads$Listener viola$threads$Listener;
@@ -23,7 +26,7 @@ typedef uint32_t viola$lang$global_resource_manager$RequestType;
 typedef struct viola$lang$global_resource_manager$Request viola$lang$global_resource_manager$Request;
 struct viola$lang$global_resource_manager$Request {
     viola$lang$global_resource_manager$RequestType type;
-    uint32_t $refCount;
+    viola$lang$atomic_uint32 $refCount;
 };
 
 /* 请求向量表 */

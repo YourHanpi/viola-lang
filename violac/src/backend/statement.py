@@ -27,11 +27,10 @@ from abc import ABC, abstractmethod
 from copy import copy
 from enum import Enum
 from typing import Optional
-import re
+
+from utils.text_utils import renumber_marks as _renumber_marks
 
 LISTENER_WAIT_FUNC = "viola$threads$waitListener"
-# 调试标记占位名（$$_MARK_<符号表序号>_<符号表内编号>，见symbol.get_mark_counter）
-_MARK_PLACEHOLDER_PATTERN: re.Pattern[str] = re.compile(r"\$\$_MARK_\d+_\d+")
 # 构造函数体中代表待构造对象的局部变量名（见ConstructorDef），
 # 父类构造调用（super = 父类名(...)）需要在该对象上初始化父类成员
 THIS_OBJ_NAME: str = "_thisObj"
@@ -161,18 +160,11 @@ def renumber_marks(text: str) -> str:
     但标记是生成代码中的文件级静态变量，一个编译单元（.c）内只需互不相同，
     故写出时按编译单元统一重编号：编号只取决于标记在该文件中的出现顺序，
     与并行编译的线程交错无关（见开发疑问记录117、123）。
+    实现见utils.text_utils（不使用re模块，见versions_dev_plan_zh.md"漏洞修复"）。
     :param text: 编译单元的代码文本。
     :return: 重编号后的文本。
     """
-    mapping: dict[str, str] = {}
-
-    def replace(match: "re.Match[str]") -> str:
-        name: str = match.group(0)
-        if name not in mapping:
-            mapping[name] = f"$$_MARK_{len(mapping)}"
-        return mapping[name]
-
-    return _MARK_PLACEHOLDER_PATTERN.sub(replace, text)
+    return _renumber_marks(text)
 
 
 class Statement(CompilingItem, ABC):
@@ -831,6 +823,11 @@ class DeclStmt(Statement):
             return "\n".join(filter(lambda x: x is not None, [super().outer_text, self._var_value.outer_text]))
         return super().outer_text
 
+    @property
+    def has_initial_value(self) -> bool:
+        """获取这一声明是否带有初值表达式。"""
+        return self._var_value is not None
+
     def set_var_value(self, var_value: Expression) -> None:
         """设置变量的初始值表达式。"""
         var_value.validate()
@@ -970,6 +967,11 @@ class AssignStmt(Statement):
             raise CompilerException(f"{var_name} is not a variable.", self._src_info)
         self._var.append(symbol)
         self._var_states.set_assigned([symbol])
+        if isinstance(symbol, GlobalVariableName):
+            # 模块级变量被本模块赋值：本模块需在文件作用域提供其存储
+            # （否则按"存储由其他翻译单元提供"生成extern声明，
+            #   见SymbolTable.needs_global_storage与开发疑问记录168）
+            self._symbol_table.mark_global_assigned(symbol.name)
 
     def as_async(self) -> "Statement":
         for var in self._var:

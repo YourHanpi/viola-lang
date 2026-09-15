@@ -23,7 +23,7 @@
 #ifndef _VIOLA_ARRAY_T_viola$lang$uint8$$array
 #define _VIOLA_ARRAY_T_viola$lang$uint8$$array
 typedef struct viola$lang$uint8$$array {
-    viola$lang$uint32 $refCount;
+    viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$uint8 *data;
     viola$lang$uint64 size;

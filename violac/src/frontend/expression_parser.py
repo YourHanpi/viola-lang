@@ -567,7 +567,11 @@ class ExprParser(GlobalParser):
             self._next()
         if is_tuple:
             return ["MAKE EXPR TUPLE_REF"] + command + ["CALL FINISH"], _ExprState.EXPR_ENDING
-        return ["MAKE EXPR BRACKETS_OP"] + command, _ExprState.EXPR_ENDING
+        # 括号表达式之后允许继续调用与取索引（如(f)(x)、(arr)[0]）：
+        # CALLABLE_ENDING是INDEXABLE_ENDING的子状态、后者又是EXPR_ENDING的子状态，
+        # 故原先以EXPR_ENDING收尾的用法（二元运算符等）不受影响
+        # （见开发疑问记录175(a)）
+        return ["MAKE EXPR BRACKETS_OP"] + command, _ExprState.CALLABLE_ENDING
 
     @_set_loc_command_with_state
     def _parse_closure_expr(self) -> Optional[tuple[list[str], _ExprState]]:

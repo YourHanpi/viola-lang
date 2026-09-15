@@ -1,0 +1,22 @@
+// 未实现接口的类不能赋给接口类型（见开发疑问记录170(c)）
+from viola.io import *;
+
+interface Named {
+    fn name() -> (string result);
+}
+
+class Plain {
+    public sq __new__() -> (this) {
+    }
+
+    public fn name() -> (string result) {
+        result = "plain";
+    }
+}
+
+sq main() -> () {
+    Named n = Plain();   // 编译错误：Plain does not implement Named
+    if (n.name() == "plain") {
+        print("neg-iface-ok");
+    }
+}

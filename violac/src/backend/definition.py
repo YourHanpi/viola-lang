@@ -16,8 +16,16 @@ import os
 from typing import Optional
 
 TYPE_INFO_T: str = "viola$dynamic$TypeInfo"
+# 接口条目类型（见runtime.h与开发疑问记录170(c)）
+INTERFACE_ENTRY_T: str = "viola$dynamic$InterfaceEntry"
 # 虚方法槽位类型（同步实现与异步包装各一个函数指针，见开发疑问记录161）
 VFUNC_SLOT_T: str = "viola$dynamic$VFuncSlot"
+# 引用计数字段与其原子类型：结构体布局中的$refCount以系统原子变量表示
+# （见runtime.h"原子引用计数"与versions_dev_plan_zh.md"漏洞修复"）
+REFCOUNT_FIELD_NAME: str = "$refCount"
+REFCOUNT_T: str = "viola$lang$atomic_uint32"
+# 递减引用计数并返回递减后的值（一次原子操作，见runtime.h）
+REFCOUNT_DEC_FUNC: str = "viola$lang$refcount_dec"
 # perror的Viola名（查找符号表用）与显式C名（io.vla以cname声明，见开发疑问记录103）
 PERROR_VIOLA_NAME: str = "perror"
 PERROR_FUNC_NAME: str = "viola$io$print$perror"
@@ -163,8 +171,17 @@ class ConstDef(Definition):
         S_*常量：存储与初值由运行库提供）。gcc 10起默认-fno-common、暂定定义不再
         合并，故构建命令需带-fcommon，见开发疑问记录167。
         """
+        # 无初值且本模块从未赋值的模块级变量只是"声明"：其存储由其他翻译单元
+        # 提供（典型情形是运行库的C实现，如viola.os的STDIN_FILENO与O_*常量、
+        # viola.stat的S_*常量），生成extern声明即可，不与那份定义冲突；
+        # 其余情形（有初值，或本模块给它赋过值）由本模块提供存储，生成定义
+        # （见开发疑问记录168）
+        has_initial_value: bool = self._define_stmt.has_initial_value
         storage_text: str = "\n".join(
-            var.definition_text for var in self._define_stmt.new_variables_ordered if var.is_global)
+            var.definition_text
+            if (has_initial_value or self._symbol_table.needs_global_storage(var.name))
+            else f"extern {var.type_name_pair_calling};"
+            for var in self._define_stmt.new_variables_ordered if var.is_global)
         stmt_outer_text: Optional[str] = self._define_stmt.outer_text
         results: list[str] = list(filter(
             lambda x: x is not None and x.strip() != "", [storage_text, stmt_outer_text]))
@@ -419,12 +436,33 @@ class SqDef(Definition):
         text += [f"extern {v.type_name_pair_calling};" for v in self._decl.default_params.values()]
         return "\n".join(text)
 
+    def _overload_index_in_template(self) -> int:
+        """获取本方法在模板类中的重载序号（同名方法中的第几个，从0开始）。
+
+        与ClassName.add_method递增_method_overload_times的顺序一致：按模板类
+        方法表的插入顺序统计同名方法。实例化类的同名方法序号与之相同
+        （见ClassName.instantiation_full），故实例化时用同一序号取名
+        （见开发疑问记录170(b)）。
+        """
+        template_cls: ClassName = self._method_decl.cls
+        bare_name: str = self._method_decl.bare_name
+        index: int = 0
+        for (_, _), method in template_cls.methods.items():
+            if method.name == self._method_decl.name:
+                break
+            if method.bare_name == bare_name:
+                index += 1
+        return index
+
     def instantiation(self, cls_decl: ClassName, type_args: dict[GenericArgument, TypeName]) -> "SqDef":
         """将函数作为类方法进行泛型实例化。"""
         new_sq = deepcopy(self)
         type_args_tuple: tuple[TypeName, ...] = tuple(map(lambda x: type_args[x], cls_decl.generic_args))
         inst_cls = self._symbol_table.get_generic_cls_instance(cls_decl, type_args_tuple)
-        new_sq._method_decl = self._method_decl.set_cls(inst_cls, 0)
+        # set_cls的序号必须是该方法在模板类中的真实重载序号：原先恒传0，使同名重载
+        # 方法（如Array::<T>的切片版__getitem__）的实例化函数名与调用点的名字不一致
+        # （调用点按实例化类的真实序号取名），链接时报未定义符号（见开发疑问记录170(b)）
+        new_sq._method_decl = self._method_decl.set_cls(inst_cls, self._overload_index_in_template())
         # 将原类到实例化类的映射也加入 type_args，使 this 的类型被替换
         type_args_with_cls = dict(type_args)
         type_args_with_cls[GenericArgument(self._src_info, cls_decl.name)] = inst_cls
@@ -904,8 +942,34 @@ class DestructorDef(SqDef):
         if cls.is_c_part:
             return
         self._free_stmt = CStmt(src_info, self._symbol_table, self._var_states)
-        self._free_stmt.set_text(self._member_free_text(cls))
+        self._free_stmt.set_text(self._forward_text(cls) + self._member_free_text(cls))
         self.add_stmt(self._free_stmt)
+
+    def _forward_text(self, cls: ClassName) -> str:
+        """生成虚析构的转发前缀：对象的实际类型不是本类时转交其析构函数。
+
+        以基类类型持有派生类对象时（如`Base b = Derived();`），释放代码按变量的
+        静态类型调用Base的析构函数；本前缀据对象的$$vtable判断其实际类型，不同则
+        经虚析构入口$del转交实际类型的析构函数，使派生类的成员也被释放。
+        实际类型的析构函数（$$vtable即本类的TypeInfo）不会再次转发，故每个对象
+        只会执行最派生类的析构函数一次（见开发疑问记录170(a)）。
+
+        $$vtable为NULL的对象（运行库的原生类等未参与虚分派者）沿用本类析构。
+        """
+        cls: ClassName
+        if not cls.has_vtable_property:
+            # 结构体中没有$$vtable字段（如编译器内置的string类型），无法分派
+            return ""
+        del_slot: str = f"(({TYPE_INFO_T} *){self._this_var.name}->$$vtable)"
+        return "\n".join([
+            f"if ({self._this_var.name}->$$vtable != NULL",
+            f"\t\t&& {self._this_var.name}->$$vtable != (void *)&{cls.name}$$vtable",
+            f"\t\t&& {del_slot}->$del != NULL) {{",
+            f"\t((void (*)(void *, {LISTENER_T} *)){del_slot}->$del)({self._this_var.name}, listener);",
+            "\treturn;",
+            "}",
+            ""
+        ])
 
     def _member_free_text(self, cls: ClassName) -> str:
         """生成释放类实例成员属性的代码文本。
@@ -916,15 +980,21 @@ class DestructorDef(SqDef):
         故实例化时以实例化后的类重新生成本文本（rebuild_for_class）。
         """
         src_info = self._src_info
-        # 仅释放实例属性：静态属性是模块级全局变量，不是结构体成员
+        # 释放实例属性（含继承自父类的，见ordered_properties）：静态属性是模块级
+        # 全局变量，不是结构体成员。析构经$$vtable按对象的实际类型分派（虚析构），
+        # 每个对象只会执行最派生类的析构函数一次，故此处释放整条继承链上的成员
+        # 不会重复释放（见开发疑问记录170(a)）
         properties_to_free: list[VariableName] = list(
-            filter(lambda y: y.is_object and not y.is_static, cls.properties.values()))
+            filter(lambda y: y.is_object and not y.is_static, cls.ordered_properties))
         free_texts: list[str] = []
         for x in properties_to_free:
             # 类结构体的成员名为属性的self_name，访问时需要通过_this指针
             prop_var: LocalVariableName = LocalVariableName(
                 src_info, f"{self._this_var.name}->{x.self_name}", x.type
             )
+            # 成员的静态类型可能是成员对象实际类型的基类：释放时调用静态类型的
+            # 析构函数，由其按对象的$$vtable转交实际类型的析构函数（虚析构，
+            # 见开发疑问记录170(a)），故此处无需分派
             attr_op: AttrOp = AttrOp(src_info, self._symbol_table)
             attr_op.set_attr("__del__")
             attr_op.set_caller(VariableRef(src_info, self._symbol_table, prop_var))
@@ -936,8 +1006,9 @@ class DestructorDef(SqDef):
             free_call_text = list(map(lambda y: "\t\t\t\t" + y, free_call_text))
             free_text_item: str = "\n".join([
                 f"\t\tif ({self._this_var.name}->{x.self_name}) {{",
-                f"\t\t\t{self._this_var.name}->{x.self_name}->$refCount--;",
-                f"\t\t\tif ({self._this_var.name}->{x.self_name}->$refCount == 0) {{",
+                # 递减与"是否归零"的判断合并为一次原子操作：分两步时两个线程
+                # 可能各自递减后都读到0，从而重复释放（见versions_dev_plan_zh.md"漏洞修复"）
+                f"\t\t\tif ({REFCOUNT_DEC_FUNC}(&{self._this_var.name}->{x.self_name}->$refCount) == 0) {{",
                 "\n".join(free_call_text),
                 "\t\t\t}"
                 "\t\t}"
@@ -960,7 +1031,7 @@ class DestructorDef(SqDef):
         """按实例化后的类重建成员释放代码（泛型类实例化时调用）。"""
         if self._free_stmt is None:
             return
-        self._free_stmt.set_text(self._member_free_text(cls))
+        self._free_stmt.set_text(self._forward_text(cls) + self._member_free_text(cls))
 
 
 class FnDef(SqDef):
@@ -1213,6 +1284,8 @@ class ClassDef(Definition):
         # （见开发疑问记录161）
         vfunc_text: str = self._vfunc_array_name if self._vfunc_array_text != "" else "NULL"
         vfunc_assign: list[str] = []
+        # 虚析构入口（见开发疑问记录170(a)）
+        delete_entry_text: list[str] = self._delete_entry_text
         # noinspection PyUnresolvedReferences
         methods_global_text: list[str] = list(
             filter(lambda x: x is not None, map(lambda x: x.global_init_text, self._methods.values()))
@@ -1237,10 +1310,37 @@ class ClassDef(Definition):
             f"{self._vtable_name}.$parent = {parent_vtable_ref};",
             f"{self._vtable_name}.vfunc = {vfunc_text};",
             *vfunc_assign,
+            *delete_entry_text,
+            # 类名：未定义toString的类由其默认转换返回（见开发疑问记录175(b)）
+            f"{self._vtable_name}.$name = \"{self._decl.raw_name}\";",
+            # 接口实现表：接口类型的接收者据此分派（见开发疑问记录170(c)）
+            f"{self._vtable_name}.$interfaces = "
+            f"{self._interface_table_name if self._interface_table_text != '' else 'NULL'};",
             *static_props_global_text,
             *methods_global_text
         ]
         return "\n".join(result)
+
+    @property
+    def _destructor_name(self) -> Optional[str]:
+        """获取本类析构函数的C名称（无则返回None）。"""
+        del_method = next(
+            (m for (n, _), m in self._decl.methods.items() if n == "__del__"), None)
+        return del_method.name if del_method is not None else None
+
+    @property
+    def _delete_entry_text(self) -> list[str]:
+        """获取虚函数表中析构入口的初始化文本（见开发疑问记录170(a)）。
+
+        以基类类型持有派生类对象时，释放代码经此按对象的实际类型调用析构函数；
+        泛型类模板本身不生成C代码，故不设置（泛型实例不参与虚分派）。
+        """
+        if self._decl.is_generic:
+            return []
+        del_name: Optional[str] = self._destructor_name
+        if del_name is None:
+            return []
+        return [f"{self._vtable_name}.$del = (void *)&{del_name};"]
 
     @property
     def header(self) -> str:
@@ -1283,7 +1383,8 @@ class ClassDef(Definition):
         # noinspection PyUnresolvedReferences
         properties_text: str = "\n".join(
             map(
-                lambda x: f"\t{x.type.c_calling_name} {x.self_name};",
+                lambda x: f"\t{REFCOUNT_T if x.self_name == REFCOUNT_FIELD_NAME else x.type.c_calling_name}"
+                          f" {x.self_name};",
                 filter(lambda x: not x.is_static, self._decl.ordered_properties)
             )
         )
@@ -1365,18 +1466,75 @@ class ClassDef(Definition):
         if self._is_native:
             # 原生绑定类：虚函数表等全局定义由运行库提供
             return None
-        # 类的TypeInfo全局变量定义（在__global__中初始化$parent与vfunc）
-        vtable_def: str = f"{TYPE_INFO_T} {self._vtable_name} = {{NULL, NULL}};"
+        # 类的TypeInfo全局变量定义（在__global__中初始化$parent、vfunc与接口表）
+        vtable_def: str = f"{TYPE_INFO_T} {self._vtable_name} = {{NULL, NULL, NULL, NULL, NULL}};"
         # 虚方法槽位数组：必须在__global__之前定义（__global__中取其地址）
         vfunc_def: str = self._vfunc_array_text
+        interface_def: str = self._interface_table_text
         static_props_def: str = "\n".join(map(
             lambda x: f"{x.type.c_calling_name} {x.name};",
             filter(lambda x: x.is_static, self._decl.properties.values())
         ))
         methods_result = "\n".join(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._methods.values())))
         props_result = "\n".join(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._static_properties.values())))
-        result: str = "\n".join([vtable_def, vfunc_def, static_props_def, methods_result, props_result])
+        result: str = "\n".join([vtable_def, vfunc_def, interface_def, static_props_def,
+                                 methods_result, props_result])
         return result if result != "" else None
+
+    def _interface_slot_array_name(self, interface: ClassName) -> str:
+        """获取本类对某接口的槽位数组C名称。"""
+        return f"{self._decl.name}$$iface${interface.name}"
+
+    @property
+    def _interface_table_name(self) -> str:
+        """获取本类接口条目表的C名称。"""
+        return f"{self._decl.name}$$ifaceTable"
+
+    @property
+    def _interface_table_text(self) -> str:
+        """获取本类对各个接口的槽位数组与接口条目表的定义文本。
+
+        接口不在继承链上（一个类可实现多个接口），故接口的实现单独成表：
+        每个接口一个槽位数组（下标由接口自身的方法顺序决定，因而同一个接口在
+        所有实现类中下标一致），再由接口条目表把"接口 -> 槽位数组"列出。
+        接口类型的接收者据此分派（见开发疑问记录170(c)）。
+        原生类与泛型类模板不生成（泛型实例不参与虚分派）。
+        """
+        if self._is_native or self._decl.is_generic:
+            return ""
+        interfaces: list[ClassName] = [i for i in self._decl.all_interfaces if not i.is_generic]
+        if len(interfaces) == 0:
+            return ""
+        texts: list[str] = []
+        entries: list[str] = []
+        for interface in interfaces:
+            slots: list[tuple[str, tuple[str, ...]]] = interface.virtual_slots
+            impls = self._decl.interface_slots(interface)
+            if len(slots) == 0:
+                entries.append(f"\t{{&{interface.vtable_name}, NULL}}")
+                continue
+            slot_lines: list[str] = []
+            for impl in impls:
+                if impl is None:
+                    slot_lines.append("\t{NULL, NULL}")
+                    continue
+                slot_lines.append(f"\t{{(void *)&{impl.name}, (void *)&{impl.name}$async}}")
+            texts.append("\n".join([
+                f"static {VFUNC_SLOT_T} {self._interface_slot_array_name(interface)}[] = {{",
+                ",\n".join(slot_lines),
+                "};"
+            ]))
+            entries.append(
+                f"\t{{&{interface.vtable_name}, {self._interface_slot_array_name(interface)}}}")
+        if len(entries) == 0:
+            return ""
+        texts.append("\n".join([
+            f"static const {INTERFACE_ENTRY_T} {self._interface_table_name}[] = {{",
+            ",\n".join(entries) + ",",
+            "\t{NULL, NULL}",
+            "};"
+        ]))
+        return "\n".join(texts)
 
     @property
     def _vfunc_array_name(self) -> str:

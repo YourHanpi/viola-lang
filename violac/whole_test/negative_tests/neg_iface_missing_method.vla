@@ -1,0 +1,23 @@
+// 类必须实现接口的全部抽象方法（见开发疑问记录170(c)）
+from viola.io import *;
+
+interface Named {
+    fn name() -> (string result);
+    fn label() -> (string result);
+}
+
+class OnlyName impl Named {
+    public sq __new__() -> (this) {
+    }
+
+    public fn name() -> (string result) {
+        result = "only-name";
+    }
+}
+
+sq main() -> () {
+    Named n = OnlyName();   // 编译错误：未实现 label()
+    if (n.name() == "only-name") {
+        print("neg-iface-missing-ok");
+    }
+}

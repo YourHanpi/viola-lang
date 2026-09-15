@@ -68,6 +68,13 @@ class Lexer(FSM):
                             char = text[current_loc]
                     tokens.append(Token("", ["_ERROR"], self._src_info.copy()))
                     self._is_error = True
+                elif self._is_member_access_after_int(char_buf, char):
+                    # 形如`1.toString()`：数字后的点号被状态机读作浮点字面量的一部分
+                    # （1.），但点号之后不是数字（否则状态机会继续读入）而是标识符，
+                    # 故此处把`1`与`.`拆成整数与点号两个记号，使整数/浮点字面量之后
+                    # 可以直接接成员访问（见开发疑问记录175(b)）
+                    tokens.append(Token("".join(char_buf[:-1]), ["INT32"], self._src_info.copy()))
+                    tokens.append(Token(".", ["DOT"], self._src_info.copy()))
                 else:
                     tokens.append(Token("".join(char_buf), [self._current.output], self._src_info.copy()))
                 self._start_line = self._end_line
@@ -120,6 +127,21 @@ class Lexer(FSM):
             return TaskResult(TaskResultState.SUCCESS, [["violac", "parse", file_path]])
         finally:
             remove_file_lock(cache_path)
+
+    @staticmethod
+    def _is_member_access_after_int(char_buf: list[str], char: str) -> bool:
+        """判断当前位置是否为"整数后接成员访问"（如`1.toString()`中的`.`）。
+
+        条件：已读入的文本是"<数字>."（末字符为点号、其前为数字），且当前字符
+        不能续接该数字（状态机在点号之后只接受数字、e/E、f/F、l/L，故此处只需
+        确认它是标识符的首字符）。此时"1."应拆分为整数1与点号。
+        """
+        if len(char_buf) < 2 or char_buf[-1] != "." or not char_buf[-2].isdigit():
+            return False
+        if char_buf[-2] not in "0123456789":
+            # 排除非ASCII数字，避免与状态机的字符分类不一致
+            return False
+        return char.isalpha() or char == "_"
 
     def _get_char_token(self, char: str) -> Token:
         """

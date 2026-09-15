@@ -168,9 +168,9 @@ void viola$lang$global_resource_manager$drainRequests(void) {
            （等待中的工作线程）随即可能释放该请求，之后再访问它即为
            释放后使用——读到已回收内存中的非零值会对该内存递减，
            并可能再次free，造成堆破坏（见开发疑问记录126）。 */
-        viola$lang$uint32 refCount = request->$refCount;
+        viola$lang$uint32 refCount = viola$lang$refcount_get(&request->$refCount);
         if (refCount > 0) {
-            request->$refCount = refCount - 1;
+            viola$lang$refcount_dec(&request->$refCount);
         }
         viola$lang$global_resource_manager$handleRequest(request);
         if (refCount == 1) {
@@ -211,9 +211,8 @@ void viola$lang$global_resource_manager$Request$__del__$_0(
     if (_this == NULL) {
         return;
     }
-    if (_this->$refCount > 0) {
-        _this->$refCount--;
-        if (_this->$refCount == 0) {
+    if (viola$lang$refcount_get(&_this->$refCount) > 0) {
+        if (viola$lang$refcount_dec(&_this->$refCount) == 0) {
             free(_this);
         }
     }

@@ -35,7 +35,7 @@ RUNTIME_SOURCES = [
     os.path.join("viola", "os", "path.c"),
     os.path.join("viola", "stat.c"),
 ]
-GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2", "-fcommon"]
+GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2"]
 
 
 def get_c_sources(output_dir: str) -> list[str]:
