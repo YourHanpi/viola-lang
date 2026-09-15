@@ -470,8 +470,11 @@ class GlobalParser:
         current_line: int = 0
         total_lines: int = len(text_list)
         to_load_locations: list[int] = []
+        # 符号名 -> 条目头所在行（按需加载签名中引用的同模块类型时使用）
+        entry_locations: dict[str, int] = {}
         while current_line < total_lines:
             head: str = text_list[current_line].strip()
+            head_line: int = current_line
             current_line += 1
             # 跳过空行与条目尾部的分隔符（函数条目尾部可能连续出现多个）
             if head in ["", "---"]:
@@ -479,29 +482,68 @@ class GlobalParser:
             if current_line >= total_lines:
                 break
             line: str = text_list[current_line].strip()
+            entry_name: Optional[str] = None
             matched: bool = load_all
             if head in ["BASE", "FUNC", "FUNCTION", "METHOD"]:
-                matched = matched or line.split(" ", 1)[0] in to_load
+                entry_name = line.split(" ", 1)[0]
+                matched = matched or entry_name in to_load
             elif head in ["CLASS", "ENUM", "TYPE_ALIAS"]:
-                matched = matched or line.split("%", 1)[0] in to_load
+                entry_name = line.split("%", 1)[0]
+                matched = matched or entry_name in to_load
             elif head == "VAR":
                 line_parts: list[str] = line.split("%")
-                matched = matched or (len(line_parts) > 1 and line_parts[1] in to_load)
+                if len(line_parts) > 1:
+                    entry_name = line_parts[1]
+                matched = matched or (entry_name is not None and entry_name in to_load)
             else:
                 self._logger.warning(f"Unknown symbol table head: {head}")
+            if entry_name is not None and entry_name not in entry_locations:
+                entry_locations[entry_name] = head_line
             if matched:
-                to_load_locations.append(current_line - 1)
+                to_load_locations.append(head_line)
             while current_line < total_lines and text_list[current_line].strip() != "---":
                 current_line += 1
         # 收集模块自身定义的符号名（用于条目中的类型限定）
         module_names: set[str] = set()
+        module_type_names: set[str] = set()
         _, symbol_types_path, _, _ = file_path
         if os.path.exists(symbol_types_path):
             with open(symbol_types_path, "r") as symbol_file:
                 for text in symbol_file.readlines():
                     text = text.strip()
                     if "%" in text:
-                        module_names.add(text.split("%", 1)[0].split(".")[-1])
+                        name_parts: list[str] = text.split("%")
+                        bare_name: str = name_parts[0].split(".")[-1]
+                        module_names.add(bare_name)
+                        if len(name_parts) > 1 and name_parts[1] in ("CLASS", "TYPE_ALIAS", "ENUM"):
+                            module_type_names.add(bare_name)
+        # 被导入符号签名中引用的同模块类型一并加载（见开发疑问记录165）：
+        # from...import只加载被点名的符号，若其签名引用了同模块的其他类型
+        # （如fn libMake() -> (LibInt result)中的LibInt），后端解析签名时会报
+        # "Type ... not found"。此处沿“签名引用的同模块类型”迭代到不动点：
+        # 不加载其他模块，也不拉入未被引用的同模块符号
+        selected: set[int] = set(to_load_locations)
+        scan_cursor: int = 0
+        while scan_cursor < len(to_load_locations):
+            for loc in to_load_locations[scan_cursor:]:
+                head: str = text_list[loc].strip()
+                entry: list[str] = []
+                cursor: int = loc + 1
+                while cursor < total_lines and text_list[cursor].strip() != "---":
+                    entry.append(text_list[cursor])
+                    cursor += 1
+                for type_name in GlobalParser._entry_type_names(head, entry):
+                    if type_name not in module_type_names:
+                        continue
+                    referenced_loc: Optional[int] = entry_locations.get(type_name)
+                    if referenced_loc is None or referenced_loc in selected:
+                        continue
+                    selected.add(referenced_loc)
+                    to_load_locations.append(referenced_loc)
+            scan_cursor = len(to_load_locations)
+        # 按条目在模块中的顺序输出：类型的声明可能先于引用它的符号，
+        # 后端按顺序读回条目，顺序颠倒时类型尚未注册
+        to_load_locations.sort()
         symbols: list[str] = []
         for loc in to_load_locations:
             head: str = text_list[loc].strip()
@@ -550,6 +592,47 @@ class GlobalParser:
         return type_name
 
     @staticmethod
+    def _entry_type_names(head: str, entry: list[str]) -> list[str]:
+        """提取符号条目中引用的类型名（用于加载签名中引用的同模块类型）。
+
+        位置与_qualify_symbol_entry做模块限定的位置一致：函数的参数行/返回行中的
+        类型位、类的父类与属性类型、VAR的类型、类型别名的目标类型、枚举的基于类型
+        （见开发疑问记录165）。
+        :param head: 条目头（FUNCTION/METHOD/VAR/CLASS/TYPE_ALIAS/ENUM）。
+        :param entry: 条目内容（不含条目头与尾部分隔符）。
+        :return: 条目中引用的类型名列表。
+        """
+        if not entry:
+            return []
+        names: list[str] = []
+        if head in ["FUNC", "FUNCTION", "METHOD"]:
+            for line in entry[1:]:
+                if "%" not in line:
+                    continue
+                names.extend(line.split("%")[::2])
+        elif head == "VAR":
+            for line in entry:
+                parts: list[str] = line.split("%")
+                if len(parts) > 1:
+                    names.append(parts[0])
+        elif head in ["TYPE_ALIAS", "ENUM"]:
+            parts: list[str] = entry[0].split(" ")[0].split("%")
+            if len(parts) > 1:
+                names.append(parts[1])
+        elif head == "CLASS":
+            parts: list[str] = entry[0].split(" ")[0].split("%")
+            if len(parts) > 1:
+                names.extend(parts[1].split("!"))
+            for line in entry[1:]:
+                line = line.strip()
+                if line == "END CLASS":
+                    break
+                line_parts: list[str] = line.split(" ")
+                if len(line_parts) > 1 and ":" in line_parts[0] and "%" in line_parts[1]:
+                    names.append(line_parts[1].split("%")[0])
+        return list(filter(lambda name: name != "", names))
+
+    @staticmethod
     def _qualify_symbol_entry(head: str, entry: list[str], namespace: str, module_names: set[str]) -> list[str]:
         """
         对导入模块的单个符号条目做模块命名空间限定，供 `import X;` 使用。
@@ -596,6 +679,17 @@ class GlobalParser:
             if len(alias_target) > 1:
                 alias_target[1] = GlobalParser._qualify_type_name(alias_target[1], namespace, module_names)
             name_line[0] = "%".join(alias_target)
+            result[0] = " ".join(name_line)
+        elif head == "ENUM":
+            # 名称行：枚举名%基于类型（后接修饰符）。与类型别名同理：枚举名属于
+            # 被导入模块自身，基于类型若也在该模块中定义则同样限定
+            name_line: list[str] = result[0].split(" ")
+            enum_parts: list[str] = name_line[0].split("%")
+            if "." not in enum_parts[0]:
+                enum_parts[0] = namespace + "." + enum_parts[0]
+            if len(enum_parts) > 1:
+                enum_parts[1] = GlobalParser._qualify_type_name(enum_parts[1], namespace, module_names)
+            name_line[0] = "%".join(enum_parts)
             result[0] = " ".join(name_line)
         elif head == "CLASS":
             # 名称行：类名%父类名（后接修饰符）
@@ -661,12 +755,14 @@ class GlobalParser:
             symbols.append("---")
         return symbols
                 
-    def _load_symbol_type_list(self, namespace: str, alias: str, to_load: Optional[list[str]] = None) -> None:
+    def _load_symbol_type_list(self, namespace: str, alias: str, to_load: Optional[list[str]] = None,
+                               alias_map: Optional[dict[str, str]] = None) -> None:
         """
         加载指定命名空间的符号类型列表。
         :param namespace: 命名空间。
         :param alias: 别名。
         :param to_load: 需要加载的符号列表。
+        :param alias_map: from...import的as别名表（别名 -> 原名），见开发疑问记录164。
         """
         file_path = self._find_import(namespace)
         if file_path is None:
@@ -711,6 +807,17 @@ class GlobalParser:
                     self._imported_names.add(name)
                     if len(type_args) > 0:
                         self._parser_generic_table.add(name, type_args)
+                # as别名：登记为指向同一原始符号的导入名，使用处（类型位置与
+                # 表达式位置）经导入映射改写为原符号（见开发疑问记录164）
+                if to_load is not None and alias_map is not None:
+                    for alias_name, aliased_symbol in alias_map.items():
+                        if aliased_symbol != kv_list[0] or alias_name == kv_list[0]:
+                            continue
+                        self._symbol_types[alias_name] = kv_list[1], type_args
+                        self._imports[alias_name] = original_name
+                        self._imported_names.add(alias_name)
+                        if len(type_args) > 0:
+                            self._parser_generic_table.add(alias_name, type_args)
 
     def _load_tokens(self, tokens: list[Token]) -> None:
         """
@@ -1356,72 +1463,107 @@ class GlobalParser:
     def _parse_enum(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:
         """解析枚举定义。
 
-        枚举（enum）尚未实现完成，此处显式报出，避免以内部异常的形式崩溃：
-        - 前端：本方法原先未跳过enum关键字（必然报"Unexpected token"且消息里
-          打印的是记号对象本身），枚举体的解析（_parse_enum_body/_parse_enum_item）
-          还有记号消费错位；符号表条目按空格分隔写"名称 基于类型"，与读侧的
-          "%"分隔不符；
-        - 后端：SymbolTable._read_enum_decl原先按"%`切分（读回时IndexError）、
-          EnumName的构造实参顺序有误、并误以字符串（而非(名称, 参数)元组）判断
-          基于类型是否已定义；枚举成员（如Color.RED）没有解析路径（AttrOp只
-          支持类类型），成员也从未注册到符号表。
-
-        条目格式与读回（_read_enum_decl）已按上述说明修正，便于实现时直接接续；
-        见开发疑问记录160。
+        语法：`enum 名称 [extends 基于类型] { 项名 [= 值] [, 或 ;] ... }`。
+        省略取值的项取前一项的值加一（第一项从0开始）；前一项的取值不是
+        整数字面量时代码里无法推算，此时后续项必须显式给出取值。
+        基于类型默认为uint32，条目格式为`<名称>%<基于类型>`（见开发疑问记录160）。
         """
         if len(prefixes) > 0:
             self._raise(f"Unexpected prefix: {' '.join(prefixes)}")
-        self._next()
-        self._raise("Enum is not supported yet.")
-        return None
-
-    @_set_loc_command
-    def _parse_enum_body(self) -> Optional[tuple[list[str], list[str]]]:
-        """解析枚举体（枚举项列表）。"""
-        command: list[str] = []
-        expect_semicolon: bool = False
-        while True:
-            self._next()
-            if self._current >= self._tokens_num:
-                self._raise("Unexpected EOF")
-                return None
-            if self._match_type("R_CURLY_BRACKET") and not expect_semicolon:
-                break
-            elif self._match_type("IDENTIFIER") and not expect_semicolon:
-                self._back()
-                result = self._parse_enum_item()
-                if result is None:
-                    return None
-                command += result[0]
-                expect_semicolon = True
-            elif self._match_type("SEMICOLON") and expect_semicolon:
-                expect_semicolon = False
-            else:
-                self._raise("Unexpected token: " + self._get_current().text)
-                return None
-        return command, []
-
-    @_set_loc_command
-    def _parse_enum_item(self) -> Optional[tuple[list[str], list[str]]]:
-        """解析枚举项（名称 = 值）。"""
+            return None
         self._next()
         if not self._match_type("IDENTIFIER"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
-        name: str = self._get_current().text
+        enum_name: str = self._get_current().text
+        based_type: str = "uint32"
         self._next()
-        if not self._match_type("ASSIGN"):
+        if self._match_type("EXTENDS"):
+            self._next()
+            name: Optional[str] = self._parse_name()
+            if name is None:
+                return None
+            based_type = name
+            self._next()
+        if not self._match_type("L_CURLY_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
-        self._next()
-        value = self._collect_until(["SEMICOLON"])
-        if value is None:
+        if enum_name in self._symbol_types:
+            self._raise(f"Symbol {enum_name} already exists.")
             return None
-        result = self._add_parsing_slice(value)
-        # self._expr_count += 1
-        command: list[str] = [result] + [f"CALL ADD_ENUM {name}"]
+        # 枚举与类一样是类型名：登记到符号类型表，使其可被导入与限定
+        self._symbol_types[enum_name] = "ENUM", []
         self._next()
+        body_result = self._parse_enum_body()
+        if body_result is None:
+            return None
+        # 枚举体解析停在右花括号上
+        self._next()
+        command: list[str] = [f"MAKE DEF ENUM {enum_name}"] + body_result[0]
+        symbol: list[str] = ["ENUM", f"{enum_name}%{based_type}"]
+        return command, symbol
+
+    @_set_loc_command
+    def _parse_enum_body(self) -> Optional[tuple[list[str], list[str]]]:
+        """解析枚举体（枚举项列表）。
+
+        项之间以逗号或分号分隔，允许尾随分隔符；省略取值的项按递增取值生成。
+        """
+        command: list[str] = []
+        next_value: Optional[int] = 0
+        while True:
+            if self._match_type("R_CURLY_BRACKET"):
+                break
+            if self._current >= self._tokens_num:
+                self._raise("Unexpected EOF")
+                return None
+            if not self._match_type("IDENTIFIER"):
+                self._raise("Unexpected token: " + self._get_current().text)
+                return None
+            item_name: str = self._get_current().text
+            self._next()
+            if self._match_type("ASSIGN"):
+                self._next()
+                value_tokens: Optional[list[Token]] = self._collect_until(["COMMA", "SEMICOLON", "R_CURLY_BRACKET"])
+                if value_tokens is None:
+                    return None
+                if len(list(filter(lambda t: not t.type[0].startswith("_"), value_tokens))) == 0:
+                    self._raise("Expected a value for the enum item.")
+                    return None
+                command.append(self._add_parsing_slice(value_tokens))
+                command.append(f"CALL ADD_ENUM {item_name}")
+                explicit_value: Optional[int] = GlobalParser._literal_int_value(value_tokens)
+                next_value = explicit_value + 1 if explicit_value is not None else None
+            else:
+                if next_value is None:
+                    self._raise(f"The value of enum item {item_name} must be given explicitly: "
+                                "the previous item's value is not an integer literal.")
+                    return None
+                # 省略取值：按递增取值生成一个字面量记号（见开发疑问记录160）
+                command.append(self._add_parsing_slice(
+                    [Token(str(next_value), ["INT32"], self._src_info)]))
+                command.append(f"CALL ADD_ENUM {item_name}")
+                next_value += 1
+            if self._match_type("COMMA") or self._match_type("SEMICOLON"):
+                self._next()
         return command, []
+
+    @staticmethod
+    def _literal_int_value(tokens: list[Token]) -> Optional[int]:
+        """获取记号序列表示的整数字面量的值（非整数字面量时返回None）。"""
+        # 切片中可能残留空白/注释记号，先剔除
+        tokens = list(filter(lambda t: not t.type[0].startswith("_"), tokens))
+        if len(tokens) != 1:
+            return None
+        text: str = tokens[0].text.replace("_", "")
+        for suffix in ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "s"]:
+            if text.endswith(suffix) and len(text) > len(suffix):
+                text = text[:-len(suffix)]
+                break
+        try:
+            return int(text, 0)
+        except ValueError:
+            return None
 
     def _parse_expr(self) -> Optional[list[str]]:
         """
@@ -1471,6 +1613,9 @@ class GlobalParser:
         self._next()
         expect_comma: bool = False
         import_symbols: list[str] = []
+        # as别名：别名 -> 被导入符号的原名（符号条目本身仍按原名加载，
+        # 别名只在导入名映射中登记，见开发疑问记录164）
+        alias_map: dict[str, str] = {}
         is_wildcard: bool = False
         while True:
             if self._current >= self._tokens_num:
@@ -1483,9 +1628,17 @@ class GlobalParser:
                 self._raise("Unexpected token: " + self._get_current().text)
                 return None
             elif self._match_type("IDENTIFIER"):
-                import_symbols.append(self._get_current().text)
+                imported_name: str = self._get_current().text
+                import_symbols.append(imported_name)
                 expect_comma = True
                 self._next()
+                if self._match_type("AS"):
+                    self._next()
+                    if not self._match_type("IDENTIFIER"):
+                        self._raise("Unexpected token: " + self._get_current().text)
+                        return None
+                    alias_map[self._get_current().text] = imported_name
+                    self._next()
             elif self._match_type("MUL"):
                 is_wildcard = True
                 self._next()
@@ -1495,8 +1648,11 @@ class GlobalParser:
                 self._raise("Unexpected token: " + self._get_current().text)
                 return None
         if is_wildcard:
+            if len(alias_map) > 0:
+                self._raise("Unexpected token: as")
+                return None
             import_symbols = ["*"]
-        self._load_symbol_type_list(module_path, module_path, import_symbols)
+        self._load_symbol_type_list(module_path, module_path, import_symbols, alias_map)
         if len(self._tasks) > 0:
             return None
         command: list[str] = [f"MAKE DEF FROM_IMPORT {module_path} " + " ".join(import_symbols), "CALL ADD_DEF"]
@@ -2107,7 +2263,7 @@ class GlobalParser:
                     return self._imports[prefix] + type_str[len(prefix):]
             return type_str
         if first_identifier in self._imports and first_identifier in self._symbol_types and \
-                self._symbol_types[first_identifier][0] in ("CLASS", "TYPE_ALIAS"):
+                self._symbol_types[first_identifier][0] in ("CLASS", "TYPE_ALIAS", "ENUM"):
             return self._imports[first_identifier] + type_str[len(first_identifier):]
         return type_str
 
@@ -2115,15 +2271,32 @@ class GlobalParser:
     def _parse_typedef_stmt(self) -> Optional[tuple[list[str], list[str]]]:
         """解析类型别名定义语句（using）。
 
-        类型别名（`using name = type;`）只在模块级定义：别名的符号条目与其他
-        模块级符号一同写入模块的符号表缓存（见_parse_type_alias_def），函数体内
-        的别名需要随作用域生灭的符号条目，当前未实现（见开发疑问记录157）。
+        函数体内的类型别名生成一条TYPE_DEF语句：后端把被别名的类型注册到
+        当前作用域的符号表（随作用域生灭，见开发疑问记录163），因此别名仅在
+        其所在的块及其内层块中可见。模块级别名不生成定义命令、只有符号条目
+        （见_parse_type_alias_def）。
         """
         if not self._match_type("USING"):
             self._raise("Unexpected token: " + self._get_current().text)
             return None
-        self._raise("Type alias (using) can only be defined at module level.")
-        return None
+        parsed = self._parse_type_alias()
+        if parsed is None:
+            return None
+        alias_name, target_name = parsed
+        if alias_name in self._symbol_types:
+            self._raise(f"Symbol {alias_name} already exists.")
+            return None
+        # 目的名称用$前缀：C层的typedef需要合法标识符，且避免与用户符号重名。
+        # 该typedef只在符号表登记（别名不产生C代码引用），文本本身不影响语义
+        command: list[str] = [
+            f"MAKE STMT TYPE_DEF {alias_name}",
+            f"MAKE EXPR TYPE_REF {target_name}",
+            "CALL SET_TYPE",
+            # 类型定义语句的完成状态由其类型决定（is_finished），无需CALL FINISH；
+            # SET_TYPE不弹出类型引用（类型转换共用该命令），故此处显式弹出
+            "CALL POP"
+        ]
+        return command, []
 
     @_set_loc_command
     def _parse_type_alias_def(self, prefixes: list[str]) -> Optional[tuple[list[str], list[str]]]:

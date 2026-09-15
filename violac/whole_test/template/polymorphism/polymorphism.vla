@@ -1,0 +1,115 @@
+from viola.io import *;
+// Viola Polymorphism Test Template
+// Tests: virtual method dispatch (overrides called through base-typed
+// references, array elements, parameters and return values)
+
+class ${BASE_CLASS} {
+    string kind;
+
+    public sq __new__() -> (this) {
+        this.kind = "${BASE_CLASS}";
+    }
+
+    public fn describe() -> (string result) {
+        result = "base";
+    }
+
+    public fn identity() -> (string result) {
+        result = this.kind;
+    }
+}
+
+class ${SUB_CLASS_1} extends ${BASE_CLASS} {
+    public sq __new__() -> (this) {
+        super = ${BASE_CLASS}();
+        this.kind = "${SUB_CLASS_1}";
+    }
+
+    public fn describe() -> (string result) {
+        result = "sub1";
+    }
+}
+
+class ${SUB_CLASS_2} extends ${BASE_CLASS} {
+    public sq __new__() -> (this) {
+        super = ${BASE_CLASS}();
+        this.kind = "${SUB_CLASS_2}";
+    }
+
+    public fn describe() -> (string result) {
+        result = "sub2";
+    }
+
+    public fn identity() -> (string result) {
+        result = "overridden";
+    }
+}
+
+fn describeOf(${BASE_CLASS} obj) -> (string result) {
+    result = obj.describe();
+}
+
+sq main() -> () {
+    // Upcast to the base type: the override is called
+    ${SUB_CLASS_1} sub1 = ${SUB_CLASS_1}();
+    ${BASE_CLASS} asBase = sub1;
+    if (asBase.describe() == "sub1") {
+        print("poly-upcast-ok");
+    } else {
+        print("poly-upcast-FAIL");
+    }
+
+    // Array of base-typed elements
+    ${BASE_CLASS}[] items = [${SUB_CLASS_1}(), ${SUB_CLASS_2}()];
+    if (items[0].describe() == "sub1" && items[1].describe() == "sub2") {
+        print("poly-array-ok");
+    } else {
+        print("poly-array-FAIL");
+    }
+
+    // Function parameter
+    if (describeOf(sub1) == "sub1") {
+        print("poly-arg-ok");
+    } else {
+        print("poly-arg-FAIL");
+    }
+
+    // Overriding only some methods: the inherited one is still reachable
+    ${BASE_CLASS} second = ${SUB_CLASS_2}();
+    if (second.identity() == "overridden") {
+        print("poly-override-ok");
+    } else {
+        print("poly-override-FAIL");
+    }
+
+    // Calling on the exact static type stays direct
+    ${BASE_CLASS} plain = ${BASE_CLASS}();
+    if (plain.describe() == "base") {
+        print("poly-static-ok");
+    } else {
+        print("poly-static-FAIL");
+    }
+
+    // Inherited (not overridden) method through the base type
+    if (plain.identity() == "${BASE_CLASS}") {
+        print("poly-inherited-ok");
+    } else {
+        print("poly-inherited-FAIL");
+    }
+
+    // Async calls dispatch on the actual type as well
+    ${BASE_CLASS} asyncSub = ${SUB_CLASS_1}();
+    async string asyncText = asyncSub.describe();
+    if (asyncText == "sub1") {
+        print("poly-async-ok");
+    } else {
+        print("poly-async-FAIL");
+    }
+
+    async string asyncText2 = second.describe();
+    if (asyncText2 == "sub2") {
+        print("poly-async2-ok");
+    } else {
+        print("poly-async2-FAIL");
+    }
+}

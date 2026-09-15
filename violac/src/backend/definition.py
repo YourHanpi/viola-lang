@@ -16,6 +16,8 @@ import os
 from typing import Optional
 
 TYPE_INFO_T: str = "viola$dynamic$TypeInfo"
+# 虚方法槽位类型（同步实现与异步包装各一个函数指针，见开发疑问记录161）
+VFUNC_SLOT_T: str = "viola$dynamic$VFuncSlot"
 # perror的Viola名（查找符号表用）与显式C名（io.vla以cname声明，见开发疑问记录103）
 PERROR_VIOLA_NAME: str = "perror"
 PERROR_FUNC_NAME: str = "viola$io$print$perror"
@@ -104,9 +106,14 @@ class ConstDef(Definition):
 
     @property
     def global_init_text(self) -> str:
-        """获取常量的全局初始化代码文本。"""
+        """获取常量的全局初始化代码文本。
+
+        模块级变量的存储定义写在文件作用域（见outer_text），
+        此处只保留初值表达式所需的临时变量声明与赋值语句，
+        否则局部声明会遮蔽文件作用域的全局定义（见开发疑问记录167）。
+        """
         result: list[str] = list(filter(lambda x: x is not None, [
-            self._define_stmt.head_text,
+            self._define_stmt.value_head_text,
             self._define_stmt.global_init_text,
             self._define_stmt.text
         ]))
@@ -145,8 +152,25 @@ class ConstDef(Definition):
 
     @property
     def outer_text(self) -> Optional[str]:
-        """获取常量的外层代码文本。"""
-        return self._define_stmt.outer_text
+        """获取常量的外层代码文本（含模块级变量的文件作用域存储定义）。
+
+        带初值的模块级变量在文件作用域给出存储定义：头文件中生成的是extern声明，
+        若定义只写在__global__函数体内，则它只是该函数的局部变量，文件作用域上
+        没有定义，链接时报undefined reference（见开发疑问记录167）。
+
+        无初值的模块级声明生成的是C的暂定定义，与运行库中的定义按C的共同符号
+        合并规则合并（如viola.os的STDIN/STDOUT_FILENO与O_*常量、viola.stat的
+        S_*常量：存储与初值由运行库提供）。gcc 10起默认-fno-common、暂定定义不再
+        合并，故构建命令需带-fcommon，见开发疑问记录167。
+        """
+        storage_text: str = "\n".join(
+            var.definition_text for var in self._define_stmt.new_variables_ordered if var.is_global)
+        stmt_outer_text: Optional[str] = self._define_stmt.outer_text
+        results: list[str] = list(filter(
+            lambda x: x is not None and x.strip() != "", [storage_text, stmt_outer_text]))
+        if len(results) == 0:
+            return None
+        return "\n".join(results)
 
     def set_stmt(self, stmt: Statement) -> None:
         """设置常量定义中的语句。"""
@@ -1184,8 +1208,10 @@ class ClassDef(Definition):
         if self._is_native:
             # 原生绑定类：虚函数表与静态属性由运行库定义
             return ""
-        # 0.1：虚函数表仅提供类型链信息（convertibleTo），不进行虚方法分发
-        vfunc_text: str = "NULL"
+        # 虚方法槽位数组：由virtual_slot_impl按槽位给出同步实现与异步包装，
+        # 子类重写的方法占用父类的同一槽位，从而实现按对象实际类型的分派
+        # （见开发疑问记录161）
+        vfunc_text: str = self._vfunc_array_name if self._vfunc_array_text != "" else "NULL"
         vfunc_assign: list[str] = []
         # noinspection PyUnresolvedReferences
         methods_global_text: list[str] = list(
@@ -1281,16 +1307,10 @@ class ClassDef(Definition):
                 filter(lambda x: x.is_static, self._decl.properties.values())
             )
         )
-        # noinspection PyUnresolvedReferences
-        if self._decl.is_abstract:
-            # 结构体typedef在前，虚函数表结构体（引用类类型）在后
-            result_def = struct_def
-            vfunc_def = self._vfunc_def.copy()
-            if len(vfunc_def) > 0:
-                result_def.append("")
-                result_def.extend(vfunc_def)
-        else:
-            result_def = struct_def
+        # 抽象类原先额外输出一个按抽象方法生成的虚函数表结构体typedef
+        # （<类名>$$vfunc），该typedef从未被任何地方使用，且其名称与
+        # 虚方法槽位数组（见_vfunc_array_text）冲突，故不再输出（见开发疑问记录161）
+        result_def: list[str] = struct_def
         result_def.append(static_props_text)
         methods_def: list[str] = list(map(lambda x: x.header_no_wrap, self._methods.values()))
         # 父类构造初始化函数声明：供其他模块的子类调用（super = 本类名(...)）
@@ -1347,14 +1367,49 @@ class ClassDef(Definition):
             return None
         # 类的TypeInfo全局变量定义（在__global__中初始化$parent与vfunc）
         vtable_def: str = f"{TYPE_INFO_T} {self._vtable_name} = {{NULL, NULL}};"
+        # 虚方法槽位数组：必须在__global__之前定义（__global__中取其地址）
+        vfunc_def: str = self._vfunc_array_text
         static_props_def: str = "\n".join(map(
             lambda x: f"{x.type.c_calling_name} {x.name};",
             filter(lambda x: x.is_static, self._decl.properties.values())
         ))
         methods_result = "\n".join(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._methods.values())))
         props_result = "\n".join(filter(lambda x: x is not None, map(lambda x: x.outer_text, self._static_properties.values())))
-        result: str = "\n".join([vtable_def, static_props_def, methods_result, props_result])
+        result: str = "\n".join([vtable_def, vfunc_def, static_props_def, methods_result, props_result])
         return result if result != "" else None
+
+    @property
+    def _vfunc_array_name(self) -> str:
+        """获取虚方法槽位数组的C名称。"""
+        return f"{self._decl.name}$$vfunc"
+
+    @property
+    def _vfunc_array_text(self) -> str:
+        """获取虚方法槽位数组的定义文本（文件作用域，见开发疑问记录161）。
+
+        槽位下标与父类一致，因此子类的数组可直接引用父类的实现（未重写时）
+        或自身的重写实现；抽象方法没有实现，对应槽位为NULL，由实现它的子类
+        填入。
+        """
+        if self._is_native or self._decl.is_generic:
+            # 原生类的实现由运行库提供；泛型类模板本身不生成C代码
+            # （泛型实例不参与虚方法分派，见ClassName.is_generic_instance）
+            return ""
+        slots: list[tuple[str, tuple[str, ...]]] = self._decl.virtual_slots
+        if len(slots) == 0:
+            return ""
+        entries: list[str] = []
+        for index in range(len(slots)):
+            impl = self._decl.virtual_slot_impl(index)
+            if impl is None:
+                entries.append("\t{NULL, NULL}")
+                continue
+            entries.append(f"\t{{(void *)&{impl.name}, (void *)&{impl.name}$async}}")
+        return "\n".join([
+            f"static {VFUNC_SLOT_T} {self._vfunc_array_name}[] = {{",
+            ",\n".join(entries),
+            "};"
+        ])
 
     @property
     def source(self) -> str:
@@ -1380,26 +1435,6 @@ class ClassDef(Definition):
             ])
             return "\n\n".join(methods_def + [helper, rename_define])
         return "\n\n".join(methods_def + [rename_define])
-
-    @property
-    def _vfunc_def(self) -> list[str]:
-        """获取虚函数表结构体定义。"""
-        self._decl: ClassName
-        # noinspection PyUnresolvedReferences
-        vfunc: list[MethodName] = list(filter(lambda x: x.is_abstract, self._decl.methods.values()))
-        # noinspection PyUnresolvedReferences
-        if not self._decl.is_abstract or len(vfunc) == 0:
-            return []
-        sync_vfunc_text: list[str] = list(map(lambda x: "\t" + x.as_method_type_name_pair + ";", vfunc))
-        async_vfunc_text: list[str] = list(map(lambda x: "\t" + x.as_async().as_method_type_name_pair + ";", vfunc))
-        struct_def: list[str] = [
-            "typedef struct {",
-            "\n".join(sync_vfunc_text),
-            "\n".join(async_vfunc_text),
-            "} " + self._decl.name + "$$vfunc;"
-        ]
-        return struct_def
-
 
 class CPartImportDef(Definition):
     """C 语言头文件导入定义，生成 extern "C" 包装的 #include 指令。"""
@@ -1804,10 +1839,15 @@ class EnumDef(Definition):
         self._is_finished: bool = False
 
     def add_enum(self, name: str, expr: Expression) -> None:
-        """添加枚举值，包含名称和初始值表达式。"""
+        """添加枚举值，包含名称和初始值表达式。
+
+        成员按“枚举类型的属性”登记（C名称为<模块>$<枚举>$<成员>），
+        使用处（如Color.RED）由AttrOp按静态属性的方式解析（见开发疑问记录160）。
+        """
         if not expr.return_type.convertible_to(self._based_type, self._symbol_table.symbols):
             raise CompilerException(f"{expr.return_type} is not convertible to {self._based_type}.", self._src_info)
-        var: GlobalVariableName = GlobalVariableName(self._src_info, self._decl.as_namespace(), name, self._based_type)
+        var: GlobalVariableName = GlobalVariableName(self._src_info, self._decl.as_namespace(), name, self._decl)
+        self._decl.add_property(var)
         self._enum.append((var, expr))
 
     def finish(self) -> None:
@@ -1818,7 +1858,10 @@ class EnumDef(Definition):
 
     @property
     def global_init_text(self) -> str:
-        """获取枚举的全局初始化代码文本。"""
+        """获取枚举的全局初始化代码文本。
+
+        成员的存储定义在文件作用域（见outer_text），此处只做赋值。
+        """
         front_text: list[str] = list(filter(lambda x: x is not None, map(lambda x: x[1].front_text, self._enum)))
         result: list[str] = list(map(lambda x: f"{x[0].name} = {x[1].text};", self._enum))
         expr_global_text: list[str] = list(
@@ -1828,7 +1871,7 @@ class EnumDef(Definition):
     @property
     def header(self) -> str:
         """获取枚举在头文件中的声明文本。"""
-        self._decl: ClassName
+        self._decl: EnumName
         result: list[str] = [
             f"#if _VIOLA_IMPORT_{self._import_name} || _VIOLA_IMPORT_{self._import_all}",
             f"#ifndef _VIOLA_H_{self._import_name}",
@@ -1858,8 +1901,15 @@ class EnumDef(Definition):
 
     @property
     def outer_text(self) -> Optional[str]:
-        """获取枚举的外层代码文本。"""
-        result = "\n".join(map(lambda x: x[1].outer_text, self._enum))
+        """获取枚举的外层代码文本（含各成员的文件作用域存储定义）。
+
+        与模块级变量同理：成员的存储必须在文件作用域给出，否则头文件的extern
+        声明找不到定义（见开发疑问记录167、160）。
+        """
+        storage_text: str = "\n".join(map(lambda x: x[0].definition_text, self._enum))
+        expr_outer_text: str = "\n".join(
+            filter(lambda x: x is not None, map(lambda x: x[1].outer_text, self._enum)))
+        result: str = "\n".join(filter(lambda x: x.strip() != "", [storage_text, expr_outer_text]))
         return result if result != "" else None
 
     @property

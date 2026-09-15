@@ -1247,3 +1247,66 @@ void viola$lang$string$replace$_1(viola$lang$string *_this, viola$lang$string *o
     *result = newString(buf, dst);
     free(buf);
 }
+
+/* ================= 值到字符串的转换（x.toString()，见开发疑问记录166） ================= */
+
+/* 无符号整数按10进制转换为字符串 */
+static viola$lang$string *uintToString(uint64_t value) {
+    char buf[32];
+    char *p = buf + sizeof(buf) - 1;
+    *p = '\0';
+    if (value == 0) {
+        *--p = '0';
+    }
+    while (value > 0) {
+        *--p = (char)('0' + (value % 10));
+        value /= 10;
+    }
+    return viola$lang$string$fromCharString(p);
+}
+
+void viola$lang$string$_int32ToString$_0(viola$lang$int32 value, viola$lang$string **result,
+                                         viola$threads$Listener *listener) {
+    (void)listener;
+    *result = intToString((int64_t)value, 10);
+}
+
+void viola$lang$string$_int64ToString$_0(viola$lang$int64 value, viola$lang$string **result,
+                                         viola$threads$Listener *listener) {
+    (void)listener;
+    *result = intToString(value, 10);
+}
+
+void viola$lang$string$_uint32ToString$_0(viola$lang$uint32 value, viola$lang$string **result,
+                                          viola$threads$Listener *listener) {
+    (void)listener;
+    *result = uintToString((uint64_t)value);
+}
+
+void viola$lang$string$_uint64ToString$_0(viola$lang$uint64 value, viola$lang$string **result,
+                                          viola$threads$Listener *listener) {
+    (void)listener;
+    *result = uintToString(value);
+}
+
+void viola$lang$string$_float64ToString$_0(viola$lang$float64 value, viola$lang$string **result,
+                                           viola$threads$Listener *listener) {
+    /* 与fromFloat一致（%.15g，去除多余尾零） */
+    viola$lang$string$fromFloat$_0(value, result, listener);
+}
+
+void viola$lang$string$_boolToString$_0(viola$lang$bool value, viola$lang$string **result,
+                                        viola$threads$Listener *listener) {
+    (void)listener;
+    *result = viola$lang$string$fromCharString(value ? "true" : "false");
+}
+
+void viola$lang$string$_stringToString$_0(viola$lang$string *value, viola$lang$string **result,
+                                          viola$threads$Listener *listener) {
+    (void)listener;
+    /* 字符串的toString返回自身：结果由调用方持有，引用计数加一 */
+    *result = value;
+    if (value != NULL) {
+        value->$refCount++;
+    }
+}

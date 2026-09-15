@@ -1,0 +1,65 @@
+from viola.io import *;
+// Viola Enum Test Template
+// Tests: enum declaration, explicit and implicit values, member access,
+// comparisons and conversion to the based type
+
+enum ${ENUM_1} {
+    ${ITEM_1},
+    ${ITEM_2},
+    ${ITEM_3}
+}
+
+enum ${ENUM_2} {
+    ${ITEM_4} = ${BASE},
+    ${ITEM_5},
+    ${ITEM_6}
+}
+
+sq main() -> () {
+    // Declaration via member access
+    ${ENUM_1} v = ${ENUM_1}.${ITEM_1};
+    if (v == ${ENUM_1}.${ITEM_1}) {
+        print("enum-basic-ok");
+    } else {
+        print("enum-basic-FAIL");
+    }
+
+    // Implicit values count up from zero
+    if (${ENUM_1}.${ITEM_2} == 1 && ${ENUM_1}.${ITEM_3} == 2) {
+        print("enum-implicit-ok");
+    } else {
+        print("enum-implicit-FAIL");
+    }
+
+    // Implicit values count up from the previous explicit value
+    if (${ENUM_2}.${ITEM_5} == ${BASE} + 1 && ${ENUM_2}.${ITEM_6} == ${BASE} + 2) {
+        print("enum-explicit-ok");
+    } else {
+        print("enum-explicit-FAIL");
+    }
+
+    // An enum value converts to its based type
+    int n = ${ENUM_2}.${ITEM_6};
+    if (n == ${BASE} + 2) {
+        print("enum-to-int-ok");
+    } else {
+        print("enum-to-int-FAIL");
+    }
+
+    // Enum values pass through function parameters and return values
+    if (asInt(${ENUM_1}.${ITEM_3}) == 2) {
+        print("enum-arg-ok");
+    } else {
+        print("enum-arg-FAIL");
+    }
+
+    if (${ENUM_2}.${ITEM_5} != ${ENUM_2}.${ITEM_6}) {
+        print("enum-ne-ok");
+    } else {
+        print("enum-ne-FAIL");
+    }
+}
+
+fn asInt(${ENUM_1} value) -> (int result) {
+    result = value;
+}

@@ -758,6 +758,25 @@ string var44 = var0.replace("l", "L", 1); // 替换子串（count为0时替换�
 字符串与数字互转的方法`int`/`float`/`fromInt`/`fromFloat`位于`viola.lang`
 命名空间（使用前需`import viola.lang;`或`from viola.lang import *;`）。
 
+### 值到字符串的转换（toString）
+
+基本数据类型（整型、浮点型、布尔与字符串）的值可以调用`toString`方法转换为
+字符串：
+
+```viola
+string a = (1 + 2).toString();   // "3"
+string b = 3.5.toString();       // "3.5"
+string c = true.toString();      // "true"
+string d = "text".toString();    // "text"（字符串返回自身）
+```
+
+转换由`string`类上的静态转换函数实现（`_int32ToString`/`_float64ToString`等），
+编译器按接收者的类型自动选择，无需显式指定。浮点数的转换结果与`string.fromFloat`
+一致（最多15位有效数字、去除多余的尾零），布尔的转换结果为`true`/`false`
+（与字面量一致）。整型之间的差异按C的隐式转换处理（如`int8`按`int32`转换）。
+
+自定义类不参与上述转换：如需要，请为该类定义自己的方法或运算符。
+
 ## 输入与输出
 
 Viola提供了一些用于输入与输出的函数。这些函数位于`viola.io`命名空间，
@@ -1143,6 +1162,53 @@ class Circle impl Shape2D {
 }
 ```
 
+## 枚举（enum）
+
+枚举用`enum`关键字声明一组具名的常量。格式如下：
+
+```viola
+enum 枚举名 [extends 基于类型] {
+    项名 [= 取值],
+    ...
+}
+```
+
+基于类型默认为`uint32`，也可以显式指定（如`enum Status extends int32 { ... }`）。
+枚举项之间以逗号或分号分隔，允许尾随分隔符。省略取值的项按递增取值：第一项为
+0，其后每一项为前一项的取值加一；显式给出取值后同样从该值继续递增：
+
+```viola
+enum Color {
+    RED,        // 0
+    GREEN = 5,  // 5
+    BLUE        // 6
+}
+```
+
+前一项的取值不是整数字面量（如`= 1 + 1`）时无法推算后续取值，此时后面的项必须
+显式给出取值，否则报编译错误。
+
+枚举是类型，枚举项通过枚举名访问：
+
+```viola
+Color c = Color.RED;
+if (c == Color.GREEN) {
+    ...
+}
+```
+
+枚举类型的值在C层即其基于类型，因此可以与整数互相转换、参与算术与比较：
+
+```viola
+int v = Color.GREEN;      // 5
+Color next = Color.BLUE;
+```
+
+枚举名与类一样是类型名，可以像类一样导出到其他模块使用（`from mylib import Color;`）。
+基于类型相同的不同枚举是不同的类型，不能互相赋值。
+
+**注意：枚举没有方法，也没有针对枚举的分支/匹配语法；枚举项不能像类的静态属性那样被赋值。**
+
 ## final
 
 `final`关键字声明一个类或方法为最终的，不能被继承或重写。例：
@@ -1327,12 +1393,12 @@ sq main() -> () {
 ```viola
 sq printNumber(int value) -> () {
     print("整数值为：");
-    println(toString(value));
+    print(value.toString() + "\n");
 }
 
 sq printNumber(double value) -> () {
     print("浮点值为：");
-    println(toString(value));
+    print(value.toString() + "\n");
 }
 ```
 
@@ -1434,7 +1500,22 @@ import viola.util.array as array;
 using IntArray = array.Array::<int32>;
 ```
 
-**注意：类型别名只能定义在模块的最外层（模块级），不能定义在函数或方法体内。**
+别名可以定义在模块的最外层（模块级），也可以定义在函数、方法体或任意语句
+块内。函数体内的别名从声明处起，在其所在的块及其内层块中可见，离开该块后
+不再可见（其他函数中也不可见）：
+
+```viola
+sq main() -> () {
+    using LocalInt = int32;
+    LocalInt v = 1;
+
+    if (v == 1) {
+        using NestedInt = LocalInt; // 内层块可以使用外层块的别名
+        NestedInt w = 2;
+    }
+    // 此处不能再使用NestedInt
+}
+```
 
 别名与它指向的类型完全等价：声明变量、作为形参/返回值类型、参与类型检查与
 重载解析时都按被别名的类型处理，生成的C代码也使用被别名的类型，别名本身不

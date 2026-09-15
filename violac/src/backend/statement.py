@@ -672,13 +672,39 @@ class DeclStmt(Statement):
                 raise CompilerException(f"{expr_type.raw_name} cannot be assigned to {self._var[0].type.raw_name}.",
                                         self._src_info)
 
-    @property
-    def head_text(self) -> Optional[str]:
+    def _prepare_value_returns(self) -> None:
+        """在获取head_text之前设置返回值目标（与_inner_text一致）。"""
         if self._var_value is not None and len(self._var) > 0 and \
                 isinstance(self._var_value, (CallOp, UnpackExpr)):
             # 与_inner_text一致：先设置返回值目标，
             # 使head_text包含调用/解包产生的临时变量声明
             self._var_value.set_returns(self._var)
+
+    @property
+    def value_head_text(self) -> str:
+        """获取初值表达式所需的临时变量声明文本（不含各变量自身的声明）。
+
+        模块级（全局）变量的声明已移到文件作用域（见开发疑问记录167），
+        __global__中只保留这部分临时变量声明与赋值语句。
+        """
+        self._prepare_value_returns()
+        results: str = ""
+        if self._var_value is not None and self._var_value.head_text is not None:
+            results += "\n" + self._var_value.head_text
+        if isinstance(self._var_value, UnpackExpr):
+            # 元组解包：解包链的head_text不包含被解包元组的临时变量声明，补上
+            to_unpack = getattr(self._var_value, "_to_unpack", None)
+            while isinstance(to_unpack, UnpackExpr):
+                to_unpack = getattr(to_unpack, "_to_unpack", None)
+            if isinstance(to_unpack, TupleRef) and to_unpack.head_text is not None:
+                results += "\n" + to_unpack.head_text
+        if results.strip() == "":
+            return ""
+        return self._indent_text(results)
+
+    @property
+    def head_text(self) -> Optional[str]:
+        self._prepare_value_returns()
         results = "\n".join(map(
             lambda var: var.declaration_text if not isinstance(var.type, GenericArgument) else "",
             self._var
@@ -2543,7 +2569,10 @@ class TypeDefStmt(Statement):
     def _inner_text(self) -> str:
         if self._src_type_decl is None:
             raise CompilerException("TypeDefStmt must have a type.", self._src_info)
-        return f"typedef {self._src_type_decl.name} {self._dst_type_name};"
+        # 别名的C名加$alias后缀：别名在编译期已解析为被别名的类型，
+        # 该typedef只是占位文本，加后缀可避免与头文件中的#定义重名
+        # （如用户以string为别名，见开发疑问记录163）
+        return f"typedef {self._src_type_decl.name} {self._dst_type_name}$alias;"
 
 
 class _ProcessingMode(Enum):
@@ -2656,7 +2685,12 @@ class BlockStmt(Statement):
                     raise CompilerException(f"Variable {k.raw_name} is already declared.", stmt.src_info)
                 if current_state == VariableState.DECLARED and v > VariableState.DECLARED:
                     self._inner_variables[k] = v
-                    self._new_variables.append(k)
+                    if not k.is_global:
+                        # 模块级（全局）变量在本块内首次赋值：不在块退出时释放。
+                        # 其存储与生命周期属于模块（在文件作用域定义、由__global__
+                        # 初始化），在函数退出时释放会使后续使用读到已释放的对象
+                        # （见开发疑问记录167）
+                        self._new_variables.append(k)
                 if current_state > VariableState.DECLARED:
                     raise CompilerException(f"Variable {k.raw_name} is already assigned.", stmt.src_info)
             else:
@@ -2973,9 +3007,11 @@ class BlockStmt(Statement):
     def optimize(self) -> "BlockStmt":
         const_vars: dict[VariableName, Expression] = {}
         # 只有本块内定义的变量才允许折叠掉赋值语句：常量表随本块结束而丢弃，
-        # 折叠本块外变量的赋值会使其被静默丢弃（见开发疑问记录104）
+        # 折叠本块外变量的赋值会使其被静默丢弃（见开发疑问记录104）。
+        # 模块级（全局）变量同样不允许折叠：其赋值是对模块存储的写入，
+        # 折叠掉语句会使全局变量保持未初始化（见开发疑问记录167）
         foldable: set[VariableName] = set(
-            filter(lambda var: var not in self._outer_variables, self._inner_variables))
+            filter(lambda var: var not in self._outer_variables and not var.is_global, self._inner_variables))
         for i, stmt in enumerate(self._stmt):
             stmt = stmt.substitute(const_vars)
             if isinstance(stmt, AssignStmt):

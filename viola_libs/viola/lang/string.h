@@ -161,4 +161,21 @@ void viola$lang$string$replace$_1(viola$lang$string *_this, viola$lang$string *o
                                   viola$lang$string *new, viola$lang$uint32 count,
                                   viola$lang$string **result, viola$threads$Listener *listener);
 
+/* 值到字符串的转换（x.toString()按x的静态类型解析到这些静态函数，
+   见开发疑问记录166）。参数为值本身，结果为新建的字符串。 */
+void viola$lang$string$_int32ToString$_0(viola$lang$int32 value, viola$lang$string **result,
+                                         viola$threads$Listener *listener);
+void viola$lang$string$_int64ToString$_0(viola$lang$int64 value, viola$lang$string **result,
+                                         viola$threads$Listener *listener);
+void viola$lang$string$_uint32ToString$_0(viola$lang$uint32 value, viola$lang$string **result,
+                                          viola$threads$Listener *listener);
+void viola$lang$string$_uint64ToString$_0(viola$lang$uint64 value, viola$lang$string **result,
+                                          viola$threads$Listener *listener);
+void viola$lang$string$_float64ToString$_0(viola$lang$float64 value, viola$lang$string **result,
+                                           viola$threads$Listener *listener);
+void viola$lang$string$_boolToString$_0(viola$lang$bool value, viola$lang$string **result,
+                                        viola$threads$Listener *listener);
+void viola$lang$string$_stringToString$_0(viola$lang$string *value, viola$lang$string **result,
+                                          viola$threads$Listener *listener);
+
 #endif /* VIOLA_LANG_STRING_H */

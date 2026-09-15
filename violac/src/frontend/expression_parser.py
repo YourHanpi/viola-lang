@@ -560,6 +560,11 @@ class ExprParser(GlobalParser):
                 command.append("CALL SET_EXPR")
         else:
             self._next()
+        # 子表达式的解析停在本层的右括号上（_parse_expr以end_pos为界，
+        # 不在界内消费括号），此处消费它，否则括号表达式之后的后缀
+        # （如(a + 1).toString()）无法解析（见开发疑问记录166）
+        if self._match_type("R_BRACKET"):
+            self._next()
         if is_tuple:
             return ["MAKE EXPR TUPLE_REF"] + command + ["CALL FINISH"], _ExprState.EXPR_ENDING
         return ["MAKE EXPR BRACKETS_OP"] + command, _ExprState.EXPR_ENDING
@@ -1227,6 +1232,9 @@ class ExprParser(GlobalParser):
                 operators.append(self._get_current().type[0])
                 self._next()
                 tokens_start_pos.append(self._current)
+                # 不移到操作数的第二个记号：末尾的_next会跳过操作数的首个记号，
+                # 使其后的括号不再被计数（如a + (b + 1).y中的(，见开发疑问记录166）
+                continue
             self._next()
         self._back_to(start_pos)
         tokens_end_pos.append(end_pos)

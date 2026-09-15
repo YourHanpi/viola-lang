@@ -1,0 +1,95 @@
+from viola.io import *;
+// Viola Type Features Test Template
+// Tests: function-local type aliases (using), value-to-string conversion
+// (x.toString()) and parenthesized expressions followed by postfix calls
+
+class ${CLASS_NAME} {
+    ${PROP_TYPE} ${PROP_NAME};
+
+    public sq __new__(${PROP_TYPE} ${PROP_NAME}) -> (this) {
+        this.${PROP_NAME} = ${PROP_NAME};
+    }
+
+    public fn get() -> (${PROP_TYPE} result) {
+        result = this.${PROP_NAME};
+    }
+}
+
+sq main() -> () {
+    // A type alias declared inside a function body
+    using ${ALIAS_1} = int;
+    ${ALIAS_1} localValue = ${VALUE_1};
+    if (localValue == ${VALUE_1}) {
+        print("local-using-ok");
+    } else {
+        print("local-using-FAIL");
+    }
+
+    // Aliases of class and array types
+    using ${ALIAS_2} = ${CLASS_NAME};
+    using ${ALIAS_3} = int32[];
+    ${ALIAS_2} obj(${VALUE_1});
+    if (obj.get() == ${VALUE_1}) {
+        print("local-using-class-ok");
+    } else {
+        print("local-using-class-FAIL");
+    }
+    ${ALIAS_3} arr = [${VALUE_1}, ${VALUE_2}, ${VALUE_3}];
+    if (arr[2] == ${VALUE_3}) {
+        print("local-using-array-ok");
+    } else {
+        print("local-using-array-FAIL");
+    }
+
+    // An alias of an alias, visible in a nested block
+    if (localValue == ${VALUE_1}) {
+        using ${ALIAS_4} = ${ALIAS_1};
+        ${ALIAS_4} nested = ${VALUE_2};
+        if (nested == ${VALUE_2}) {
+            print("nested-using-ok");
+        } else {
+            print("nested-using-FAIL");
+        }
+    }
+
+    // Value to string conversion
+    int intValue = ${VALUE_1};
+    string intText = intValue.toString();
+    if (intText == "${VALUE_1}") {
+        print("tostring-int-ok");
+    } else {
+        print("tostring-int-FAIL");
+    }
+
+    double doubleValue = ${FLOAT_VALUE};
+    string doubleText = doubleValue.toString();
+    if (doubleText == "${FLOAT_TEXT}") {
+        print("tostring-double-ok");
+    } else {
+        print("tostring-double-FAIL");
+    }
+
+    // A parenthesized expression followed by a method call
+    string parenText = (intValue + 1).toString();
+    if (parenText == "${NEXT_VALUE}") {
+        print("tostring-paren-ok");
+    } else {
+        print("tostring-paren-FAIL");
+    }
+
+    // A parenthesized expression on the right of a binary operator
+    string mixed = "v" + (intValue).toString();
+    if (mixed == "v${VALUE_1}") {
+        print("tostring-mixed-ok");
+    } else {
+        print("tostring-mixed-FAIL");
+    }
+
+    // A parenthesized expression followed by a property/method access
+    string upper = ("abc").upper();
+    if (upper == "ABC") {
+        print("paren-postfix-ok");
+    } else {
+        print("paren-postfix-FAIL");
+    }
+}

@@ -1,0 +1,40 @@
+from viola.io import *;
+// Viola Module Alias Test Template
+// Tests: from...import with `as` aliases, and loading of the types that an
+// imported symbol references in its signature
+
+from ${MODULE_1} import ${FUNC_1} as ${FUNC_ALIAS}, ${CLASS_1} as ${CLASS_ALIAS}, ${MAKE_FUNC}, ${SCALE_FUNC};
+
+sq main() -> () {
+    // Calling an aliased function
+    int sum = ${FUNC_ALIAS}(${VALUE_1}, ${VALUE_2});
+    if (sum == ${SUM}) {
+        print("alias-func-ok");
+    } else {
+        print("alias-func-FAIL");
+    }
+
+    // Using an aliased class
+    ${CLASS_ALIAS} obj(${VALUE_1});
+    if (obj.get() == ${VALUE_1}) {
+        print("alias-class-ok");
+    } else {
+        print("alias-class-FAIL");
+    }
+
+    // The signature of ${MAKE_FUNC} references ${ALIAS_TYPE}, which is loaded
+    // along with the imported function
+    ${ALIAS_TYPE} made = ${MAKE_FUNC}();
+    if (made == ${MAKE_VALUE}) {
+        print("alias-deptype-ok");
+    } else {
+        print("alias-deptype-FAIL");
+    }
+
+    int scaled = ${SCALE_FUNC}(${VALUE_2});
+    if (scaled == ${SCALED_VALUE}) {
+        print("alias-deptype2-ok");
+    } else {
+        print("alias-deptype2-FAIL");
+    }
+}

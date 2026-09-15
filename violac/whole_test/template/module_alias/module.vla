@@ -1,0 +1,29 @@
+// Viola Module Alias Test Module Template
+// 被主模块以别名导入；其中${MAKE_FUNC}的签名引用了同模块的别名类型${ALIAS_TYPE}
+
+using ${ALIAS_TYPE} = int32;
+
+class ${CLASS_1} {
+    int value;
+
+    public sq __new__(int value) -> (this) {
+        this.value = value;
+    }
+
+    public fn get() -> (int result) {
+        result = this.value;
+    }
+}
+
+fn ${FUNC_1}(int a, int b) -> (int result) {
+    result = a + b;
+}
+
+// 返回类型是同模块的别名类型：导入方未点名该类型，需随之加载
+fn ${MAKE_FUNC}() -> (${ALIAS_TYPE} result) {
+    result = ${MAKE_VALUE};
+}
+
+fn ${SCALE_FUNC}(int value) -> (int result) {
+    result = value * 2;
+}

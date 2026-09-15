@@ -5,7 +5,8 @@ from .symbol import (
     LocalVariableName, BaseTypeName, FunctionTypeName, AsyncFuncTypeName, BOOL, INT, UINT, INT8, INT16, UINT8, UINT16,
     INT32, UINT32, INT64, UINT64, FLOAT, DOUBLE, FLOAT128, GlobalVariableName, FunctionName, MethodName, Modifier,
     LISTENER_T, LISTENER_INIT_FUNC, EmptyArrayTypeName, base_type_degrade, SliceTypeName, INT_TYPES, StringTypeName,
-    AnyTypeName, AutoTypeName, SIZE_T, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, VOID_PTR
+    AnyTypeName, AutoTypeName, SIZE_T, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, VOID_PTR,
+    get_to_string_method, EnumName
 )
 from utils import CompilerException, InternalCompilerException, COMPILER_PARAMS, SourceInfo
 
@@ -14,11 +15,22 @@ from copy import copy
 from typing import Optional, Callable
 
 CONVERTIBLE_TO_FUNC = "viola$lang$convertibleTo"
+# 动态类型信息（虚函数表）类型：虚方法调用经对象的$$vtable按实际类型分派
+TYPE_INFO_T: str = "viola$dynamic$TypeInfo"
 FUNC_CALL_T: str = "viola$threads$FuncCall"
 FUNC_ENQUEUE_FUNC: str = "viola$threads$enqueue"
 LISTENER_WAIT_FUNC: str = "viola$threads$waitListener"
 
 I_SIZE_MAX: str = "I_SIZE_MAX"
+
+
+def _is_base_value_type(t: TypeName) -> bool:
+    """判断类型是否按基本类型（值类型）处理。
+
+    枚举（EnumName）在C层即其基于类型，运算符直接使用C运算符，
+    与基本类型同样处理（见开发疑问记录160）。
+    """
+    return isinstance(t, (BaseTypeName, EnumName))
 
 
 def implicit_cast_prefix(source: TypeName, target: TypeName) -> str:
@@ -2679,8 +2691,11 @@ class AttrOp(Expression):
     def return_type(self) -> Optional[TypeName]:
         if not self.is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
-        # noinspection PyTypeChecker
-        caller_type: ClassName = self._caller.return_type
+        caller_type: Optional[TypeName] = self._caller.return_type
+        if not isinstance(caller_type, (ClassName, EnumName)):
+            # 调用者不是类/枚举类型（基本类型等）：没有属性表，类型未知。
+            # x.toString()这类按类型解析的调用由CallOp自行解析（见开发疑问记录166）
+            return None
         if self._attr not in caller_type.properties:
             return None
         return caller_type.properties[self._attr].type
@@ -2718,14 +2733,18 @@ class AttrOp(Expression):
         # 方法调用形式（父节点为CallOp时由_set_expected_type设置参数类型；
         # 作为调用实参出现的AttrOp也可能被误绑定到外层CallOp，因此
         # 即使参数类型已设置，仍校验attr是否确为方法）
-        if self._symbol_table.contains_method(self._caller.return_type.name, self._attr,
-                                              self._arg_types if self._arg_types is not None else [],
-                                              self._kwarg_types if self._kwarg_types is not None else {}):
-            return f"{self._caller.text}${self._attr}"
         caller_type: TypeName = self._caller.return_type
+        if isinstance(caller_type, (ClassName, EnumName)) and \
+                self._symbol_table.contains_method(caller_type.name, self._attr,
+                                                   self._arg_types if self._arg_types is not None else [],
+                                                   self._kwarg_types if self._kwarg_types is not None else {}):
+            return f"{self._caller.text}${self._attr}"
         if isinstance(caller_type, ClassName) and self._attr in caller_type.properties and \
                 caller_type.properties[self._attr].is_static:
             # 静态属性：通过类名直接引用（C标识符为类名$属性名）
+            return f"{self._caller.text}${self._attr}"
+        if isinstance(caller_type, EnumName) and self._attr in caller_type.properties:
+            # 枚举成员：通过枚举名直接引用（C标识符为枚举名$成员名，见开发疑问记录160）
             return f"{self._caller.text}${self._attr}"
         return f"{self._caller.text}->{self._attr}"
 
@@ -2735,10 +2754,16 @@ class AttrOp(Expression):
 
     def validate(self) -> None:
         super().validate()
-        if not isinstance(self._caller.return_type, ClassName):
+        caller_expr_type: Optional[TypeName] = self._caller.return_type
+        if isinstance(caller_expr_type, EnumName):
+            # 枚举成员访问（如Color.RED）
+            if self._attr not in caller_expr_type.properties:
+                raise CompilerException("Unknown enum item", self._src_info)
+            return
+        if not isinstance(caller_expr_type, ClassName):
             raise CompilerException("Variable to get attribute is not a class type", self._src_info)
         # noinspection PyTypeChecker
-        caller_type: ClassName = self._caller.return_type
+        caller_type: ClassName = caller_expr_type
         if self._attr not in caller_type.properties and not caller_type.has_method(self._attr) and \
                 not self._symbol_table.contains_method(
                     caller_type.name, self._attr, self._arg_types, self._kwarg_types
@@ -2783,6 +2808,9 @@ class CallOp(Expression):
         self._call_name: Optional[str] = None
         self._func_expr: Optional[Expression] = None
         self._func: Optional[FunctionName] = None
+        # 解析到的方法声明：虚方法调用需要其身份以定位虚函数表槽位
+        # （见开发疑问记录161）
+        self._method: Optional[MethodName] = None
         self._resolved_name: Optional[str] = None
         self._resolved_async_name: Optional[str] = None
         self._lazy_ret_decl: Optional[str] = None
@@ -3099,15 +3127,21 @@ class CallOp(Expression):
                 # waitListener之后由语句块将成员复制回目标变量
                 result.append(self._returns_tuple.front_text)
                 ret_text = self._returns_tuple.text
+            # 虚方法的异步调用同样按对象的实际类型分派：接收者表达式即
+            # 实参元组的首个成员（见开发疑问记录161）
+            async_receiver_text: Optional[str] = None
+            if not self._call_struct and self._call_dynamic and len(self._arg_list) > 0:
+                async_receiver_text = self._arg_list[0].text
             call = "\n".join([
                 f"{self._call_name} = ({FUNC_CALL_T} *)malloc(sizeof({FUNC_CALL_T}));",
                 f"{self._call_name}->args = {arg_text};",
                 f"{self._call_name}->rets = {ret_text};",
-                f"{self._call_name}->func = {self._get_func_text(True)};",
+                f"{self._call_name}->func = {self._callee_text(True, async_receiver_text)};",
                 f"{self._call_name}->listener = {self._listener_name};",
                 f"{FUNC_ENQUEUE_FUNC}({self._call_name});",
             ])
         else:
+            receiver_text: Optional[str] = None
             if self._call_struct and len(self._kwarg_dict) > 0:
                 # 按参数名传参的结构体调用：实参打包进参数元组（运行时按argNames重排）
                 closure_args: ClosureCallArgs = self._ensure_closure_args(False)
@@ -3119,14 +3153,19 @@ class CallOp(Expression):
                 # （见开发疑问记录159）。形参类型不可得时（实参个数与声明不符）
                 # 保持原文本，由后续检查报出
                 declared_args: list[TypeName] = self._callee_arg_types
-                args_str: str = ", ".join(
+                arg_texts: list[str] = [
                     implicit_cast_text(arg, declared_args[i]) if i < len(declared_args) else arg.text
-                    for i, arg in enumerate(self._arg_list)) + ", " if len(self._arg_list) > 0 else ""
+                    for i, arg in enumerate(self._arg_list)]
+                args_str: str = ", ".join(arg_texts) + ", " if len(arg_texts) > 0 else ""
+                if self._call_dynamic and len(arg_texts) > 0:
+                    # 虚方法分派需要接收者表达式：与首个实参用同一文本，
+                    # 避免接收者表达式被求值两次
+                    receiver_text = arg_texts[0]
             rets_str: str = ", ".join(map(
                 self._ret_slot_text, range(len(self._returns_list)))) + ", " if len(
                 self._returns_list) > 0 else ""
             capture_arg: str = f", {self._func_expr.text}->$capture" if self._call_struct else ""
-            call = self._get_func_text(False) + f"({args_str}{rets_str}listener{capture_arg});"
+            call = self._callee_text(False, receiver_text) + f"({args_str}{rets_str}listener{capture_arg});"
             # 返回值类型与目标变量类型不一致时，先把中转变量按隐式转换赋给目标
             # （见_ensure_ret_temps）
             ret_convert: str = self._ret_convert_text()
@@ -3166,6 +3205,40 @@ class CallOp(Expression):
             return None
         index: int = self._returns_list.index(var)
         return f"{var.name} = {self._returns_tuple.text}->${index};"
+
+    @property
+    def _virtual_slot(self) -> Optional[int]:
+        """获取本次调用的虚方法槽位下标（不按虚方法分派时为None）。
+
+        接收者的静态类型（即方法解析所用的类型）必须确有该槽位：这样对象的
+        虚函数表一定包含该槽位，而槽位中存放的可能是子类的重写实现
+        （见开发疑问记录161）。静态类型不是类类型（如数组、字符串等内置类型
+        的方法）或方法不参与分派时返回None，调用仍按静态类型直接进行。
+        """
+        if self._method is None or not self._method.is_virtual or len(self._arg_list) == 0:
+            return None
+        receiver_type: Optional[TypeName] = self._arg_list[0].return_type
+        if not isinstance(receiver_type, ClassName):
+            return None
+        return receiver_type.virtual_slot_index(self._method.virtual_identity)
+
+    def _callee_text(self, is_async: bool, receiver_text: Optional[str]) -> str:
+        """获取被调方文本。
+
+        虚方法经接收者对象的虚函数表槽位调用（同步取槽位的$sync、异步取
+        $async），其余情况按静态解析的函数名调用。
+        """
+        if receiver_text is not None:
+            slot: Optional[int] = self._virtual_slot
+            if slot is not None:
+                slot_text: str = f"(({TYPE_INFO_T} *)({receiver_text})->$$vtable)->vfunc[{slot}]"
+                if is_async:
+                    # 异步调用的函数指针由工作线程按统一签名调用，无需类型转换
+                    return f"{slot_text}.$async"
+                # 同步调用按被调方法的签名转换虚拟槽位中的函数指针
+                cast_text: str = self._func.type.call_ptr_cast_text
+                return f"(*({cast_text})({slot_text}.$sync))"
+        return self._get_func_text(is_async)
 
     def _get_func_text(self, is_async: bool) -> str:
         """获取被调用函数的C名称文本。
@@ -3400,8 +3473,23 @@ class CallOp(Expression):
             dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
         )
         self._func = method.as_function()
+        self._method = method
         self._resolved_name = method.name
         self._resolved_async_name = method.as_async().name
+
+    def _find_to_string_method(self, attr_op: "AttrOp") -> Optional[MethodName]:
+        """解析x.toString()到string类上的静态转换函数（见开发疑问记录166）。
+
+        仅当无实参且调用者的类型有对应转换函数时生效（string自身也在映射表中）；
+        自定义类由其自身的方法表解析，不在映射表中，因而返回None，
+        由常规方法查找给出错误。
+        """
+        if attr_op.attr != "toString" or len(self._arg_list) > 0 or len(self._kwarg_dict) > 0:
+            return None
+        caller_type: Optional[TypeName] = attr_op.caller.return_type
+        if caller_type is None:
+            return None
+        return get_to_string_method(caller_type)
 
     def set_func(self, expr: Expression) -> None:
 
@@ -3462,13 +3550,20 @@ class CallOp(Expression):
             # 才从本调用取实参类型（见开发疑问记录116）
             self._func_expr = expr
             expr.bind_parent(self)
-            method = expr.find_method(
-                list(map(lambda x: x.return_type.name, self._arg_list)),
-                dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
-            )
+            # 值到字符串的转换（见开发疑问记录166）：x.toString()在x不是类类型时
+            # 解析到string类上的静态转换函数，接收者作为其唯一实参
+            to_string_method: Optional[MethodName] = self._find_to_string_method(expr)
+            if to_string_method is not None:
+                method: MethodName = to_string_method
+            else:
+                method = expr.find_method(
+                    list(map(lambda x: x.return_type.name, self._arg_list)),
+                    dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
+                )
             # noinspection PyUnresolvedReferences
-            self._call_dynamic = not method.is_static
+            self._call_dynamic = not method.is_static or to_string_method is not None
             self._func = method.as_function()
+            self._method = method
             self._resolved_name = method.name
             self._resolved_async_name = method.as_async().name
             self._func_expr = expr
@@ -3976,7 +4071,7 @@ class BinaryMathOp(BinaryOperator):
         super().validate()
         expr_left: Expression = self._expr_list[0]
         expr_right: Expression = self._expr_list[1]
-        if isinstance(expr_left.return_type, BaseTypeName) and isinstance(expr_right.return_type, BaseTypeName):
+        if _is_base_value_type(expr_left.return_type) and _is_base_value_type(expr_right.return_type):
             return
         # noinspection PyUnresolvedReferences
         if (not (isinstance(expr_left.return_type,
@@ -3988,9 +4083,8 @@ class BinaryMathOp(BinaryOperator):
                 f"and {expr_right.return_type}.{self._right_magic_method}({expr_left.return_type.raw_name} other) "
                 f"are not defined.", self._src_info
             )
-        if isinstance(expr_left.return_type, BaseTypeName) and isinstance(expr_right.return_type,
-                                                                          BaseTypeName) and self._op is None and \
-                getattr(self, "_c_func", None) is None:
+        if _is_base_value_type(expr_left.return_type) and _is_base_value_type(expr_right.return_type) and \
+                self._op is None and getattr(self, "_c_func", None) is None:
             raise CompilerException("This operator is not defined for two base types", self._src_info)
 
     def _set_call_op(self) -> None:
@@ -4008,7 +4102,7 @@ class BinaryMathOp(BinaryOperator):
             raise CompilerException(f"Type {expr_left.return_type} is not defined", self._src_info)
         if (expr_right.return_type.name, None) not in self._symbol_table:
             raise CompilerException(f"Type {expr_right.return_type} is not defined", self._src_info)
-        if isinstance(expr_left.return_type, BaseTypeName) and isinstance(expr_right.return_type, BaseTypeName):
+        if _is_base_value_type(expr_left.return_type) and _is_base_value_type(expr_right.return_type):
             if self._op is None and getattr(self, "_c_func", None) is None:
                 raise CompilerException("This operator is not defined for two base types.", self._src_info)
             return

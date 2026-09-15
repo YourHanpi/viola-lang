@@ -157,7 +157,7 @@ class CompilerVM:
             "FINALLY": lambda cmd: self.__make(
                 statement.FinallyStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "TYPE_DEF": lambda cmd: self.__make(
-                statement.TypeDefStmt(self._src_info, self._symbol_table, cmd[0], self._var_state_table)),
+                statement.TypeDefStmt(self._src_info, self._symbol_table, self._var_state_table, cmd[0])),
             "BLOCK": lambda cmd: self.__make_stmt_block()
         }
         self._CALLER_DICT: dict[str, Callable[[list[str]], None]] = {
@@ -183,6 +183,7 @@ class CompilerVM:
             "SET_CALLER": lambda cmd: self.__call_set_caller(),
             "SET_COND_EXPR": lambda cmd: self.__call_set_cond_expr(),
             "SET_DEF": lambda cmd: self.__call_set_def(),
+            "POP": lambda cmd: self.__call_pop(),
             "SET_DEFAULT_PARAM": lambda cmd: self.__call_set_default_param(cmd),
             "SET_END": lambda cmd: self.__call_set_end(),
             "SET_EXCEPT_DECL": lambda cmd: self.__call_set_except_decl(cmd),
@@ -477,6 +478,7 @@ class CompilerVM:
         self.__check_type(self._stack[-1], [
             definition.SqDef, definition.ClassDef, definition.ConstDef, definition.EnumDef, definition.GenericCall,
             statement.DeclStmt, statement.AssignStmt, statement.TryStmt, statement.BlockStmt, statement.CStmt,
+            statement.TypeDefStmt,
             expression.ArrayRef, expression.TupleRef, expression.TupleTypeRef, expression.UpdateExpr
         ])
         # noinspection PyUnresolvedReferences
@@ -669,6 +671,10 @@ class CompilerVM:
         self.__check_type(self._stack[-1], [statement.Statement])
         # noinspection PyUnresolvedReferences
         self._stack[-2].set_stmt(self._stack[-1])
+        self.__pop()
+
+    def __call_pop(self) -> None:
+        """丢弃栈顶编译项（如类型定义语句取用后残留的类型引用）。"""
         self.__pop()
 
     def __call_set_type(self) -> None:
@@ -909,6 +915,10 @@ class CompilerVM:
                 expr = expression.VariableRef(self._src_info, self._symbol_table, var)
             elif isinstance(var, symbol.ClassName):
                 expr = expression.ClassRef(self._src_info, self._symbol_table, var)
+            elif isinstance(var, symbol.EnumName):
+                # 枚举名：以类型引用出现，供Color.RED这类成员访问使用
+                # （见开发疑问记录160）
+                expr = expression.TypeRef(self._src_info, self._symbol_table, var)
             else:
                 raise InternalCompilerException(
                     f"{var_name} is not a variable name or a class name",

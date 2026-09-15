@@ -90,6 +90,16 @@ wrapper class string {
     public static fn fromInt(int64 value, uint8 base) -> (string result);
     // 浮点数转换为字符串
     public static fn fromFloat(float64 value) -> (string result);
+    // 值到字符串的转换：x.toString()按x的静态类型解析到下列函数
+    // （基本类型不是类、没有方法表，见开发疑问记录166）。
+    // bool的字符串形式与字面量一致（true/false）。
+    public static fn _int32ToString(int32 value) -> (string result);
+    public static fn _int64ToString(int64 value) -> (string result);
+    public static fn _uint32ToString(uint32 value) -> (string result);
+    public static fn _uint64ToString(uint64 value) -> (string result);
+    public static fn _float64ToString(float64 value) -> (string result);
+    public static fn _boolToString(bool value) -> (string result);
+    public static fn _stringToString(string value) -> (string result);
     // 是否全部为字母或数字
     public fn isalnum() -> (bool result);
     // 是否全部为字母

@@ -1,0 +1,6 @@
+// 通配导入不能带as别名（应报编译错误）
+from viola.io import * as io_all;
+
+sq main() -> () {
+    print("x");
+}

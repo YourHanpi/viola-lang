@@ -1,0 +1,8 @@
+// 局部类型别名只在声明它的块及其内层块内有效：块外使用应报编译错误
+sq main() -> () {
+    if (true) {
+        using InnerAlias = int32;
+        InnerAlias v = 1;
+    }
+    InnerAlias w = 2;
+}

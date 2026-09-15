@@ -21,7 +21,7 @@ RUNTIME_SOURCES = [
     os.path.join("viola", "math.c"),
     os.path.join("viola", "os.c"),
 ]
-GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2"]
+GCC_FLAGS = ["-std=gnu99", "-Wall", "-Wextra", "-O2", "-fcommon"]
 
 project = sys.argv[1] if len(sys.argv) > 1 else "hello_world_0"
 project_dir = os.path.join(PROJECTS_DIR, project)

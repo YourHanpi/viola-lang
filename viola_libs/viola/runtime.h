@@ -43,9 +43,18 @@ typedef void *viola$lang$ptr;
 #define $$_PATH NULL
 
 /* ================= 动态类型信息（虚函数表） ================= */
+/* 虚方法槽位：同步实现与异步包装各一个函数指针。
+   槽位下标由基类的方法声明顺序决定，子类重写的方法占用同一槽位，
+   因此以基类类型引用派生类对象时按对象的实际类型分派
+   （见开发疑问记录161）。 */
+typedef struct viola$dynamic$VFuncSlot {
+    void *$sync;   /* 同步实现（方法C名称） */
+    void *$async;  /* 异步包装（方法C名称 + "$async"） */
+} viola$dynamic$VFuncSlot;
+
 typedef struct viola$dynamic$TypeInfo {
     struct viola$dynamic$TypeInfo *$parent;
-    void *vfunc;
+    viola$dynamic$VFuncSlot *vfunc;  /* 虚方法槽位数组；无虚方法时为NULL */
 } viola$dynamic$TypeInfo;
 
 /* 判断对象类型是否为目标的子类型（沿$parent链查找） */

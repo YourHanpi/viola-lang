@@ -600,6 +600,18 @@ class VariableName(NamedSymbol):
         return f"{self.type_name_pair_calling};"
 
     @property
+    def definition_text(self) -> str:
+        """获取将该变量定义在文件作用域（模块级全局变量）的代码文本。
+
+        不带初值：文件作用域的静态存储本就零初始化，故无需declaration_text中
+        对象类型的"= NULL"；更重要的是，不带初值的形式在C中是暂定定义，可按
+        共同符号合并规则与运行库中提供存储的同名变量（如viola.os.path的pathsep、
+        viola.os的O_*常量）合并，而带初值的形式是强符号定义，重复定义会链接失败
+        （见开发疑问记录167）。
+        """
+        return f"{self.type_name_pair_calling};"
+
+    @property
     def is_global(self) -> bool:
         """
         获取这一变量是否为全局变量。
@@ -1117,6 +1129,76 @@ class ClassName(TypeName):
         for name, prop in self._properties.items():
             ordered[name] = prop
         return list(ordered.values())
+
+    @property
+    def is_generic_instance(self) -> bool:
+        """获取本类是否为泛型类实例化得到的类（如Array::<int>的Array__1）。
+
+        泛型实例的方法其C名称由实例化过程产生，同一方法在符号表中可能同时存在
+        实例化前后的多个名字（见开发疑问记录102），按名称引用其实现不可靠，
+        故泛型实例不参与虚方法分派（见开发疑问记录161）。
+        """
+        return self._generic_origin is not None
+
+    @property
+    def virtual_slots(self) -> list[tuple[str, tuple[str, ...]]]:
+        """获取虚方法槽位表（父类槽位在前，其后为本类新增的槽位）。
+
+        槽位身份为（方法名，不含接收者的形参类型名元组）：子类重写的方法与
+        父类方法身份相同，占用同一槽位。因此派生类的槽位表以父类的槽位表为
+        前缀，二者的同一下标指向同一虚方法（见开发疑问记录161）。
+
+        不缓存结果：泛型实例化先登记空壳、再填充成员（见开发疑问记录102），
+        缓存会在成员填充之前形成错误（偏少）的槽位表。
+
+        泛型实例本身没有槽位表（不参与虚方法分派，见is_generic_instance）。
+        """
+        if self.is_generic_instance:
+            return []
+        slots: list[tuple[str, tuple[str, ...]]] = []
+        if self._parent is not None:
+            slots.extend(self._parent.virtual_slots)
+        for (name, _), method in self._methods.items():
+            if not method.is_virtual:
+                continue
+            identity: tuple[str, tuple[str, ...]] = (name, method.virtual_arg_types)
+            if identity not in slots:
+                slots.append(identity)
+        return slots
+
+    def virtual_slot_index(self, identity: tuple[str, tuple[str, ...]]) -> Optional[int]:
+        """获取虚方法身份对应的槽位下标（不参与虚方法分派时为None）。"""
+        slots: list[tuple[str, tuple[str, ...]]] = self.virtual_slots
+        if identity not in slots:
+            return None
+        return slots.index(identity)
+
+    def virtual_slot_impl(self, index: int) -> Optional["MethodName"]:
+        """获取本类中实现指定槽位的方法（本类与父类都未实现时为None）。
+
+        本类的实现优先；否则取父类同一下标的实现（继承链上父类的槽位表
+        是本类槽位表的前缀）。抽象方法没有实现，返回None——该槽位在虚函数
+        表中为NULL，由实现它的子类填入。
+
+        "本类的实现"按方法的C名称判断是否属于本类：泛型实例化的方法其cls仍指向
+        泛型类模板（见开发疑问记录102），不能按cls判断；而继承自父类的副本其
+        C名称以父类开头，故按名称前缀区分。
+        """
+        identity: tuple[str, tuple[str, ...]] = self.virtual_slots[index]
+        own_prefix: str = self.name + "$"
+        # noinspection PyUnresolvedReferences
+        for (name, _), method in self._methods.items():
+            if not method.is_virtual or method.is_abstract:
+                continue
+            if method.cls is not self and not method.name.startswith(own_prefix):
+                continue
+            if (name, method.virtual_arg_types) == identity:
+                return method
+        if self._parent is not None and not self._parent.is_generic:
+            parent_slots: list[tuple[str, tuple[str, ...]]] = self._parent.virtual_slots
+            if index < len(parent_slots) and parent_slots[index] == identity:
+                return self._parent.virtual_slot_impl(index)
+        return None
 
     def shared_parent(
             self,
@@ -2178,6 +2260,25 @@ class FunctionTypeName(TypeName):
         return f"{FUNCTION_T} *{var_name}"
 
     @property
+    def call_ptr_cast_text(self) -> str:
+        """获取按本签名直接调用普通函数时使用的函数指针类型转换文本。
+
+        形如：void (*)(参数c_calling_name..., 返回c_assigning_name..., Listener *)
+        与sync_ptr_cast_text的区别是不含末尾的捕获环境形参：虚方法槽位中存放的
+        是普通函数（见开发疑问记录161）。
+        """
+        if len(self._args) == 0:
+            args_text: str = ""
+        else:
+            args_text = ", ".join(map(lambda t: t.c_calling_name, self._args))
+        if len(self._returns) == 0:
+            returns_text: str = ""
+        else:
+            returns_text = ", ".join(map(lambda t: t.c_assigning_name, self._returns))
+        params: str = ", ".join(filter(lambda x: x != "", [args_text, returns_text, LISTENER_T + " *"]))
+        return f"void (*)({params})"
+
+    @property
     def sync_ptr_cast_text(self) -> str:
         """通过Function结构体syncPtr调用时使用的函数指针类型转换文本。
 
@@ -2394,6 +2495,9 @@ class EnumName(TypeName):
         """
         super().__init__(src_info, namespace, name, SymbolType.ENUM)
         self._based_type: TypeName = based_type
+        # 枚举成员（如Color.RED）：按名称登记的全局变量，
+        # 供AttrOp以静态属性的方式解析（见开发疑问记录160）
+        self._properties: dict[str, VariableName] = {}
 
     @property
     def based_type(self) -> TypeName:
@@ -2401,6 +2505,17 @@ class EnumName(TypeName):
         获取该枚举类型所基于的类型。
         """
         return self._based_type
+
+    def add_property(self, prop: VariableName) -> None:
+        """登记一个枚举成员。"""
+        if prop.self_name in self._properties:
+            raise CompilerException(f"Enum item {prop.self_name} already exists.", prop.src_info)
+        self._properties[prop.self_name] = prop
+
+    @property
+    def properties(self) -> dict[str, VariableName]:
+        """获取枚举成员表（成员名 -> 成员变量名）。"""
+        return self._properties
 
     @property
     def c_alloc_name(self) -> str:
@@ -2416,6 +2531,9 @@ class EnumName(TypeName):
 
     def convertible_to(self, target: "TypeName",
                        symbol_dict: dict[tuple[str, Optional[tuple[TypeName, ...]]], NamedSymbol]) -> bool:
+        if isinstance(target, EnumName):
+            # 枚举之间按名称判断：基于类型相同的不同枚举是不同类型
+            return self.name == target.name
         return self._based_type.convertible_to(target, symbol_dict)
 
     @property
@@ -2909,6 +3027,52 @@ class MethodName(PropertyVariableName):
         """
         return self._method_name
 
+    @property
+    def bare_name(self) -> str:
+        """获取不含重载序号的方法名（如speak）。
+
+        重载序号可能出现两次（声明时的前置序号与set_cls追加的序号），
+        故需去掉末尾连续的序号。
+        """
+        return re.sub(r"(\$_\d+)+$", "", self._method_name)
+
+    @property
+    def virtual_arg_types(self) -> tuple[str, ...]:
+        """获取虚方法身份中的形参类型名元组（不含接收者）。
+
+        接收者在C层是首个形参，但它在基类与子类中分别是各自的类类型，
+        故不能参与身份判定。
+        """
+        self._type: FunctionTypeName
+        args: list[TypeName] = self._type.args if self._is_static else self._type.args[1:]
+        return tuple(map(lambda t: t.name, args))
+
+    @property
+    def virtual_identity(self) -> tuple[str, tuple[str, ...]]:
+        """获取虚方法身份（方法名 + 不含接收者的形参类型名）。
+
+        子类重写的方法与父类方法身份相同，因而占用同一虚方法槽位
+        （见开发疑问记录161）。
+        """
+        return self.bare_name, self.virtual_arg_types
+
+    @property
+    def is_virtual(self) -> bool:
+        """获取该方法是否参与虚方法分派。
+
+        以下方法不参与（保持按静态类型直接调用）：
+        - 静态方法（含构造函数，其调用处的对象类型已由类型名确定）；
+        - 析构函数：释放代码由编译器按静态类型生成，虚分派会与引用计数
+          路径相互影响；
+        - 原生方法：实现由运行库提供，不进入编译器生成的虚函数表；
+        - 泛型方法：实现按实例化产生，C名称需在实例化后确定。
+        见开发疑问记录161。
+        """
+        if self._is_static or self.is_native or self.is_generic:
+            return False
+        bare_name: str = self.bare_name
+        return bare_name not in ("__new__", "__del__", "__new__super", "__del__super")
+
     def rebuild(self, func: FunctionName) -> "MethodName":
         """
         用另一个函数声明重建方法。
@@ -3086,6 +3250,48 @@ _add_native_method(StringTypeName, "swapcase", [], [StringTypeName], [], ["resul
 _add_native_method(StringTypeName, "zfill", [UINT32], [StringTypeName], ["length"], ["result"])
 _add_native_method(StringTypeName, "replace", [StringTypeName, StringTypeName, UINT32], [StringTypeName],
                    ["oldSub", "newSub", "count"], ["result"])
+
+# 值到字符串的转换（见开发疑问记录166）：基本类型不是类、没有方法表，
+# 故x.toString()按x的静态类型解析到这里的静态转换函数（_TO_STRING_HELPERS）。
+# 注册顺序决定C名称中的重载序号，故新增项应追加在末尾。
+_add_native_method(StringTypeName, "_int32ToString", [INT32], [StringTypeName], ["value"], ["result"], is_static=True)
+_add_native_method(StringTypeName, "_int64ToString", [INT64], [StringTypeName], ["value"], ["result"], is_static=True)
+_add_native_method(StringTypeName, "_uint32ToString", [UINT32], [StringTypeName], ["value"], ["result"], is_static=True)
+_add_native_method(StringTypeName, "_uint64ToString", [UINT64], [StringTypeName], ["value"], ["result"], is_static=True)
+_add_native_method(StringTypeName, "_float64ToString", [FLOAT64], [StringTypeName], ["value"], ["result"], is_static=True)
+_add_native_method(StringTypeName, "_boolToString", [BOOL], [StringTypeName], ["value"], ["result"], is_static=True)
+_add_native_method(StringTypeName, "_stringToString", [StringTypeName], [StringTypeName], ["value"], ["result"],
+                   is_static=True)
+
+# x.toString()的类型映射：基本类型名 -> (string类上的静态转换函数名, 该函数的形参类型)。
+# 较窄的整型/浮点型按C的隐式转换传给更宽的形参（见开发疑问记录166）。
+_TO_STRING_HELPERS: dict[str, tuple[str, TypeName]] = {
+    INT8.name: ("_int32ToString", INT32),
+    INT16.name: ("_int32ToString", INT32),
+    INT32.name: ("_int32ToString", INT32),
+    INT64.name: ("_int64ToString", INT64),
+    UINT8.name: ("_uint32ToString", UINT32),
+    UINT16.name: ("_uint32ToString", UINT32),
+    UINT32.name: ("_uint32ToString", UINT32),
+    UINT64.name: ("_uint64ToString", UINT64),
+    FLOAT.name: ("_float64ToString", FLOAT64),
+    DOUBLE.name: ("_float64ToString", FLOAT64),
+    FLOAT128.name: ("_float64ToString", FLOAT64),
+    BOOL.name: ("_boolToString", BOOL),
+    StringTypeName.name: ("_stringToString", StringTypeName),
+}
+
+
+def get_to_string_method(caller_type: TypeName) -> Optional[MethodName]:
+    """获取把caller_type类型的值转换为字符串的静态方法（无则返回None）。
+
+    见开发疑问记录166：基本类型不是类、没有方法表，x.toString()由编译器按
+    x的静态类型解析到string类上的静态转换函数。
+    """
+    helper: Optional[tuple[str, TypeName]] = _TO_STRING_HELPERS.get(caller_type.name)
+    if helper is None:
+        return None
+    return StringTypeName.methods.get((helper[0], (helper[1],)))
 
 # 函数值类型（viola.lang.function，0.1起，见versions_dev_plan_zh.md）。
 # 所有函数（无论静态还是动态）作为值使用时均封装为
@@ -4459,7 +4665,17 @@ class SymbolTable:
         name: 方法的名称。
         args: 方法的参数类型名称列表。
         kwargs: 方法的关键字参数类型字典。
+
+        查询用的类型不是类（基本类型、枚举等，见开发疑问记录160）或未定义时
+        返回False，而不是抛出异常：本方法用于判断“是否按方法调用渲染”，
+        此类类型没有方法表，按属性路径渲染即可。
         """
+        cleaned_name: str = self.clean_namespace(cls_name)
+        lookup_name: str = cleaned_name if (cleaned_name, None) in self.symbols else cls_name
+        if (lookup_name, None) not in self.symbols:
+            return False
+        if not isinstance(self[lookup_name, None], ClassName):
+            return False
         return len(self.find_methods(cls_name, name, args, kwargs)) > 0
 
     def find_function(self, src_info: SourceInfo, name: str, args: list[str], kwargs: dict[str, str]) -> FunctionName:
@@ -5299,7 +5515,17 @@ class SymbolTable:
             enum_namespace = self._namespace
         # noinspection PyTypeChecker
         enum = EnumName(self._src_info, enum_namespace, enum_self_name, self[based_type, None])
-        self.add(enum, item_name, None)
+        # 本模块的枚举同时以裸名注册（与类的处理一致）：模块内的使用处
+        # （Color.RED、Color c = ...）按裸名解析（见开发疑问记录160）
+        enum_key_name: str = enum.self_name if enum.raw_name.startswith(self._namespace_without_import) \
+            else enum.raw_name
+        if (enum_key_name, None) in self:
+            existing = self[enum_key_name, None]
+            if isinstance(existing, EnumName) and existing.name == enum.name:
+                enum_key_name = enum.raw_name
+            else:
+                raise CompilerException(f"Enum {enum_key_name} already exists.", self._src_info)
+        self.add(enum, enum_key_name, None)
 
     def __get_interface(self, interface_name: str) -> ClassName:
         """获取接口类（用于extends的多个父类型与impl的接口列表）。

@@ -1,0 +1,9 @@
+// 访问不存在的枚举成员应报编译错误
+enum Color {
+    RED,
+    GREEN
+}
+
+sq main() -> () {
+    Color c = Color.BLUE;
+}
