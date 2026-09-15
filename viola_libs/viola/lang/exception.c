@@ -24,7 +24,12 @@ void viola$lang$exception$Exception$__new__$_0(viola$lang$string *message,
     exc->$refCount = 1;
     exc->$parent = NULL;
     exc->$$vtable = &viola$lang$exception$Exception$$vtable;
+    /* 成员持有message：计一次数（调用方随后释放自己的实参槽位）。
+       与析构中的递减成对（见开发疑问记录190）。 */
     exc->message = message;
+    if (exc->message != NULL) {
+        viola$lang$refcount_inc(&exc->message->$refCount);
+    }
     *this = exc;
 }
 
@@ -39,6 +44,9 @@ void viola$lang$exception$Exception$__new__super$_0(viola$lang$string *message,
         return;
     }
     this->message = message;
+    if (this->message != NULL) {
+        viola$lang$refcount_inc(&this->message->$refCount);
+    }
 }
 
 /* 获取异常消息：what() -> string。
@@ -52,7 +60,19 @@ void viola$lang$exception$Exception$what$_0(viola$lang$exception$Exception *_thi
         *result = viola$lang$string$fromCharString("");
         return;
     }
+    /* 返回值槽位成为新的持有者：该槽位释放时会递减，故此处先计一次数，
+       否则调用方释放返回值时会把异常仍在使用中的message释放掉
+       （见开发疑问记录190）。 */
     *result = _this->message;
+    viola$lang$refcount_inc(&(*result)->$refCount);
+}
+
+/* 释放一个局部持有的字符串：递减计数，归零则析构（见开发疑问记录190）。
+   与编译器生成的释放代码同一语义，供本文件中手工管理的局部槽位使用。 */
+static void releaseString(viola$lang$string *str) {
+    if (str != NULL && viola$lang$refcount_dec(&str->$refCount) == 0) {
+        viola$lang$string$__del__$_0(str, NULL);
+    }
 }
 
 /* 数组下标越界：构造IndexError并上报到listener。
@@ -73,6 +93,10 @@ void viola$lang$exception$indexError(viola$lang$uint64 index, viola$lang$uint64 
              (unsigned long long)index, (unsigned long long)size);
     message = viola$lang$string$fromCharString(buffer);
     viola$lang$exception$Exception$__new__$_0(message, &exc, listener);
+    /* 构造已retain该message：局部槽位不再持有，释放之，否则只增不减而泄漏
+       （见开发疑问记录190） */
+    releaseString(message);
+    message = NULL;
     listener->exception = exc;
 }
 
@@ -94,6 +118,10 @@ void viola$lang$exception$sliceError(viola$lang$uint64 start, viola$lang$uint64 
              (unsigned long long)start, (unsigned long long)end);
     message = viola$lang$string$fromCharString(buffer);
     viola$lang$exception$Exception$__new__$_0(message, &exc, listener);
+    /* 构造已retain该message：局部槽位不再持有，释放之，否则只增不减而泄漏
+       （见开发疑问记录190） */
+    releaseString(message);
+    message = NULL;
     listener->exception = exc;
 }
 
@@ -116,6 +144,10 @@ void viola$lang$exception$sliceStepError(viola$lang$uint64 step,
              (unsigned long long)step);
     message = viola$lang$string$fromCharString(buffer);
     viola$lang$exception$Exception$__new__$_0(message, &exc, listener);
+    /* 构造已retain该message：局部槽位不再持有，释放之，否则只增不减而泄漏
+       （见开发疑问记录190） */
+    releaseString(message);
+    message = NULL;
     listener->exception = exc;
 }
 
@@ -131,7 +163,11 @@ void viola$lang$exception$Exception$__del__$_0(viola$lang$exception$Exception *_
             viola$lang$uint32 *parentRefCount = (viola$lang$uint32 *)_this->$parent;
             (*parentRefCount)--;
         } else {
-            if (_this->message != NULL) {
+            /* message成员失去一个持有者：与构造中的retain成对
+               （见开发疑问记录190）。直接调用string析构而不递减会使计数永不
+               归零，message（含其data缓冲区）随异常一起泄漏。 */
+            if (_this->message != NULL
+                && viola$lang$refcount_dec(&_this->message->$refCount) == 0) {
                 viola$lang$string$__del__$_0(_this->message, NULL);
             }
             free(_this);

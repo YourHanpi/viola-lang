@@ -19,7 +19,9 @@ from .symbol import (
     SymbolTable,
     ExceptionTypeName,
     AutoTypeName,
-    ArrayTypeName
+    ArrayTypeName,
+    retain_text,
+    REFCOUNT_DEC_FUNC
 )
 from utils import CompilerException, unreachable_warning, SourceInfo, InternalCompilerException, SUPER_ASSIGN_MARKER
 
@@ -44,6 +46,19 @@ STACK_A_POP_FUNC: str = "viola$threads$popStackA"
 STACK_B_PUSH_FUNC: str = "viola$threads$pushStackB"
 STACK_B_POP_FUNC: str = "viola$threads$popStackB"
 THREAD_INFO_T: str = "viola$threads$ThreadInfo"
+
+
+def store_retain_text(target_text: str, target_type: TypeName, value: Expression) -> str:
+    """生成把值存入槽位（变量、成员、返回值槽位）后对目标对象的一次retain。
+
+    目标槽位自此持有一个对象，故计一次数；该槽位释放时递减并归零才析构
+    （见开发疑问记录190）。非对象类型不计数；值表达式把新对象的所有权直接
+    交给槽位时（其临时变量不会被释放）也不计数，否则只增不减而泄漏。
+    返回含结尾换行的文本。
+    """
+    if not target_type.is_object or value.transfers_ownership:
+        return ""
+    return retain_text(target_text) + "\n"
 
 
 def infer_array_literal_element_type(value: Optional[Expression], target: TypeName) -> None:
@@ -899,6 +914,9 @@ class DeclStmt(Statement):
                     # 类类型的子类值赋给父类变量时补显式C转换（见开发疑问记录159）
                     front_text += f"{deref}{self._var[0].name} = " \
                                   f"{implicit_cast_text(self._var_value, self._var[0].type)};\n"
+                    # 目标槽位自此持有该对象：计一次数（见开发疑问记录190）。
+                    # 值来自返回指针形参的调用时（CallOp/UnpackExpr路径）由被调方负责
+                    front_text += store_retain_text(deref + self._var[0].name, self._var[0].type, self._var_value)
             else:
                 self._var_value.set_returns(self._var)
                 # 头声明统一由语句块（或异步包装）的head_text输出，避免重复声明
@@ -1267,6 +1285,8 @@ class AssignStmt(Statement):
                 # 类类型的子类值赋给父类变量时补显式C转换（见开发疑问记录159）
                 front_text += f"{deref}{self._var[0].name} = " \
                               f"{implicit_cast_text(self._var_value, self._var[0].type)};\n"
+                # 目标槽位自此持有该对象：计一次数（见开发疑问记录190）
+                front_text += store_retain_text(deref + self._var[0].name, self._var[0].type, self._var_value)
             return front_text
         # 多变量赋值（元组解包）
         self._var_value.set_returns(self._var)
@@ -2821,10 +2841,27 @@ class BlockStmt(Statement):
                         null_stmt.remove_jump_mark()
                         null_stmt.remove_mark()
                         null_stmt.add_text(f"\t{var} = NULL;")
+                        # 释放=递减引用计数，归零才调用析构（见开发疑问记录190）。
+                        # 递减与判断合并在同一个条件里：分两步时另一线程可能在同
+                        # 一对象上并发释放，两次都读到0而重复析构
+                        release_guard: str = f"if ({var} && {REFCOUNT_DEC_FUNC}(&{var}->$refCount) == 0) {{"
+                        end_guard_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                        end_guard_stmt.remove_jump_mark()
+                        end_guard_stmt.remove_mark()
+                        end_guard_stmt.add_text("}")
+                        begin_guard_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
+                        begin_guard_stmt.remove_jump_mark()
+                        begin_guard_stmt.remove_mark()
+                        begin_guard_stmt.add_text(release_guard)
+                        # 正常路径上的内联释放：new_stmt_list最后会整体反转，
+                        # 故按"先出现者后追加"的顺序追加，反转后为
+                        # guard → release → end_guard → null
                         new_stmt_list.append(null_stmt)
+                        new_stmt_list.append(end_guard_stmt)
                         new_stmt_list.append(release_stmt)
+                        new_stmt_list.append(begin_guard_stmt)
                         check_null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
-                        check_null_stmt.add_text(f"if ({var}) {{")
+                        check_null_stmt.add_text(release_guard)
                         check_null_stmt.remove_jump_mark()
                         check_null_stmt.remove_mark()
                         end_check_null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)

@@ -37,6 +37,58 @@ PERROR_FUNC: str = "viola$io$print$perror"
 STACK_B_PUSH_FUNC: str = "viola$threads$pushStackB"
 STACK_B_POP_FUNC: str = "viola$threads$popStackB"
 
+# 引用计数（原子操作，定义见runtime.h"原子引用计数"）。0.1的模型：
+# 每个持有对象指针的槽位（局部变量、临时变量、类成员、返回值槽位）都算一次持有，
+# 分配处计数为1（由接收它的槽位持有）；把既有对象存入槽位时retain（计数递增），
+# 槽位不再持有时release（计数递减，归零则调用析构/释放）。
+# 与definition.py的同名常量一致，因模块依赖方向（definition引用symbol）在此重复声明。
+REFCOUNT_INC_FUNC: str = "viola$lang$refcount_inc"
+REFCOUNT_DEC_FUNC: str = "viola$lang$refcount_dec"
+
+
+def retain_text(var_text: str) -> str:
+    """生成把var_text所指对象多记一个持有者的C文本（retain）。
+
+    var_text为对象指针表达式（可能为NULL）：为空时不计数。
+    """
+    return f"if ({var_text}) {{ {REFCOUNT_INC_FUNC}(&({var_text})->$refCount); }}"
+
+
+def destructor_name(var_type: TypeName) -> str:
+    """获取释放该类型对象所用析构函数的C名（不含实参与结尾分号）。
+
+    泛型实例化的类其析构方法名带额外的重载序号（如Box__1$__del__$_0$_0），
+    按类型实际注册的析构方法取名，避免与定义不一致（见开发疑问记录102）。
+    """
+    if isinstance(var_type, TupleTypeName):
+        # 所有元组类型共享同一C名称的析构函数
+        return f"{TUPLE_T}$__del__"
+    if isinstance(var_type, ArrayTypeName):
+        # 数组的C名称使用$$array形式
+        return f"{var_type.c_alloc_name}$__del__$_0"
+    if isinstance(var_type, ClassName):
+        del_method = next(
+            (m for (n, _), m in var_type.methods.items() if n == "__del__"), None)
+        if del_method is not None:
+            return del_method.name
+    return f"{var_type.name}$__del__$_0"
+
+
+def release_text(var_text: str, free_stmts: str) -> str:
+    """生成"递减计数、归零则执行free_stmts"的C文本（release）。
+
+    free_stmts为计数归零后要执行的释放语句（析构调用或free），可为多行。
+    var_text为NULL时不做任何事。
+    """
+    body: str = "\n".join("\t\t" + line for line in free_stmts.split("\n"))
+    return "\n".join([
+        f"if ({var_text}) {{",
+        f"\tif ({REFCOUNT_DEC_FUNC}(&({var_text})->$refCount) == 0) {{",
+        body,
+        "\t}",
+        "}"
+    ])
+
 
 class SymbolType(Enum):
     """
@@ -556,26 +608,15 @@ class VariableName(NamedSymbol):
     def free_text(self) -> str:
         """
         获取这一变量的释放文本。
+
+        释放=递减引用计数，归零才真正析构（见开发疑问记录190）。变量持有一个对象
+        即计一次数（分配处计1，赋值/传参写入返回值槽位时retain），故此处递减与
+        持有成对；递减后不为0说明仍有其他槽位持有，由最后释放者负责析构。
         """
         if not self.is_object:
             return ""
-        if isinstance(self._type, TupleTypeName):
-            # 所有元组类型共享同一C名称的析构函数
-            return f"{TUPLE_T}$__del__({self.name}, listener); {self.name} = NULL;"
-        if isinstance(self._type, ArrayTypeName):
-            # 数组的C名称使用$$array形式
-            return f"{self._type.c_alloc_name}$__del__$_0({self.name}, listener); {self.name} = NULL;"
-        # 泛型实例化的类其析构方法名带额外的重载序号（如Box__1$__del__$_0$_0），
-        # 按类型实际注册的析构方法取名，避免与定义不一致（见开发疑问记录102）
-        del_name: Optional[str] = None
-        if isinstance(self._type, ClassName):
-            del_method = next(
-                (m for (n, _), m in self._type.methods.items() if n == "__del__"), None)
-            if del_method is not None:
-                del_name = del_method.name
-        if del_name is None:
-            del_name = f"{self._type.name}$__del__$_0"
-        return f"{del_name}({self.name}, listener); {self.name} = NULL;"
+        del_call: str = f"{destructor_name(self._type)}({self.name}, listener);"
+        return f"{release_text(self.name, del_call)} {self.name} = NULL;"
 
     def instantiation(self, new_name: str, t: dict["GenericArgument", TypeName]) -> "VariableName":
         """
@@ -1621,6 +1662,9 @@ def _array_method_descs(arr_type: "ArrayTypeName") -> list[ArrayMethodDesc]:
             body=[
                 "@check_index_get@",
                 "\t*element = _this->data[item];",
+                # 取出的元素交给调用方的槽位持有：该槽位释放时会递减，
+                # 故此处先计一次数（见开发疑问记录190）
+                "@elem_retain@(*element);",
             ]),
         ArrayMethodDesc(
             "__getitem__$_1", [(SliceTypeName, "s")],
@@ -1639,7 +1683,7 @@ def _array_method_descs(arr_type: "ArrayTypeName") -> list[ArrayMethodDesc]:
                 "\tnewResult->data = count == 0 ? NULL : (@elem_assigning@)malloc(@elem_size@ * count);",
                 "\tviola$lang$uint64 j = 0;",
                 "\tfor (viola$lang$uint64 i = start; i < end; i += step) "
-                "{ newResult->data[j++] = _this->data[i]; }",
+                "{ newResult->data[j] = _this->data[i]; @elem_retain@(newResult->data[j]); j++; }",
                 "\t*subarray = newResult;",
             ]),
         ArrayMethodDesc(
@@ -1651,9 +1695,10 @@ def _array_method_descs(arr_type: "ArrayTypeName") -> list[ArrayMethodDesc]:
                 "\tnewResult->data = newResult->size == 0 ? NULL : "
                 "(@elem_assigning@)malloc(@elem_size@ * newResult->size);",
                 "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) "
-                "{ newResult->data[i] = _this->data[i]; }",
+                "{ newResult->data[i] = _this->data[i]; @elem_retain@(newResult->data[i]); }",
                 "\tfor (viola$lang$uint64 i = 0; i < other->size; i++) "
-                "{ newResult->data[_this->size + i] = other->data[i]; }",
+                "{ newResult->data[_this->size + i] = other->data[i]; "
+                "@elem_retain@(newResult->data[_this->size + i]); }",
                 "\t*result = newResult;",
             ]),
         ArrayMethodDesc(
@@ -1664,8 +1709,9 @@ def _array_method_descs(arr_type: "ArrayTypeName") -> list[ArrayMethodDesc]:
                 "\tnewResult->size = _this->size + 1;",
                 "\tnewResult->data = (@elem_assigning@)malloc(@elem_size@ * newResult->size);",
                 "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) "
-                "{ newResult->data[i] = _this->data[i]; }",
+                "{ newResult->data[i] = _this->data[i]; @elem_retain@(newResult->data[i]); }",
                 "\tnewResult->data[_this->size] = newElement;",
+                "\t@elem_retain@(newElement);",
                 "\t*newArray = newResult;",
             ]),
         ArrayMethodDesc(
@@ -1678,10 +1724,11 @@ def _array_method_descs(arr_type: "ArrayTypeName") -> list[ArrayMethodDesc]:
                 "\tnewResult->size = _this->size + 1;",
                 "\tnewResult->data = (@elem_assigning@)malloc(@elem_size@ * newResult->size);",
                 "\tfor (viola$lang$uint64 i = 0; i < loc; i++) "
-                "{ newResult->data[i] = _this->data[i]; }",
+                "{ newResult->data[i] = _this->data[i]; @elem_retain@(newResult->data[i]); }",
                 "\tnewResult->data[loc] = newElement;",
+                "\t@elem_retain@(newElement);",
                 "\tfor (viola$lang$uint64 i = loc; i < _this->size; i++) "
-                "{ newResult->data[i + 1] = _this->data[i]; }",
+                "{ newResult->data[i + 1] = _this->data[i]; @elem_retain@(newResult->data[i + 1]); }",
                 "\t*newArray = newResult;",
             ]),
         ArrayMethodDesc(
@@ -1700,9 +1747,12 @@ def _array_method_descs(arr_type: "ArrayTypeName") -> list[ArrayMethodDesc]:
                 "\tnewResult->size = _this->size;",
                 "\tnewResult->data = newResult->size == 0 ? NULL : "
                 "(@elem_assigning@)malloc(@elem_size@ * newResult->size);",
+                # 下标处的旧元素随即被newElement取代，故该位置不计数（避免只增不减）
                 "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) "
-                "{ newResult->data[i] = _this->data[i]; }",
+                "{ newResult->data[i] = _this->data[i]; "
+                "if (i != index) { @elem_retain@(newResult->data[i]); } }",
                 "\tnewResult->data[index] = newElement;",
+                "\t@elem_retain@(newElement);",
                 "\t*newArray = newResult;",
             ]),
         ArrayMethodDesc(
@@ -1718,19 +1768,21 @@ def _array_method_descs(arr_type: "ArrayTypeName") -> list[ArrayMethodDesc]:
                 "(@elem_assigning@)malloc(@elem_size@ * newResult->size);",
                 "\tviola$lang$uint64 j = 0;",
                 "\tfor (viola$lang$uint64 i = 0; i < start; i++) "
-                "{ newResult->data[j++] = _this->data[i]; }",
+                "{ newResult->data[j] = _this->data[i]; @elem_retain@(newResult->data[j]); j++; }",
                 "\tfor (viola$lang$uint64 i = 0; i < newSubarray->size; i++) "
-                "{ newResult->data[j++] = newSubarray->data[i]; }",
+                "{ newResult->data[j] = newSubarray->data[i]; @elem_retain@(newResult->data[j]); j++; }",
                 "\tfor (viola$lang$uint64 i = end; i < _this->size; i++) "
-                "{ newResult->data[j++] = _this->data[i]; }",
+                "{ newResult->data[j] = _this->data[i]; @elem_retain@(newResult->data[j]); j++; }",
                 "\t*newArray = newResult;",
             ]),
         ArrayMethodDesc(
             "__del__$_0",
             body=[
+                # 调用方已递减至0（见开发疑问记录190），此处逐个释放元素后回收数组
                 "\tif (_this->$refCount == 0) {",
                 "\t\tif (_this->$parent) { ((viola$lang$uint32 *)_this->$parent)[0]--; }",
                 "\t\telse {",
+                "@elem_release_loop@",
                 "\t\t\tfree(_this->data); _this->data = NULL;",
                 "\t\t\tfree(_this); _this = NULL;",
                 "\t\t}",
@@ -4069,6 +4121,28 @@ class SymbolTable:
         }
 
     @staticmethod
+    def _array_elem_release_loop_text(elem: TypeName) -> str:
+        """获取数组析构中逐个释放元素的循环文本（元素非对象类型时为空）。
+
+        数组持有其元素（元素存入时retain，见各方法体中的@elem_retain@），
+        故析构时逐个递减并调用元素自身的析构函数。元素类型可能是类、元组或
+        另一个数组（见开发疑问记录190）。
+
+        计数按"$refCount位于对象首字段"直接取址，而不按成员名访问：数组方法的
+        实现生成在__main__.c中，彼时元素类型通常只有前向声明。
+        """
+        if not elem.is_object:
+            return ""
+        return "\n".join([
+            "\tfor (viola$lang$uint64 i = 0; i < _this->size; i++) {",
+            "\t\tif (_this->data[i] && viola$lang$refcount_dec("
+            "(viola$lang$atomic_uint32 *)(void *)_this->data[i]) == 0) {",
+            f"\t\t\t{destructor_name(elem)}(_this->data[i], listener);",
+            "\t\t}",
+            "\t}",
+        ])
+
+    @staticmethod
     def _array_method_body_text(arr_name: str, elem: TypeName, desc: ArrayMethodDesc) -> list[str]:
         """获取数组方法体的C语句行（替换模板中的占位符）。
 
@@ -4081,6 +4155,13 @@ class SymbolTable:
         elem_call: str = elem.c_calling_name
         substitutions["@elem_assigning@"] = elem.c_assigning_name
         substitutions["@elem_size@"] = f"sizeof({elem_call.strip()})"
+        # 元素的所有权：元素存入容器时计一次数（基本类型无$refCount，用空操作版本），
+        # 容器析构时递减并调用元素自身的析构函数（见开发疑问记录190）
+        if elem.is_object:
+            substitutions["@elem_retain@"] = "VIOLA_ELEM_RETAIN"
+        else:
+            substitutions["@elem_retain@"] = "VIOLA_ELEM_RETAIN_NOOP"
+        substitutions["@elem_release_loop@"] = SymbolTable._array_elem_release_loop_text(elem)
         lines: list[str] = []
         for template in desc.body:
             text: str = template

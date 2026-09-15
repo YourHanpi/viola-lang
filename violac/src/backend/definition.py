@@ -7,7 +7,7 @@ from .symbol import FunctionName, VariableName, LocalVariableName, VariableState
     ClassName, MethodName, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, TypeName, EXCEPTION_T_NAME, \
     EnumName, GlobalVariableName, GenericArgument, \
     StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable, FunctionTypeName, Object, LISTENER_T, \
-    VIOLA_IO, VOID_PTR
+    VIOLA_IO, VOID_PTR, release_text
 from utils import CompilerException, SourceInfo, InternalCompilerException
 
 from abc import ABC, abstractmethod
@@ -1841,18 +1841,9 @@ class Closure(Expression):
 
     @property
     def release_text(self) -> Optional[str]:
-        """获取闭包的释放代码（引用计数减一）。"""
-        result: list[str] = [
-            f"if ({self._var_name}->$refCount == 0) {{",
-            f"\tif ({self._var_name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._var_name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._var_name});",
-            f"\t\t{self._var_name} = NULL;",
-            "\t}"
-            "}"
-        ]
-        return "\n".join(result)
+        """获取闭包的释放代码（递减引用计数，归零则释放结构体）。"""
+        return release_text(
+            self._var_name, f"free({self._var_name});\n{self._var_name} = NULL;")
 
     @property
     def return_type(self) -> TypeName:

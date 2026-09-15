@@ -1,0 +1,174 @@
+from viola.io import *;
+import viola.os;
+from viola.os import exit;
+// Viola Reference Counting Test Template
+// 覆盖引用计数的retain/release配对：别名、成员存储、返回值、
+// 重新赋值、数组元素、容器方法、以及大量分配后内存是否回收
+// （见开发疑问记录190）。
+
+// 断言：条件不成立时打印并以致非零退出码结束（供测试脚本判定）
+sq check(bool condition, string label) -> () {
+    if (condition) {
+        print("ok " + label + "\n");
+    } else {
+        print("FAILED " + label + "\n");
+        exit(1);
+    }
+}
+
+class ${CLASS_NAME} {
+    string name;
+    int weight;
+
+    public sq __new__(string name, int weight) -> (this) {
+        this.name = name;
+        this.weight = weight;
+    }
+
+    public fn describe() -> (string result) {
+        result = this.name + ":" + this.weight.toString();
+    }
+}
+
+// 接收对象并把它存入自己的成员：成员存储必须retain，
+// 否则调用方释放实参后成员的指针悬空
+class ${HOLDER_NAME} {
+    ${CLASS_NAME} held;
+
+    public sq __new__(${CLASS_NAME} held) -> (this) {
+        this.held = held;
+    }
+
+    public fn heldName() -> (string result) {
+        result = this.held.name;
+    }
+
+    public fn heldDescribe() -> (string result) {
+        result = this.held.describe();
+    }
+}
+
+// 返回一个"借来的"成员：返回值槽位成为新的持有者
+sq nameOf(${CLASS_NAME} x) -> (string result) {
+    result = x.name;
+}
+
+// 返回新建对象
+sq make(string n, int w) -> (${CLASS_NAME} result) {
+    result = ${CLASS_NAME}(n, w);
+}
+
+// 在数组上往复操作，元素所有权在数组间转移
+sq arrayRoundTrip(int times, int round) -> (int result) {
+    if (round >= times) {
+        result = 0;
+        return;
+    }
+    string[] base = ["${STRING_A}", "${STRING_B}", "${STRING_C}"];
+    string first = base[0];
+    string[] appended = base.append("${STRING_D}");
+    string[] inserted = base.insert(1, "${STRING_E}");
+    string[] sliced = appended[1:3];
+    string[] joined = sliced.concat(base);
+    string[] replaced = base => {
+        [0] = "${STRING_F}"
+    };
+    // 结果只依赖内容：任一环节提前释放都会读出错误内容或崩溃。
+    // 每个断言写成一次赋值（0.1不允许在同一作用域内对同一变量重复赋值）
+    int ok1 = base.length() == 3 ? 1 : 0;
+    int ok2 = first == "${STRING_A}" ? 1 : 0;
+    int ok3 = appended.length() == 4 && appended[3] == "${STRING_D}" ? 1 : 0;
+    int ok4 = inserted.length() == 4 && inserted[1] == "${STRING_E}" ? 1 : 0;
+    int ok5 = sliced.length() == 2 ? 1 : 0;
+    int ok6 = joined.length() == 5 ? 1 : 0;
+    int ok7 = replaced[0] == "${STRING_F}" && replaced.length() == 3 ? 1 : 0;
+    result = ok1 + ok2 + ok3 + ok4 + ok5 + ok6 + ok7 + arrayRoundTrip(times, round + 1);
+}
+
+// 反复创建与丢弃对象：内存未回收时本函数会持续增长。
+// 同一对象由多个局部变量与成员共同持有，全部持有者离开作用域后应恰好释放一次
+// （Viola的数据不可变，故不做重新赋值测试）
+sq churn(int times, int round) -> (int result) {
+    if (round >= times) {
+        result = 0;
+        return;
+    }
+    ${CLASS_NAME} a = ${CLASS_NAME}("${STRING_A}", round);
+    ${CLASS_NAME} b = a;
+    ${HOLDER_NAME} h = ${HOLDER_NAME}(b);
+    string n = nameOf(a);
+    string d = h.heldDescribe();
+    int ok1 = n == "${STRING_A}" ? 1 : 0;
+    int ok2 = d.count("${STRING_A}") == 1 ? 1 : 0;
+    int ok3 = b.name == "${STRING_A}" ? 1 : 0;
+    int ok4 = a.weight == round ? 1 : 0;
+    result = ok1 + ok2 + ok3 + ok4 + churn(times, round + 1);
+}
+
+// 让对象在若干个持有者之间流转后归零
+sq chain(${CLASS_NAME} x, int depth) -> (int result) {
+    if (depth <= 0) {
+        result = x.weight;
+        return;
+    }
+    ${CLASS_NAME} y = x;
+    ${HOLDER_NAME} h = ${HOLDER_NAME}(y);
+    result = chain(y, depth - 1) + h.held.weight;
+}
+
+sq main() -> () {
+    // 1. 别名：两个局部变量各持一次引用
+    ${CLASS_NAME} ${OBJ_A} = ${CLASS_NAME}("${STRING_A}", ${WEIGHT_A});
+    ${CLASS_NAME} ${OBJ_B} = ${OBJ_A};
+    check(${OBJ_A}.name == "${STRING_A}" && ${OBJ_B}.name == "${STRING_A}",
+          "aliased locals keep the object alive");
+
+    // 2. 成员存储：成员持一次引用，实参随后释放
+    ${HOLDER_NAME} ${HOLDER_A} = ${HOLDER_NAME}(${OBJ_A});
+    check(${HOLDER_A}.heldName() == "${STRING_A}", "member store keeps the object alive");
+
+    // 3. 返回值槽位：返回借来的成员
+    string ${NAME_A} = nameOf(${OBJ_A});
+    check(${NAME_A} == "${STRING_A}", "returned borrowed member stays alive");
+
+    // 4. 返回新建对象
+    ${CLASS_NAME} ${OBJ_C} = make("${STRING_C}", ${WEIGHT_B});
+    check(${OBJ_C}.describe().count("${STRING_C}") == 1, "returned fresh object");
+    check(${OBJ_C}.name == "${STRING_C}" && ${OBJ_C}.weight == ${WEIGHT_B},
+          "returned object keeps its members");
+
+    // 5. 对象经"取自成员"的返回值再持有：持有者离开作用域后对象仍有效
+    string ${NAME_A}_fromMember = ${HOLDER_A}.heldName();
+    check(${NAME_A}_fromMember == "${STRING_A}", "member read through a second holder");
+
+    // 6. 数组元素的所有权：字面量、下标、修改、切片、拼接
+    ${CLASS_NAME}[] objs = [${CLASS_NAME}("${STRING_A}", 1), ${CLASS_NAME}("${STRING_B}", 2)];
+    check(objs[0].name == "${STRING_A}" && objs[1].name == "${STRING_B}",
+          "array literal elements stay alive");
+    string[] texts = ["${STRING_A}", "${STRING_B}", "${STRING_C}"];
+    string text0 = texts[0];
+    check(text0 == "${STRING_A}", "array element read stays alive");
+    check(texts.append("${STRING_D}").length() == 4, "array append");
+    check(texts.insert(1, "${STRING_E}")[1] == "${STRING_E}", "array insert");
+    check(texts[0:2].length() == 2, "array slice");
+    check(texts.concat(texts).length() == 6, "array concat");
+    string[] updated = texts => {
+        [0] = "${STRING_F}"
+    };
+    check(updated[0] == "${STRING_F}" && updated.length() == 3,
+          "array element update keeps the other elements");
+
+    // 7. 多轮分配与释放：计数不配对时会在此处累积内存或提前释放
+    int churnOk = churn(${CHURN_ROUNDS}, 0);
+    check(churnOk == ${CHURN_ROUNDS} * 4, "repeated allocation and release");
+
+    // 8. 数组方法在多轮中反复执行
+    int arrayOk = arrayRoundTrip(${ARRAY_ROUNDS}, 0);
+    check(arrayOk == ${ARRAY_ROUNDS} * 7, "array ownership across rounds");
+
+    // 9. 对象在多个持有者之间流转后全部释放
+    int chainOk = chain(${OBJ_A}, ${CHAIN_DEPTH});
+    check(chainOk == ${WEIGHT_A} * ${CHAIN_DEPTH} + ${WEIGHT_A}, "objects released after the chain");
+
+    print("0.1 reference counting test completed\n");
+}

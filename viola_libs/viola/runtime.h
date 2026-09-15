@@ -159,6 +159,18 @@ static inline void viola$lang$refcount_set(viola$lang$atomic_uint32 *ref_count, 
     VIOLA_REFCOUNT_STORE(ref_count, value);
 }
 
+/* 容器（数组）元素的持有与释放：元素存入容器时计一次数，容器析构时递减。
+   编译器按元素类型选用下面的一对宏——对象元素用VIOLA_ELEM_RETAIN，
+   基本类型元素（无$refCount）用VIOLA_ELEM_RETAIN_NOOP（求值后丢弃）。
+   计数按"$refCount位于对象首字段（偏移0）"直接取址，而不写成(e)->$refCount：
+   数组方法的实现生成在__main__.c中，彼时元素类型通常只有前向声明，按成员名
+   访问会报"invalid use of incomplete typedef"（见开发疑问记录190）。
+   该布局由runtime.h"对象基类"保证，runtime.c的元组析构也是同样做法。 */
+#define VIOLA_ELEM_RETAIN(e) do { \
+    if ((e)) { viola$lang$refcount_inc((viola$lang$atomic_uint32 *)(void *)(e)); } \
+} while (0)
+#define VIOLA_ELEM_RETAIN_NOOP(e) ((void)(e))
+
 /* ================= 对象基类 ================= */
 /* 所有类实例以$refCount、$parent开头（用户类的结构体由编译器生成，
    并继承object的字段布局；此处提供object类型供元组等组合类型引用） */
@@ -244,6 +256,13 @@ typedef struct viola$collections$Tuple {
 } viola$collections$Tuple;
 typedef struct viola$threads$Listener viola$threads$Listener;
 void viola$collections$Tuple$__del__(void *_this, viola$threads$Listener *listener);
+
+/* object类型的析构。编译器为object注册了__del__（见symbol.py的Object.add_method），
+   静态类型为object的值被释放时会调用它（如object[]的元素、object类型的变量）。
+   object没有$$vtable（不参与虚分派），故只递减计数并在归零时回收结构体；
+   实际类型为派生类的对象在此按静态类型（object）释放，派生类成员不会随之释放
+   （与"按变量的静态类型调用析构"的既有约定一致，见开发疑问记录190）。 */
+void viola$lang$object$__del__$_0(viola$lang$object *_this, viola$threads$Listener *listener);
 
 /* ================= 文件 ================= */
 /* wrapper类的结构体定义由编译器按.vla中的wrapper class声明生成；此处给出

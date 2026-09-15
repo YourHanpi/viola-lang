@@ -200,7 +200,13 @@ void viola$lang$global_resource_manager$register_request_handler(
                sizeof(viola$lang$function$Function *) * (newCapacity - s_violaHandlerCapacity));
         s_violaHandlerCapacity = newCapacity;
     }
+    /* 处理器表长期持有该函数值：计一次数，否则调用方释放自己的实参槽位后
+       表中留下悬空指针（派发时读取$syncPtr即释放后使用）。
+       本表不释放条目，故此计数不与之配对（随进程存续，见开发疑问记录190）。 */
     s_violaHandlers[request_id] = handler;
+    if (handler != NULL) {
+        viola$lang$refcount_inc(&handler->$refCount);
+    }
     viola$lang$global_resource_manager$registerHandler(request_id, violaHandlerDispatch);
 }
 

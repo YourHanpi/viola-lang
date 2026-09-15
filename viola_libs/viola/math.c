@@ -237,6 +237,12 @@ void viola$math$dist(viola$lang$float64$$array *a, viola$lang$float64$$array *b,
         viola$lang$string *message = viola$lang$string$fromCharString(
             "viola.math.dist: a与b长度不同");
         viola$lang$exception$Exception$__new__$_0(message, &exc, listener);
+        /* 构造已retain该message：局部槽位不再持有，释放之，否则只增不减而泄漏
+           （见开发疑问记录190） */
+        if (message != NULL && viola$lang$refcount_dec(&message->$refCount) == 0) {
+            viola$lang$string$__del__$_0(message, NULL);
+        }
+        message = NULL;
         if (listener != NULL) {
             listener->exception = exc;
         }

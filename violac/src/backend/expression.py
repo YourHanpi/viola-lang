@@ -6,7 +6,7 @@ from .symbol import (
     INT32, UINT32, INT64, UINT64, FLOAT, DOUBLE, FLOAT128, GlobalVariableName, FunctionName, MethodName, Modifier,
     LISTENER_T, LISTENER_INIT_FUNC, EmptyArrayTypeName, base_type_degrade, SliceTypeName, INT_TYPES, StringTypeName,
     AnyTypeName, AutoTypeName, SIZE_T, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, VOID_PTR,
-    get_to_string_method, EnumName
+    get_to_string_method, EnumName, release_text as refcount_release_text, STRING_T, retain_text
 )
 from utils import CompilerException, InternalCompilerException, COMPILER_PARAMS, SourceInfo
 
@@ -317,6 +317,17 @@ class Expression(CompilingItem, ABC):
             表达式的类型名称。
         """
         pass
+
+    @property
+    def transfers_ownership(self) -> bool:
+        """获取该表达式的求值结果是否把所有权直接交给接收它的槽位。
+
+        这类表达式自身的临时变量不出现在used_variables中（语句块据此决定在
+        最后一次使用处释放的变量集合），故其临时变量不会被释放；接收它的槽位
+        即成为唯一持有者。赋值处因此不再retain，否则只增不减而泄漏
+        （见开发疑问记录190）。
+        """
+        return False
 
     def set_returns(self, returns: list[VariableName]) -> bool:
         """设置表达式的返回值变量列表。
@@ -661,17 +672,8 @@ class UnpackExpr(Expression):
             # 解包不产生临时元组（返回元组由调用分配），由调用自身释放；
             # 尾部子元组临时变量与同步路径一致不做释放
             return self._to_unpack.release_text
-        result: list[str] = [
-            f"if ({self._var.name}->$refCount == 0) {{",
-            f"\tif ({self._var.name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._var.name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._var.name});",
-            f"\t\t{self._var.name} = NULL;",
-            "\t}"
-            "}"
-        ]
-        return "\n".join(result)
+        return refcount_release_text(
+            self._var.name, f"free({self._var.name});\n{self._var.name} = NULL;")
 
     @property
     def return_type(self) -> TypeName:
@@ -1045,29 +1047,11 @@ class VariableRef(ValueRef):
         if isinstance(self._var, FunctionName):
             # 函数值包装临时变量（Function结构体）的释放
             wrap: str = self._ensure_function_wrap()
-            return "\n".join([
-                f"if ({wrap}->$refCount == 0) {{",
-                f"\tif ({wrap}->$parent) {{",
-                f"\t\t((viola$lang$uint32 *){wrap}->$parent)[0]--;",
-                "\t} else {",
-                f"\t\tfree({wrap});",
-                f"\t\t{wrap} = NULL;",
-                "\t}"
-                "}"
-            ])
+            return refcount_release_text(wrap, f"free({wrap});\n{wrap} = NULL;")
         if not self.return_type.is_object:
             return None
-        result: list[str] = [
-            f"if ({self._var.name}->$refCount == 0) {{",
-            f"\tif ({self._var.name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._var.name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._var.name});",
-            f"\t\t{self._var.name} = NULL;"
-            "\t}"
-            "}"
-        ]
-        return "\n".join(result)
+        return refcount_release_text(
+            self._var.name, f"free({self._var.name});\n{self._var.name} = NULL;")
 
     @property
     def return_type(self) -> TypeName:
@@ -1217,8 +1201,13 @@ class StringLiteral(Literal):
             "\n".join(chunks_copy_string)
         ]
         if len(self._value) == 0:
-            lines[1] = f"{self._var_name}->data = NULL;"
-        return "\n".join(lines)
+            # 空字符串不再单独分配data缓冲区。$refCount必须保留：原先改写lines[1]
+            # 会把`$refCount = 1;`整行替换掉，使空字符串的计数为未初始化值，
+            # 释放时读到垃圾（见开发疑问记录190）
+            lines[3] = f"{self._var_name}->data = NULL;"
+            lines[4] = ""
+            lines[6] = ""
+        return "\n".join(filter(lambda line: line != "", lines))
 
     @property
     def head_text(self) -> Optional[str]:
@@ -1230,16 +1219,11 @@ class StringLiteral(Literal):
 
     @property
     def release_text(self) -> Optional[str]:
-        result: list[str] = [
-            f"if ({self._var_name}->$refCount == 0) {{",
-            f"\tif ({self._var_name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._var_name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._var_name});",
-            "\t}"
-            "}"
-        ]
-        return "\n".join(result)
+        # 调用string的析构函数而非直接free：字符串对象另有data缓冲区，
+        # 直接free结构体会漏掉缓冲区（见开发疑问记录190）
+        return refcount_release_text(
+            self._var_name,
+            f"{STRING_T}$__del__$_0({self._var_name}, listener);\n{self._var_name} = NULL;")
 
     @property
     def text(self) -> str:
@@ -1485,16 +1469,8 @@ class SliceRef(ValueRef):
 
     @property
     def release_text(self) -> Optional[str]:
-        result: list[str] = [
-            f"if ({self._temp_var.name}->$refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._temp_var.name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._temp_var.name});",
-            "\t}"
-            "}"
-        ]
-        return "\n".join(result)
+        return refcount_release_text(
+            self._temp_var.name, f"free({self._temp_var.name});")
 
     @property
     def return_type(self) -> TypeName:
@@ -1704,8 +1680,12 @@ class ArrayRef(ValueRef):
         for i, value in enumerate(self._values):
             # 元素写入按元素类型转换：类类型元素为子类时补显式C转换
             # （见开发疑问记录159）
-            lines.append(
-                f"{self._temp_var.name}->data[{i}] = {implicit_cast_text(value, self._type.element_type)};")
+            element: str = f"{self._temp_var.name}->data[{i}]"
+            lines.append(f"{element} = {implicit_cast_text(value, self._type.element_type)};")
+            # 数组持有其元素：元素表达式自身的临时变量随后会被释放，故此处计一次数
+            # （见开发疑问记录190）
+            if self._type.element_type.is_object:
+                lines.append(retain_text(element))
         return "\n".join(lines)
 
     @property
@@ -1741,16 +1721,8 @@ class ArrayRef(ValueRef):
 
     @property
     def release_text(self) -> Optional[str]:
-        result: list[str] = [
-            f"if ({self._temp_var.name}->$refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._temp_var.name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._temp_var.name});",
-            "\t}"
-            "}"
-        ]
-        return "\n".join(result)
+        return refcount_release_text(
+            self._temp_var.name, f"free({self._temp_var.name});")
 
     @property
     def return_type(self) -> TypeName:
@@ -1766,6 +1738,11 @@ class ArrayRef(ValueRef):
     @property
     def text(self) -> str:
         return self._temp_var.name
+
+    @property
+    def transfers_ownership(self) -> bool:
+        """数组字面量的临时变量不被语句块释放：所有权归接收它的槽位。"""
+        return True
 
     @property
     def used_variables(self) -> set[VariableName]:
@@ -1946,6 +1923,11 @@ class ArrayConvertExpr(ValueRef):
         return self._temp_name
 
     @property
+    def transfers_ownership(self) -> bool:
+        """转换后的数组由接收它的槽位持有（release_text为None，见其定义）。"""
+        return True
+
+    @property
     def used_variables(self) -> set[VariableName]:
         return self._value.used_variables
 
@@ -2104,17 +2086,8 @@ class TupleRef(ValueRef):
 
     @property
     def release_text(self) -> Optional[str]:
-        result: list[str] = [
-            f"if ({self._temp_var.name}->$refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._temp_var.name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._temp_var.name});",
-            f"\t\t{self._temp_var.name} = NULL;",
-            "\t}"
-            "}"
-        ]
-        return "\n".join(result)
+        return refcount_release_text(
+            self._temp_var.name, f"free({self._temp_var.name});\n{self._temp_var.name} = NULL;")
 
     @property
     def return_type(self) -> TypeName:
@@ -2132,6 +2105,11 @@ class TupleRef(ValueRef):
         if not self._is_finished:
             raise CompilerException("TupleRef is not finished", self._src_info)
         return self._temp_var.name
+
+    @property
+    def transfers_ownership(self) -> bool:
+        """元组字面量的临时变量不被语句块释放：所有权归接收它的槽位。"""
+        return True
 
     @property
     def used_variables(self) -> set[VariableName]:
@@ -3811,17 +3789,8 @@ class ClosureCallArgs(Expression):
 
     @property
     def release_text(self) -> Optional[str]:
-        result: list[str] = [
-            f"if ({self._temp_var.name}->$refCount == 0) {{",
-            f"\tif ({self._temp_var.name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._temp_var.name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._temp_var.name});",
-            f"\t\t{self._temp_var.name} = NULL;",
-            "\t}"
-            "}"
-        ]
-        return "\n".join(result)
+        return refcount_release_text(
+            self._temp_var.name, f"free({self._temp_var.name});\n{self._temp_var.name} = NULL;")
 
     @property
     def return_type(self) -> TypeName:
@@ -4696,6 +4665,8 @@ class ConditionalOp(Operator):
         super().__init__(src_info, symbol_table, 3)
         self._temp_name: str = self._symbol_table.get_counter()
         self._type_name: Optional[TypeName] = None
+        # 常量条件折叠后选中的分支（None表示未折叠，见optimize）
+        self._folded: Optional[Expression] = None
 
     def as_async(self) -> "Expression":
         if not self.is_finished:
@@ -4719,14 +4690,18 @@ class ConditionalOp(Operator):
     def front_text(self) -> Optional[str]:
         if not self.is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
+        if self._folded is not None:
+            # 常量条件：只输出被选中的分支。本运算符的临时变量声明仍由head_text
+            # 输出，故此处不能再声明一次
+            return self._folded.front_text
+        # 分支的局部变量声明不在此处输出（见head_text）：两个分支的C代码分别位于
+        # if/else块内，若声明留在块内，语句层生成的释放语句会在块外引用它
         result: list[Optional[str]] = [
             self._expr_list[0].front_text,
             f"if ({self._expr_list[0].text}) {{",
-            _indent(self._expr_list[1].head_text),
             _indent(self._expr_list[1].front_text),
             f"\t{self._temp_name} = {self._expr_list[1].text};",
             "} else {",
-            _indent(self._expr_list[2].head_text),
             _indent(self._expr_list[2].front_text),
             f"\t{self._temp_name} = {self._expr_list[2].text};",
             "}"
@@ -4744,8 +4719,20 @@ class ConditionalOp(Operator):
 
     @property
     def head_text(self) -> Optional[str]:
-        temp_name_decl = LocalVariableName(self._src_info, self._temp_name, self._type_name).type_name_pair_calling
-        return "\n".join(filter(lambda x: x is not None, [temp_name_decl, self._expr_list[0].head_text]))
+        # 本运算符与两个分支的临时变量都在语句层声明，不放在if/else块内：
+        # 语句块为"最后一次使用"生成的释放语句位于块外，声明留在块内会超出作用域
+        # （见开发疑问记录190）。
+        # 用declaration_text而非type_name_pair_calling：后者不含结尾分号，
+        # 与紧随其后的下一条声明连成 `T *x T2 y;` 而无法编译；且对象类型
+        # 缺少`= NULL`初值时，异常路径上的清理代码会按`if (var)`把栈上的
+        # 垃圾值当作有效对象
+        temp_name_decl = LocalVariableName(self._src_info, self._temp_name, self._type_name).declaration_text
+        return "\n".join(filter(lambda x: x is not None, [
+            temp_name_decl,
+            self._expr_list[0].head_text,
+            self._expr_list[1].head_text,
+            self._expr_list[2].head_text
+        ]))
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
         new_expr = copy(self)
@@ -4765,21 +4752,22 @@ class ConditionalOp(Operator):
 
     def optimize(self) -> "Expression":
         optimized = super().optimize()
+        if optimized._folded is not None:
+            # 已折叠过（optimize可能被多次调用）：保持首次的结果
+            return optimized
         if isinstance(optimized._expr_list[0], Literal) and optimized._expr_list[0].value is not None:
-            return optimized._expr_list[1] if optimized._expr_list[0].value else optimized._expr_list[2]
+            # 常量条件折叠为被选中的分支。不返回该分支本身，而是记下它并由本运算符
+            # 代为输出：语句块为"最后一次使用"生成的释放语句是按折叠前的表达式登记的
+            # （finish先于optimize），直接替换会使本运算符与分支的临时变量失去声明，
+            # 释放语句引用到未声明的变量而无法编译（见开发疑问记录190）
+            optimized._folded = optimized._expr_list[1] if optimized._expr_list[0].value \
+                else optimized._expr_list[2]
         return optimized
 
     @property
     def release_text(self) -> Optional[str]:
-        result: list[str] = [
-            f"if ({self._temp_name}->$refCount == 0) {{",
-            f"\tif ({self._temp_name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._temp_name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._temp_name});",
-            "\t}"
-            "}"
-        ]
+        return refcount_release_text(
+            self._temp_name, f"free({self._temp_name});")
         return "\n".join(result)
 
     @property
@@ -4824,6 +4812,9 @@ class ConditionalOp(Operator):
     def text(self) -> str:
         if not self.is_finished:
             raise CompilerException("Operator is not finished", self._src_info)
+        if self._folded is not None:
+            # 常量条件折叠：值取自被选中的分支，本运算符的临时变量不再被赋值
+            return self._folded.text
         return self._temp_name
 
     @property
@@ -5164,15 +5155,8 @@ class UpdateExpr(Expression):
 
     @property
     def release_text(self) -> Optional[str]:
-        result: list[str] = [
-            f"if ({self._temp_name}->$refCount == 0) {{",
-            f"\tif ({self._temp_name}->$parent) {{",
-            f"\t\t((viola$lang$uint32 *){self._temp_name}->$parent)[0]--;",
-            "\t} else {",
-            f"\t\tfree({self._temp_name});",
-            "\t}"
-            "}"
-        ]
+        return refcount_release_text(
+            self._temp_name, f"free({self._temp_name});")
         # 各更新项的异步调用分配的元组同样纳入编译器临时对象的释放路径
         # （等待已在front_text中完成，此处释放是安全的；见开发疑问记录142）
         for x in self._expr_list:

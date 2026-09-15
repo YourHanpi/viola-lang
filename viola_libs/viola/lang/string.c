@@ -1100,7 +1100,11 @@ void viola$lang$string$lstrip$_0(viola$lang$string *_this, viola$lang$string **r
                                  viola$threads$Listener *listener) {
     viola$lang$string *def = viola$lang$string$fromCharString(" \t\n\r");
     viola$lang$string$lstrip$_1(_this, def, result, listener);
-    free(def);
+    /* 临时构造的修剪集合不再被持有：按引用计数释放（原先直接free，
+       既绕过计数又漏掉data缓冲区，见开发疑问记录190） */
+    if (def != NULL && viola$lang$refcount_dec(&def->$refCount) == 0) {
+        viola$lang$string$__del__$_0(def, NULL);
+    }
 }
 
 /* 去除左侧的修剪集合字符 */
@@ -1118,7 +1122,11 @@ void viola$lang$string$rstrip$_0(viola$lang$string *_this, viola$lang$string **r
                                  viola$threads$Listener *listener) {
     viola$lang$string *def = viola$lang$string$fromCharString(" \t\n\r");
     viola$lang$string$rstrip$_1(_this, def, result, listener);
-    free(def);
+    /* 临时构造的修剪集合不再被持有：按引用计数释放（原先直接free，
+       既绕过计数又漏掉data缓冲区，见开发疑问记录190） */
+    if (def != NULL && viola$lang$refcount_dec(&def->$refCount) == 0) {
+        viola$lang$string$__del__$_0(def, NULL);
+    }
 }
 
 /* 去除右侧的修剪集合字符 */
@@ -1136,7 +1144,11 @@ void viola$lang$string$strip$_0(viola$lang$string *_this, viola$lang$string **re
                                 viola$threads$Listener *listener) {
     viola$lang$string *def = viola$lang$string$fromCharString(" \t\n\r");
     viola$lang$string$strip$_1(_this, def, result, listener);
-    free(def);
+    /* 临时构造的修剪集合不再被持有：按引用计数释放（原先直接free，
+       既绕过计数又漏掉data缓冲区，见开发疑问记录190） */
+    if (def != NULL && viola$lang$refcount_dec(&def->$refCount) == 0) {
+        viola$lang$string$__del__$_0(def, NULL);
+    }
 }
 
 /* 去除两侧的修剪集合字符 */

@@ -98,6 +98,21 @@ void viola$collections$Tuple$__del__(void *_this, viola$threads$Listener *listen
     }
 }
 
+/* ================= object析构 ================= */
+void viola$lang$object$__del__$_0(viola$lang$object *_this, viola$threads$Listener *listener) {
+    (void)listener;
+    if (_this == NULL) {
+        return;
+    }
+    if (_this->$refCount == 0) {
+        if (_this->$parent) {
+            ((viola$lang$uint32 *)_this->$parent)[0]--;
+        } else {
+            free(_this);
+        }
+    }
+}
+
 /* ================= 切片析构 ================= */
 void viola$lang$slice$__del__$_0(viola$lang$slice *_this, viola$threads$Listener *listener) {
     (void)listener;
