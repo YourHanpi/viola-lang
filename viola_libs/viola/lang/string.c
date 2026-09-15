@@ -1323,11 +1323,15 @@ void viola$lang$string$_stringToString$_0(viola$lang$string *value, viola$lang$s
     }
 }
 
-/* 未定义toString的类的默认转换（见开发疑问记录175(b)）：返回"<类名>"。
+/* 未定义toString的类的默认转换（见开发疑问记录175(b)/190）：
+   返回"<类型名>@<地址>"（如main.Plain@0x7ff6a1b2c3d0）。
    类的toString约定：类可以定义`fn toString() -> (string result);`，
-   x.toString()按x的静态类型解析到该方法；未定义时用本函数返回类名。 */
+   x.toString()按x的静态类型解析到该方法（该方法参与虚分派，见第187条）；
+   未定义时用本函数，按对象的实际类型给出类型名（$vtable为NULL者退回"object"）。 */
 void viola$lang$string$_objectToString$_0(viola$lang$ptr value, viola$lang$string **result,
                                           viola$threads$Listener *listener) {
     (void)listener;
-    *result = viola$lang$string$fromCharString(viola$lang$objectTypeName(value));
+    char buffer[256];
+    snprintf(buffer, sizeof(buffer), "%s@%p", viola$lang$objectTypeName(value), (void *)value);
+    *result = viola$lang$string$fromCharString(buffer);
 }

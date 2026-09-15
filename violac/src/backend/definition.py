@@ -984,8 +984,10 @@ class DestructorDef(SqDef):
         # 全局变量，不是结构体成员。析构经$$vtable按对象的实际类型分派（虚析构），
         # 每个对象只会执行最派生类的析构函数一次，故此处释放整条继承链上的成员
         # 不会重复释放（见开发疑问记录170(a)）
+        # unsafe成员不参与引用计数：其内存由用户手动管理（手册"unsafe与wrapper"），
+        # 故既不retain也不release（见开发疑问记录191第4条）
         properties_to_free: list[VariableName] = list(
-            filter(lambda y: y.is_object and not y.is_static, cls.ordered_properties))
+            filter(lambda y: y.is_object and not y.is_static and not y.is_unsafe, cls.ordered_properties))
         free_texts: list[str] = []
         for x in properties_to_free:
             # 类结构体的成员名为属性的self_name，访问时需要通过_this指针

@@ -277,7 +277,10 @@ void viola$os$path$join(viola$lang$string$$array *paths, viola$lang$string **res
         if (joined->length == 0) {
             viola$lang$string *old = joined;
             joined = newStringFromUnits(p->data, p->length);
-            viola$lang$string$__del__$_0(old, listener);
+            /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+            if (old != NULL && viola$lang$refcount_dec(&old->$refCount) == 0) {
+                viola$lang$string$__del__$_0(old, listener);
+            }
             continue;
         }
         viola$lang$bool abs = false;
@@ -286,7 +289,10 @@ void viola$os$path$join(viola$lang$string$$array *paths, viola$lang$string **res
             /* 绝对路径重置结果 */
             viola$lang$string *old = joined;
             joined = newStringFromUnits(p->data, p->length);
-            viola$lang$string$__del__$_0(old, listener);
+            /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+            if (old != NULL && viola$lang$refcount_dec(&old->$refCount) == 0) {
+                viola$lang$string$__del__$_0(old, listener);
+            }
             continue;
         }
         viola$lang$uint64 trimEnd = trimTrailingSepLength(joined);
@@ -295,10 +301,22 @@ void viola$os$path$join(viola$lang$string$$array *paths, viola$lang$string **res
         viola$lang$string *sepStr = newStringFromUnits(&sep, 1);
         viola$lang$string *withSep = concatStrings(head, sepStr, listener);
         viola$lang$string *newJoined = concatStrings(withSep, p, listener);
-        viola$lang$string$__del__$_0(head, listener);
-        viola$lang$string$__del__$_0(sepStr, listener);
-        viola$lang$string$__del__$_0(withSep, listener);
-        viola$lang$string$__del__$_0(joined, listener);
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (head != NULL && viola$lang$refcount_dec(&head->$refCount) == 0) {
+            viola$lang$string$__del__$_0(head, listener);
+        }
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (sepStr != NULL && viola$lang$refcount_dec(&sepStr->$refCount) == 0) {
+            viola$lang$string$__del__$_0(sepStr, listener);
+        }
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (withSep != NULL && viola$lang$refcount_dec(&withSep->$refCount) == 0) {
+            viola$lang$string$__del__$_0(withSep, listener);
+        }
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (joined != NULL && viola$lang$refcount_dec(&joined->$refCount) == 0) {
+            viola$lang$string$__del__$_0(joined, listener);
+        }
         joined = newJoined;
     }
     *result = joined;
@@ -352,15 +370,24 @@ static viola$lang$string *normPathInternal(const viola$lang$string *path,
         viola$lang$bool isDotDot = c->length == 2 && c->data[0] == (viola$lang$uint16)'.' &&
                                    c->data[1] == (viola$lang$uint16)'.';
         if (isDot) {
-            viola$lang$string$__del__$_0(c, listener);
+            /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+            if (c != NULL && viola$lang$refcount_dec(&c->$refCount) == 0) {
+                viola$lang$string$__del__$_0(c, listener);
+            }
             components[i] = NULL;
             continue;
         }
         if (isDotDot) {
-            viola$lang$string$__del__$_0(c, listener);
+            /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+            if (c != NULL && viola$lang$refcount_dec(&c->$refCount) == 0) {
+                viola$lang$string$__del__$_0(c, listener);
+            }
             components[i] = NULL;
             if (outCount > 0) {
-                viola$lang$string$__del__$_0(components[outCount - 1], listener);
+                /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+                if (components[outCount - 1] != NULL && viola$lang$refcount_dec(&components[outCount - 1]->$refCount) == 0) {
+                    viola$lang$string$__del__$_0(components[outCount - 1], listener);
+                }
                 outCount--;
             } else if (!rooted) {
                 /* 相对路径中开头的".."保留 */
@@ -378,20 +405,35 @@ static viola$lang$string *normPathInternal(const viola$lang$string *path,
             viola$lang$uint16 sep = pathSepChar();
             viola$lang$string *sepStr = newStringFromUnits(&sep, 1);
             viola$lang$string *withSep = concatStrings(resultStr, sepStr, listener);
-            viola$lang$string$__del__$_0(resultStr, listener);
-            viola$lang$string$__del__$_0(sepStr, listener);
+            /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+            if (resultStr != NULL && viola$lang$refcount_dec(&resultStr->$refCount) == 0) {
+                viola$lang$string$__del__$_0(resultStr, listener);
+            }
+            /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+            if (sepStr != NULL && viola$lang$refcount_dec(&sepStr->$refCount) == 0) {
+                viola$lang$string$__del__$_0(sepStr, listener);
+            }
             resultStr = withSep;
         }
         viola$lang$string *newResult = concatStrings(resultStr, components[i], listener);
-        viola$lang$string$__del__$_0(resultStr, listener);
-        viola$lang$string$__del__$_0(components[i], listener);
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (resultStr != NULL && viola$lang$refcount_dec(&resultStr->$refCount) == 0) {
+            viola$lang$string$__del__$_0(resultStr, listener);
+        }
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (components[i] != NULL && viola$lang$refcount_dec(&components[i]->$refCount) == 0) {
+            viola$lang$string$__del__$_0(components[i], listener);
+        }
         resultStr = newResult;
     }
     if (resultStr->length == 0) {
         viola$lang$uint16 dot = (viola$lang$uint16)'.';
         viola$lang$string *old = resultStr;
         resultStr = newStringFromUnits(&dot, 1);
-        viola$lang$string$__del__$_0(old, listener);
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (old != NULL && viola$lang$refcount_dec(&old->$refCount) == 0) {
+            viola$lang$string$__del__$_0(old, listener);
+        }
     }
     free(components);
     return resultStr;
@@ -410,7 +452,10 @@ void viola$os$path$normpath(viola$lang$string *path, viola$lang$string **result,
     viola$lang$string *normalized = newStringFromUnits(units, path->length);
     free(units);
     viola$lang$string *resolved = normPathInternal(normalized, listener);
-    viola$lang$string$__del__$_0(normalized, listener);
+    /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+    if (normalized != NULL && viola$lang$refcount_dec(&normalized->$refCount) == 0) {
+        viola$lang$string$__del__$_0(normalized, listener);
+    }
     *result = resolved;
 #else
     *result = normPathInternal(path, listener);
@@ -536,7 +581,10 @@ void viola$os$path$commonpath(viola$lang$string$$array *paths, viola$lang$string
                         ref = comp;
                     } else {
                         viola$lang$bool eq = componentEquals(ref, comp);
-                        viola$lang$string$__del__$_0(comp, listener);
+                        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+                        if (comp != NULL && viola$lang$refcount_dec(&comp->$refCount) == 0) {
+                            viola$lang$string$__del__$_0(comp, listener);
+                        }
                         if (!eq) {
                             allMatch = false;
                         }
@@ -552,12 +600,18 @@ void viola$os$path$commonpath(viola$lang$string$$array *paths, viola$lang$string
         }
         if (allMatch) {
             if (ref != NULL) {
-                viola$lang$string$__del__$_0(ref, listener);
+                /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+                if (ref != NULL && viola$lang$refcount_dec(&ref->$refCount) == 0) {
+                    viola$lang$string$__del__$_0(ref, listener);
+                }
             }
             matched++;
         } else {
             if (ref != NULL) {
-                viola$lang$string$__del__$_0(ref, listener);
+                /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+                if (ref != NULL && viola$lang$refcount_dec(&ref->$refCount) == 0) {
+                    viola$lang$string$__del__$_0(ref, listener);
+                }
             }
             break;
         }
@@ -582,14 +636,26 @@ void viola$os$path$commonpath(viola$lang$string$$array *paths, viola$lang$string
         if (resultStr->length > 0) {
             viola$lang$string *sepStr = newStringFromUnits(&sep, 1);
             viola$lang$string *withSep = concatStrings(resultStr, sepStr, listener);
-            viola$lang$string$__del__$_0(resultStr, listener);
-            viola$lang$string$__del__$_0(sepStr, listener);
+            /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+            if (resultStr != NULL && viola$lang$refcount_dec(&resultStr->$refCount) == 0) {
+                viola$lang$string$__del__$_0(resultStr, listener);
+            }
+            /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+            if (sepStr != NULL && viola$lang$refcount_dec(&sepStr->$refCount) == 0) {
+                viola$lang$string$__del__$_0(sepStr, listener);
+            }
             resultStr = withSep;
         }
         viola$lang$string *comp = newStringFromUnits(p->data + start, end - start);
         viola$lang$string *newResult = concatStrings(resultStr, comp, listener);
-        viola$lang$string$__del__$_0(resultStr, listener);
-        viola$lang$string$__del__$_0(comp, listener);
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (resultStr != NULL && viola$lang$refcount_dec(&resultStr->$refCount) == 0) {
+            viola$lang$string$__del__$_0(resultStr, listener);
+        }
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (comp != NULL && viola$lang$refcount_dec(&comp->$refCount) == 0) {
+            viola$lang$string$__del__$_0(comp, listener);
+        }
         resultStr = newResult;
         start = end;
     }
@@ -626,11 +692,23 @@ void viola$os$path$abspath(viola$lang$string *path, viola$lang$string **result,
     viola$lang$string *sepStr = newStringFromUnits(&sep, 1);
     viola$lang$string *withSep = concatStrings(cwdStr, sepStr, listener);
     viola$lang$string *joined = concatStrings(withSep, path, listener);
-    viola$lang$string$__del__$_0(cwdStr, listener);
-    viola$lang$string$__del__$_0(sepStr, listener);
-    viola$lang$string$__del__$_0(withSep, listener);
+    /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+    if (cwdStr != NULL && viola$lang$refcount_dec(&cwdStr->$refCount) == 0) {
+        viola$lang$string$__del__$_0(cwdStr, listener);
+    }
+    /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+    if (sepStr != NULL && viola$lang$refcount_dec(&sepStr->$refCount) == 0) {
+        viola$lang$string$__del__$_0(sepStr, listener);
+    }
+    /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+    if (withSep != NULL && viola$lang$refcount_dec(&withSep->$refCount) == 0) {
+        viola$lang$string$__del__$_0(withSep, listener);
+    }
     viola$lang$string *normalized = normPathInternal(joined, listener);
-    viola$lang$string$__del__$_0(joined, listener);
+    /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+    if (joined != NULL && viola$lang$refcount_dec(&joined->$refCount) == 0) {
+        viola$lang$string$__del__$_0(joined, listener);
+    }
     *result = normalized;
 #endif
 }
@@ -850,7 +928,10 @@ static void handleIsMount(viola$lang$global_resource_manager$Request *base) {
                 diff = stPath.st_dev != stParent.st_dev;
             }
         }
-        viola$lang$string$__del__$_0(parent, NULL);
+        /* 释放：递减计数，归零才析构（原先直接调用析构而不递减，计数从不归零，这些临时字符串只增不减地泄漏，见开发疑问记录191） */
+        if (parent != NULL && viola$lang$refcount_dec(&parent->$refCount) == 0) {
+            viola$lang$string$__del__$_0(parent, NULL);
+        }
         *req->resultBool = diff;
     }
 #endif

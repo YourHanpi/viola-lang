@@ -605,6 +605,17 @@ class VariableName(NamedSymbol):
         return f"&{self.name}"
 
     @property
+    def is_unsafe_managed(self) -> bool:
+        """该变量是否由用户手动管理内存（unsafe成员，或其类型为unsafe的类）。
+
+        unsafe变量不参与引用计数：既不retain也不release，其内存由用户在
+        wrapper类的__del__中手动清理（手册"unsafe与wrapper"，
+        见开发疑问记录191第4条）。
+        """
+        return getattr(self, "is_unsafe", False) or \
+            (isinstance(self._type, ClassName) and self._type.is_unsafe)
+
+    @property
     def free_text(self) -> str:
         """
         获取这一变量的释放文本。
@@ -613,7 +624,8 @@ class VariableName(NamedSymbol):
         即计一次数（分配处计1，赋值/传参写入返回值槽位时retain），故此处递减与
         持有成对；递减后不为0说明仍有其他槽位持有，由最后释放者负责析构。
         """
-        if not self.is_object:
+        if not self.is_object or self.is_unsafe_managed:
+            # unsafe变量由用户手动管理内存，不参与引用计数（见开发疑问记录191）
             return ""
         del_call: str = f"{destructor_name(self._type)}({self.name}, listener);"
         return f"{release_text(self.name, del_call)} {self.name} = NULL;"

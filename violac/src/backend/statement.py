@@ -48,15 +48,16 @@ STACK_B_POP_FUNC: str = "viola$threads$popStackB"
 THREAD_INFO_T: str = "viola$threads$ThreadInfo"
 
 
-def store_retain_text(target_text: str, target_type: TypeName, value: Expression) -> str:
+def store_retain_text(target_text: str, target_var: VariableName, value: Expression) -> str:
     """生成把值存入槽位（变量、成员、返回值槽位）后对目标对象的一次retain。
 
     目标槽位自此持有一个对象，故计一次数；该槽位释放时递减并归零才析构
     （见开发疑问记录190）。非对象类型不计数；值表达式把新对象的所有权直接
-    交给槽位时（其临时变量不会被释放）也不计数，否则只增不减而泄漏。
+    交给槽位时（其临时变量不会被释放）也不计数，否则只增不减而泄漏；
+    unsafe变量由用户手动管理内存，同样不计数（见开发疑问记录191第4条）。
     返回含结尾换行的文本。
     """
-    if not target_type.is_object or value.transfers_ownership:
+    if not target_var.type.is_object or value.transfers_ownership or target_var.is_unsafe_managed:
         return ""
     return retain_text(target_text) + "\n"
 
@@ -916,7 +917,7 @@ class DeclStmt(Statement):
                                   f"{implicit_cast_text(self._var_value, self._var[0].type)};\n"
                     # 目标槽位自此持有该对象：计一次数（见开发疑问记录190）。
                     # 值来自返回指针形参的调用时（CallOp/UnpackExpr路径）由被调方负责
-                    front_text += store_retain_text(deref + self._var[0].name, self._var[0].type, self._var_value)
+                    front_text += store_retain_text(deref + self._var[0].name, self._var[0], self._var_value)
             else:
                 self._var_value.set_returns(self._var)
                 # 头声明统一由语句块（或异步包装）的head_text输出，避免重复声明
@@ -977,8 +978,12 @@ class AssignStmt(Statement):
             var_name = var_name[len("this."):]
             if var_name not in self._this_cls.properties:
                 raise CompilerException(f"{var_name} is not a property of {self._this_cls.name}.", self._src_info)
-            var_name_type = self._this_cls.properties[var_name].type
+            property_symbol = self._this_cls.properties[var_name]
+            var_name_type = property_symbol.type
             symbol = LocalVariableName(self._src_info, "_thisObj->" + var_name, var_name_type)
+            # 成员自身的unsafe标记需随目标变量带下去：引用计数要按它决定是否
+            # retain/release（见开发疑问记录191）
+            symbol._is_unsafe = property_symbol.is_unsafe
         else:
             symbol = self._symbol_table[var_name, None]
         if not isinstance(symbol, VariableName):
@@ -1286,7 +1291,7 @@ class AssignStmt(Statement):
                 front_text += f"{deref}{self._var[0].name} = " \
                               f"{implicit_cast_text(self._var_value, self._var[0].type)};\n"
                 # 目标槽位自此持有该对象：计一次数（见开发疑问记录190）
-                front_text += store_retain_text(deref + self._var[0].name, self._var[0].type, self._var_value)
+                front_text += store_retain_text(deref + self._var[0].name, self._var[0], self._var_value)
             return front_text
         # 多变量赋值（元组解包）
         self._var_value.set_returns(self._var)
@@ -2618,7 +2623,11 @@ class CleanupBlock(CStmt):
                 # gcc按类型不符报warning，且可能free/递减到非法地址，见开发疑问
                 # 记录144），其对象的所有权也随返回值交给调用方
                 continue
-            self.add_text(f"if ({v.name}) {{ {v.free_text} }}")
+            release: str = v.free_text
+            if release == "":
+                # unsafe变量（由用户手动管理内存）不生成释放代码
+                continue
+            self.add_text(f"if ({v.name}) {{ {release} }}")
 
     @property
     def text(self) -> str:
@@ -2824,7 +2833,8 @@ class BlockStmt(Statement):
                     used_variables.add(var)
                     # 变量已在本块内完成最后一次使用并释放，不再向外层传播
                     self._input_variables.discard(var)
-                    if var.is_object:
+                    # unsafe变量由用户手动管理内存，不参与引用计数（见开发疑问记录191）
+                    if var.is_object and not var.is_unsafe_managed:
                         release_stmt = OpStmt(stmt.src_info, self._symbol_table, self._var_states)
                         call_op = CallOp(stmt.src_info, self._symbol_table)
                         call_op._is_internal = True
