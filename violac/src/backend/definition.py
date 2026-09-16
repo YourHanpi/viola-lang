@@ -9,6 +9,7 @@ from .symbol import FunctionName, VariableName, LocalVariableName, VariableState
     StringTypeName, PropertyVariableName, SymbolTable, VariableStateTable, FunctionTypeName, Object, LISTENER_T, \
     VIOLA_IO, VOID_PTR, release_text
 from utils import CompilerException, SourceInfo, InternalCompilerException
+from utils.text_utils import sanitize_c_identifier
 
 from abc import ABC, abstractmethod
 from copy import copy, deepcopy
@@ -522,6 +523,48 @@ class SqDef(Definition):
         # 异步包装体在finish时以原泛型参数类型构建，实例化后需用具体类型重建
         new_sq._async_body = new_sq._get_async_body()
         return new_sq
+
+    def instantiation_with_outer_args(self, type_args: dict[GenericArgument, TypeName]) -> "SqDef":
+        """按外层泛型函数的类型实参实例化本定义（本定义自身不是泛型函数）。
+
+        泛型函数体内的闭包属于此类：它没有自己的类型参数，但其参数、返回值与
+        函数体中可以出现外层函数的泛型参数（如`auto f = sq(T[] x) -> (T[] r)
+        {...};`，见开发疑问记录193第4条的排查测试）。实例化外层函数时同样要按
+        实参替换这些类型，否则闭包体内的T会以占位类型进入生成的C代码。原先
+        此处直接走instantiation_full_by_dict而报"Function is not generic."，
+        泛型函数体内的闭包一律无法编译。
+
+        C名按外层实参取名（实例序号不在此分配：本定义不在泛型函数的实例表内，
+        无法使用其序号），使外层函数的每个实例各自拥有该闭包的独立实现；外层
+        实参仍含泛型参数时（伪实例，其代码不输出）加"$pseudo"后缀。
+        """
+        new_sq: SqDef = deepcopy(self)
+        new_sq._decl = new_sq._decl.instantiation(self._closure_instance_name(type_args), type_args)
+        # 参数与返回值变量的类型同样需要实例化（供清理代码等使用）
+        new_sq._args = [a.instantiation(a.name, type_args) for a in new_sq._args]
+        new_sq._rets = [r.instantiation(r.name, type_args) for r in new_sq._rets]
+        new_sq._body = new_sq._body.instantiation(type_args)
+        # 语句块的新变量列表同样需要实例化（供清理代码使用）
+        new_sq._body._new_variables = [v.instantiation(v.name, type_args)
+                                       for v in new_sq._body._new_variables]
+        # 异步包装体在finish时以原泛型参数类型构建，实例化后需用具体类型重建
+        new_sq._async_body = new_sq._get_async_body()
+        return new_sq
+
+    def _closure_instance_name(self, type_args: dict[GenericArgument, TypeName]) -> str:
+        """获取（自身非泛型的）嵌套闭包按外层实参取名的C名。
+
+        名字由闭包自身的C名加外层实参的类型名构成：同一闭包在外层函数的各实例
+        中必须各有独立的C函数，而闭包的C名（模块内计数器）在实例化时不改变。
+        外层实参仍含泛型参数（伪实例）时不加类型名后缀——伪实例的代码不输出，
+        且其类型名还不是合法C标识符。
+        """
+        concrete: list[TypeName] = [t for t in type_args.values()
+                                    if not isinstance(t, GenericArgument)]
+        if len(concrete) != len(type_args):
+            return f"{self._decl.self_name}$pseudo"
+        return f"{self._decl.self_name}$" + "$".join(
+            sanitize_c_identifier(t.name) for t in concrete)
 
     @property
     def is_finished(self) -> bool:
@@ -1870,9 +1913,20 @@ class Closure(Expression):
         return self._inline_mapping
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
-        """泛型实例化闭包内部的函数定义。"""
+        """泛型实例化闭包内部的函数定义。
+
+        闭包自身是泛型函数时按泛型实例化；否则（泛型函数体内的闭包，其参数/返回
+        值中可能出现外层函数的泛型参数）按外层实参实例化，见
+        SqDef.instantiation_with_outer_args。
+        """
         new_expr: Closure = copy(self)
-        new_expr._sq_def = self._sq_def.instantiation_full_by_dict(type_args)
+        if self._sq_def._decl.type.is_generic:
+            new_expr._sq_def = self._sq_def.instantiation_full_by_dict(type_args)
+        else:
+            new_expr._sq_def = self._sq_def.instantiation_with_outer_args(type_args)
+        # 捕获结构体的定义与转换文本以捕获变量的类型生成，须按实例化后的类型重建
+        # （见BlockStmt.rebuild_for_instantiation）
+        new_expr._sq_def._body.rebuild_for_instantiation(type_args)
         return new_expr
 
     def optimize(self) -> "Expression":

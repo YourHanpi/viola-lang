@@ -249,6 +249,121 @@ sq asyncUnusedRelease(int rounds, int round) -> (int result) {
     result = inner;
 }
 
+// 提前退出（return/throw）路径上同样要释放"异步声明且从未被读取"的变量：
+// 其值由退出路径的等待写入，释放语句须插在退出路径的等待之后
+// （原先只插在正常路径的块末尾，退出路径上的对象随函数退出而泄漏，
+// 见开发疑问记录193第2条的答复、194）
+class TickerError extends Exception {
+    string note;
+
+    public sq __new__(string msg) -> (this) {
+        this.note = msg;
+    }
+
+    public fn what() -> (string result) {
+        result = this.note;
+    }
+}
+
+sq exitPathRelease(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    if (round >= 0) {
+        async ReleaseTicker tick = makeTicker();
+        int inner = exitPathRelease(rounds, next);
+        result = inner;
+        return;
+    }
+    result = 0;
+}
+
+sq throwPathRelease(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    try {
+        async ReleaseTicker tick = makeTicker();
+        throw TickerError("tick");
+    } catch TickerError e {
+        result = 1 + throwPathRelease(rounds, next);
+    }
+}
+
+// 泛型函数体内的异步调用返回对象：取回按"取走"语义（成员置0，目标槽位接手
+// 元组持有的那次引用），使这段文本不依赖变量的类型。原先按变量的类型决定
+// 是否计数，而泛型函数体内的这段文本在实例化之前生成（类型还是泛型参数），
+// 一律按"非对象"处理：对象在取回后被返回元组的析构释放，随后的读取与存储
+// 作用在已释放的内存上（实测堆破坏，见开发疑问记录194）
+fn stringIdentity::<T>(T x) -> (T result) {
+    result = x;
+}
+
+sq genericAsyncObject(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    async string got = stringIdentity::<string>("${STRING_C}");
+    int ok = got == "${STRING_C}" ? 1 : 0;
+    result = genericAsyncObject(rounds, next) + ok;
+}
+
+// 泛型函数体内的异步调用返回数组：实参元组的C类型名同样要按实例化后的
+// 类型名生成（原先残留占位类型名T$$array，生成的C代码引用不存在的类型，
+// 见开发疑问记录193第4条、194）
+fn pickArray::<T>(T[] src) -> (T[] result) {
+    T[] local = src;
+    result = local;
+}
+
+sq genericAsyncArray(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    string[] src = ["${STRING_A}", "${STRING_B}"];
+    async string[] got = pickArray::<string>(src);
+    string[] local = got;
+    int ok = local.length() == 2 && local[1] == "${STRING_B}" ? 1 : 0;
+    result = genericAsyncArray(rounds, next) + ok;
+}
+
+// 异步多返回值取回：目标为本函数的返回值槽位（C层为指针形参，取回须解引用，
+// 原先生成的代码把成员写到指针形参自身，gcc按类型不符报错，见开发疑问记录194）
+fn twoStrings() -> (string a, string b) {
+    a = "${STRING_D}";
+    b = "${STRING_E}";
+}
+
+fn unpackToReturn() -> (string p, string q) {
+    async p, q = twoStrings();
+}
+
+// 经auto声明的闭包：推断出真实类型后须替换变量的类型对象，否则调用点按
+// 函数类型解析时读不到参数/返回类型（原先报AttributeError，见开发疑问记录194）
+fn closureAuto(int seed) -> (int result) {
+    auto bump = sq(int v) -> (int r) {
+        r = v + seed;
+    };
+    result = bump(1);
+}
+
+// 泛型函数体内的闭包：捕获结构体的定义与成员转换文本须按实例化后的类型生成，
+// 否则捕获泛型类型的形参时残留占位类型名（见开发疑问记录194）
+fn captureInGeneric::<T>(T[] src) -> (size_t result) {
+    auto sizeOf = sq() -> (size_t r) {
+        r = src.length();
+    };
+    result = sizeOf();
+}
+
 sq main() -> () {
     // 1. 别名：两个局部变量各持一次引用
     ${CLASS_NAME} ${OBJ_A} = ${CLASS_NAME}("${STRING_A}", ${WEIGHT_A});
@@ -334,6 +449,34 @@ sq main() -> () {
     string ticks2 = read(tickLog2);
     check(tickArgOk == 0 && tickRetOk == 0 && ticks2.length() >= 120,
           "objects held by async tuples released");
+
+    // 15. 提前退出（return/throw）路径上释放异步声明且从未被读取的对象
+    // （见开发疑问记录194）
+    file tickTruncate3 = open("refcount_ticker.log", "w", "utf-8");
+    write(tickTruncate3, "");
+    int exitOk = exitPathRelease(30, 0);
+    int throwOk = throwPathRelease(30, 0);
+    file tickLog3 = open("refcount_ticker.log", "r", "utf-8");
+    string ticks3 = read(tickLog3);
+    check(exitOk == 0 && throwOk == 30 && ticks3.length() >= 60,
+          "unused async objects released on exit paths");
+
+    // 16. 泛型函数体内的异步调用返回对象/数组（见开发疑问记录194）
+    int genObjOk = genericAsyncObject(30, 0);
+    check(genObjOk == 30, "generic async call returning an object");
+    int genArrOk = genericAsyncArray(30, 0);
+    check(genArrOk == 30, "generic async call returning an array");
+
+    // 17. 异步多返回值取回到函数返回值槽位（见开发疑问记录194）
+    string retP, string retQ = unpackToReturn();
+    check(retP == "${STRING_D}" && retQ == "${STRING_E}",
+          "async multi-return into return slots");
+
+    // 18. 经auto声明的闭包变量（见开发疑问记录194）
+    int closureOk = closureAuto(${WEIGHT_A});
+    check(closureOk == ${WEIGHT_A} + 1, "closure declared with auto");
+    size_t captureOk = captureInGeneric::<string>(["${STRING_A}", "${STRING_B}", "${STRING_F}"]);
+    check(captureOk == 3, "closure capturing a generic parameter");
 
     print("0.1 reference counting test completed\n");
 }

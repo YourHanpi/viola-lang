@@ -639,13 +639,14 @@ class DeclStmt(Statement):
                 expr_type = self._var_value.return_type
                 if isinstance(expr_type, TupleTypeName):
                     if i < var_names_num - 1:
-                        self._var[i].type.set_real_type(expr_type.types[i])
+                        self._var[i].resolve_auto_type(expr_type.types[i])
                     else:
-                        self._var[i].type.set_real_type(TupleTypeName(self._src_info, expr_type.types[i:]))
+                        self._var[i].resolve_auto_type(
+                            TupleTypeName(self._src_info, expr_type.types[i:]))
                 else:
                     if var_names_num > 1:
                         raise CompilerException("Too many variables for unpacking.", self._src_info)
-                    self._var[i].type.set_real_type(expr_type)
+                    self._var[i].resolve_auto_type(expr_type)
             else:
                 if not isinstance(var.type, (FunctionTypeName, TupleTypeName, GenericArgument)) and \
                         (var.type.name, None) not in self._symbol_table:
@@ -1105,11 +1106,11 @@ class AssignStmt(Statement):
                 continue
             if isinstance(expr_type, TupleTypeName):
                 if i < len(self._var) - 1:
-                    var.type.set_real_type(expr_type.types[i])
+                    var.resolve_auto_type(expr_type.types[i])
                 else:
-                    var.type.set_real_type(TupleTypeName(self._src_info, expr_type.types[i:]))
+                    var.resolve_auto_type(TupleTypeName(self._src_info, expr_type.types[i:]))
             else:
-                var.type.set_real_type(expr_type)
+                var.resolve_auto_type(expr_type)
 
     @property
     def discard_variables(self) -> set[VariableName]:
@@ -2707,6 +2708,10 @@ class BlockStmt(Statement):
         self._is_closure: bool = False
         self._closure_struct_setting_code: str = ""
         self._closure_struct_def: str = ""
+        # 闭包的C名与其捕获结构体的转换语句（见set_as_closure）：捕获变量的
+        # 类型可能是外层泛型函数的泛型参数，实例化后需按具体类型重新生成文本
+        self._closure_name: str = ""
+        self._closure_init_stmt: Optional[CStmt] = None
         self._processing_mode: _ProcessingMode = _ProcessingMode.NORMAL
         self._drops_out: bool = False
         self._cleanup_mark_name: str = self._symbol_table.get_counter()
@@ -2853,7 +2858,7 @@ class BlockStmt(Statement):
         return self._closure_struct_setting_code
 
     def _release_variable(self, var: VariableName, src_info: SourceInfo,
-                          new_stmt_list: list[Statement]) -> None:
+                          new_stmt_list: list[Statement], register_cleanup: bool = True) -> None:
         """生成释放一个对象变量的语句，追加到块的语句列表（见finish）。
 
         释放=递减引用计数，归零才调用析构（见开发疑问记录190）。递减与判断合并在
@@ -2863,6 +2868,9 @@ class BlockStmt(Statement):
 
         :param new_stmt_list: 正在按反序拼接的语句列表（末尾整体反转，故此处
             按"先出现者后追加"的顺序追加，反转后为 守卫 → 释放 → 守卫结束 → 置空）
+        :param register_cleanup: 是否把同一释放登记到块的异常清理路径
+            （_release_stmt_list）。退出路径（return/throw）上的释放按同一变量
+            另行调用本方法生成一套独立的语句，此时不再重复登记清理路径。
         """
         release_stmt = OpStmt(src_info, self._symbol_table, self._var_states)
         call_op = CallOp(src_info, self._symbol_table)
@@ -2895,6 +2903,8 @@ class BlockStmt(Statement):
         new_stmt_list.append(end_guard_stmt)
         new_stmt_list.append(release_stmt)
         new_stmt_list.append(begin_guard_stmt)
+        if not register_cleanup:
+            return
         # 异常清理路径上的同一释放：与正常路径的语句分开创建（同一语句对象
         # 在块内出现两次时，其调试标记与跳转标记的维护会互相影响）
         check_null_stmt = CStmt(src_info, self._symbol_table, self._var_states)
@@ -3042,6 +3052,25 @@ class BlockStmt(Statement):
             # 同一等待被插入块内每条退出语句，带调试标记会重复输出标记声明
             exit_wait_stmt.remove_mark()
             self.insert_finally_stmt(exit_wait_stmt)
+        # 退出路径上的等待之后，还要释放"异步声明且从未被读取"的变量：其值由
+        # 退出路径的等待写入，而退出路径原先只执行等待与返回值复制，这些对象在
+        # 该路径上从不释放（见开发疑问记录193第2条的答复）。释放语句按与等待
+        # 相同的顺序插入：早于等待则变量尚未有值（守卫为空操作），晚于退出语句
+        # 则不会执行。变量声明由块提升到C块开头（见_inner_text），故声明位置
+        # 晚于退出语句时也能引用（彼时变量为NULL，守卫为空操作）。
+        if len(unused_async_releases) > 0:
+            exit_release_list: list[Statement] = []
+            for var in unused_async_releases:
+                self._release_variable(var, self.src_info, exit_release_list,
+                                       register_cleanup=False)
+            exit_release_list.reverse()
+            for release_stmt in exit_release_list:
+                # 同一释放被插入块内每条退出语句：带调试标记会重复输出标记声明
+                # （与退出路径上的等待一致）。跳转标记同样移除：退出路径上不再
+                # 跳转，与正常路径、清理路径上的同一释放一致。
+                release_stmt.remove_mark()
+                release_stmt.remove_jump_mark()
+                self.insert_finally_stmt(release_stmt)
         # 异步声明且从未被读取的变量（见finish的说明）：其值由上面的等待写入，
         # 故释放语句位于这些等待之后（异常路径上的同一释放已登记在
         # _release_stmt_list中，位于清理路径的等待之后）
@@ -3207,31 +3236,74 @@ class BlockStmt(Statement):
     def set_as_closure(self, closure_name: str, args: list[VariableName]) -> None:
         """将当前语句块设置为闭包，生成捕获结构体代码。"""
         self._is_closure = True
+        self._closure_name = closure_name
         self._used_outer_variables = [v for v in self._used_outer_variables if v not in args]
-        struct_name: str = f"struct {closure_name}$Capture"
+        self._rebuild_closure_texts()
+        if self._closure_init_stmt is None:
+            self._closure_init_stmt = CStmt(self._src_info, self._symbol_table, self._var_states)
+            self._stmt.insert(0, self._closure_init_stmt)
+        self._closure_init_stmt.set_text(self._closure_convert_text)
+
+    def _rebuild_closure_texts(self) -> None:
+        """按捕获变量的当前类型重新生成捕获结构体的定义与成员赋值文本。
+
+        捕获变量的类型可能是外层泛型函数的泛型参数（如`auto f = sq() -> (T[] r)
+        { r = local; };`捕获T[]型的local）：结构体定义与闭包体内的成员转换都要
+        用到这些类型的C名，而set_as_closure在解析期调用（彼时类型还是占位符），
+        故实例化时按具体类型重新生成（BlockStmt.rebuild_for_instantiation，
+        见开发疑问记录194）。
+        """
+        struct_name: str = f"struct {self._closure_name}$Capture"
         used_outer_variables_decl: list[str] = list(
             map(lambda x: f"\t{x.type_name_pair_calling};", self._used_outer_variables))
-        struct_def: list[str] = [
+        # 捕获结构体的定义输出到模块级（外层函数分配捕获结构体时同样需要它），
+        # 闭包体内仅做成员转换
+        self._closure_struct_def = "\n".join([
             f"{struct_name} {{",
             "\n".join(used_outer_variables_decl),
             "};"
-        ]
-        # 捕获结构体的定义输出到模块级（外层函数分配捕获结构体时同样需要它），
-        # 闭包体内仅做成员转换
-        self._closure_struct_def = "\n".join(struct_def)
+        ])
+        struct_alloc: str = \
+            f"{struct_name} *{self._closure_name}$$capture = ({struct_name} *)malloc(sizeof({struct_name}));"
+        used_outer_variables_set: list[str] = list(
+            map(lambda x: f"{self._closure_name}$$capture->{x.name} = {x.name};",
+                self._used_outer_variables))
+        self._closure_struct_setting_code = struct_alloc + "\n" + "\n".join(used_outer_variables_set)
+
+    @property
+    def _closure_convert_text(self) -> str:
+        """获取闭包体内把捕获结构体成员转换到局部变量的文本。"""
+        struct_name: str = f"struct {self._closure_name}$Capture"
         used_outer_variables_convert: list[str] = list(
-            map(lambda x: f"{x.type_name_pair_calling} = $$captureStructPtr->{x.name};", self._used_outer_variables))
-        ptr_convert_def: list[str] = [
+            map(lambda x: f"{x.type_name_pair_calling} = $$captureStructPtr->{x.name};",
+                self._used_outer_variables))
+        return "\n".join([
             f"{struct_name} *$$captureStructPtr = ({struct_name} *)$$capture;",
             "\n".join(used_outer_variables_convert)
-        ]
-        closure_init_stmt: CStmt = CStmt(self._src_info, self._symbol_table, self._var_states)
-        closure_init_stmt.set_text("\n".join(ptr_convert_def))
-        self._stmt.insert(0, closure_init_stmt)
-        struct_alloc: str = f"{struct_name} *{closure_name}$$capture = ({struct_name} *)malloc(sizeof({struct_name}));"
-        used_outer_variables_set: list[str] = list(
-            map(lambda x: f"{closure_name}$$capture->{x.name} = {x.name};", self._used_outer_variables))
-        self._closure_struct_setting_code = struct_alloc + "\n" + "\n".join(used_outer_variables_set)
+        ])
+
+    def rebuild_for_instantiation(self, type_args: dict[GenericArgument, TypeName]) -> None:
+        """按实例化后的类型重建捕获结构体的文本（见_rebuild_closure_texts）。
+
+        捕获变量的类型对象要一并实例化：_used_outer_variables原先只被浅拷贝到
+        实例化副本，其类型仍是占位类型。
+        """
+        if not self._is_closure:
+            return
+        self._used_outer_variables = [v.instantiation(v.name, type_args)
+                                      for v in self._used_outer_variables]
+        self._rebuild_closure_texts()
+        if self._closure_init_stmt is None:
+            return
+        # 初始化语句各实例一份：CStmt.instantiation返回自身（共享同一对象），
+        # 沿用共享对象会使后一个实例的文本覆盖前一个实例（捕获变量的类型不同）
+        new_init = CStmt(self._src_info, self._symbol_table, self._var_states)
+        new_init.set_text(self._closure_convert_text)
+        for i, stmt in enumerate(self._stmt):
+            if stmt is self._closure_init_stmt:
+                self._stmt[i] = new_init
+                break
+        self._closure_init_stmt = new_init
 
     def set_as_const_def(self) -> None:
         self._is_const_def = True

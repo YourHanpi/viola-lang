@@ -534,11 +534,12 @@ class CExpr(Expression):
 
 def too_few_unpack_targets_error(returns_count: int, targets_count: int,
                                  src_info: SourceInfo) -> CompilerException:
-    """构造尾部解包（目标数少于返回值数）不受支持的编译异常。
+    """构造尾部解包（目标数少于返回值数）暂不支持的编译异常。
 
     尾部解包需要显式标记（如double x, *(double, double) yz = ...;中的`*`），
-    尚未实现（见开发疑问记录147、150）：同步调用的调用约定按返回值逐个传指针，
-    无法物化出可供切片的整元组。错误信息给出该计划形式，便于了解将来的写法。
+    0.1版本暂不实现（见开发疑问记录147、150，以及第193条末尾"暂时禁用尾部解包，
+    未来版本再支持"的答复）：同步调用的调用约定按返回值逐个传指针，无法物化出
+    可供切片的整元组。错误信息给出该计划形式，便于了解将来的写法。
     声明语句与赋值语句的类型检查、以及UnpackExpr的兜底检查共用本函数，
     避免各自给出不一致的说法。
     :param returns_count: 被调函数的返回值个数。
@@ -548,8 +549,8 @@ def too_few_unpack_targets_error(returns_count: int, targets_count: int,
     """
     return CompilerException(
         f"Too few targets for unpacking: the function returns {returns_count} value(s), "
-        f"but only {targets_count} target(s) given (tail unpacking is not supported; the "
-        f"planned explicit form is a `*`-marked tuple target, "
+        f"but only {targets_count} target(s) given (tail unpacking is disabled in this "
+        f"version; the planned explicit form is a `*`-marked tuple target, "
         f"e.g. `double x, *(double, double) yz = ...;`).",
         src_info)
 
@@ -566,8 +567,6 @@ class UnpackExpr(Expression):
         self._to_unpack: Optional[Expression] = to_unpack
         self._var: Optional[LocalVariableName] = None
         self._returns: list[VariableName] = []
-        self._tail_var: Optional[LocalVariableName] = None
-        self._tail_type: Optional[TupleTypeName] = None
         self._inline_mapping: dict[str, str] = {}
         # 同步调用的直接解包（0.1）：被解包表达式为同步函数调用且返回值
         # 与目标变量一一对应时，由调用直接把结果写入目标变量，不物化元组
@@ -626,36 +625,12 @@ class UnpackExpr(Expression):
         else:
             to_unpack_front_text += "\n"
         result: str = to_unpack_front_text + f"{self._var.name} = {self._to_unpack.text};"
-        # noinspection PyTypeChecker
-        expr_type: TupleTypeName = self._to_unpack.return_type
-        if self._tail_var is not None and self._tail_type is not None:
-            # 最后一个返回变量接收剩余元素：前几个变量逐一提取成员，尾部构造子元组
-            for i, ret in enumerate(self._returns[:-1]):
-                deref: str = "*" if ret.is_return else ""
-                result += f"\n{deref}{ret.name} = {self._var.name}->${i};"
-                result += self._member_retain_text(deref + ret.name, ret)
-            tail_var: LocalVariableName = self._tail_var
-            tail_types: list[TypeName] = self._tail_type.types
-            result += f"\n{tail_var.name} = ({self._tail_type.c_calling_name})malloc(sizeof({self._tail_type.c_alloc_name}));"
-            result += f"\n{tail_var.name}->$refCount = 1;"
-            result += f"\n{tail_var.name}->$parent = NULL;"
-            result += f"\n{tail_var.name}->size = {len(tail_types)};"
-            # 析构函数按元素类型单态化，由分配处写入$del（见开发疑问记录192）
-            result += "\n" + tuple_del_assign_text(tail_var.name, self._tail_type)
-            for i in range(len(tail_types)):
-                # 子元组同样持有其成员（见开发疑问记录192）
-                result += f"\n{tail_var.name}->${i} = {self._var.name}->${len(self._returns) - 1 + i};"
-                result += retain_text(f"{tail_var.name}->${i}") \
-                    if tail_types[i].is_object else ""
-            tail_deref: str = "*" if self._returns[-1].is_return else ""
-            result += f"\n{tail_deref}{self._returns[-1].name} = {tail_var.name};"
-        else:
-            # 返回数与元素数相同：逐一提取成员。
-            # 元组持有其成员（见开发疑问记录192），故取到槽位后该槽位计一次数
-            for i, ret in enumerate(self._returns):
-                deref: str = "*" if ret.is_return else ""
-                result += f"\n{deref}{ret.name} = {self._var.name}->${i};"
-                result += self._member_retain_text(deref + ret.name, ret)
+        # 返回数与元素数相同：逐一提取成员。
+        # 元组持有其成员（见开发疑问记录192），故取到槽位后该槽位计一次数
+        for i, ret in enumerate(self._returns):
+            deref: str = "*" if ret.is_return else ""
+            result += f"\n{deref}{ret.name} = {self._var.name}->${i};"
+            result += self._member_retain_text(deref + ret.name, ret)
         return result
 
     def _member_retain_text(self, target_text: str, target_var: VariableName) -> str:
@@ -674,20 +649,14 @@ class UnpackExpr(Expression):
             return self._to_unpack.head_text
         if self._is_async_unpack:
             # 异步调用：目标变量的声明由外层语句输出，此处输出调用自身的临时
-            # 变量声明，并在尾部目标接收剩余元素时补上尾部子元组临时变量
-            result: Optional[str] = self._to_unpack.head_text
-            if self._tail_var is not None:
-                result = (result + "\n" if result is not None else "") + self._tail_var.declaration_text
-            return result
+            # 变量声明
+            return self._to_unpack.head_text
         if len(self._returns) == 0:
             # 尚未设置解包目标：只声明被解包表达式自身的临时变量
             return self._to_unpack.head_text
-        # 已设置解包目标：只声明解包临时变量与尾部元组变量
+        # 已设置解包目标：只声明解包临时变量
         # （被解包表达式的临时变量已由外层语句的head声明）
-        result: str = self._var.declaration_text
-        if self._tail_var is not None:
-            result += "\n" + self._tail_var.declaration_text
-        return result
+        return self._var.declaration_text
 
     @property
     def inline_mapping(self) -> dict[str, str]:
@@ -699,37 +668,33 @@ class UnpackExpr(Expression):
         return self._to_unpack.listener_name
 
     def restore_text(self, var: VariableName) -> Optional[str]:
-        """生成等待之后把返回元组的成员复制到目标变量的代码。
+        """生成等待之后把返回元组的成员取到目标变量的代码。
 
         同步解包（front_text）在本表达式内完成全部复制，无此步骤；异步调用的
-        返回值经调用方分配的返回元组传递，等待完成后才可复制（见开发疑问记录140）。
+        返回值经调用方分配的返回元组传递，等待完成后才可取回（见开发疑问记录140）。
+
+        与CallOp.restore_text同为"取走"语义（把成员置0，目标槽位接手元组持有的
+        那次引用），使本段文本不依赖目标变量的类型：泛型函数体内的这段文本在
+        实例化之前生成，彼时目标类型还是泛型参数（见开发疑问记录194）。
+
+        取回代码以返回元组指针为守卫：同一段代码会随等待语句输出到多处（正常
+        路径的等待、退出路径与清理路径的等待），其中退出路径与清理路径可能先后
+        在同一次执行中到达（见开发疑问记录194）。返回元组在取回之后由
+        deferred_release_text释放并置空，第二次取回会解引用已置空的指针。
         """
         if not self._is_async_unpack or var not in self._returns:
             return None
         index: int = self._returns.index(var)
         returns_text: str = self._to_unpack.text
-        if self._tail_var is not None and index == len(self._returns) - 1:
-            # 尾部目标接收剩余元素：等待之后由返回元组构造子元组
-            # （与front_text中同步路径的构造相同，只是时机在等待之后）
-            # noinspection PyTypeChecker
-            tail_types: list[TypeName] = self._tail_type.types
-            lines: list[str] = [
-                f"{self._tail_var.name} = ({self._tail_type.c_calling_name})malloc(sizeof({self._tail_type.c_alloc_name}));",
-                f"{self._tail_var.name}->$refCount = 1;",
-                f"{self._tail_var.name}->$parent = NULL;",
-                f"{self._tail_var.name}->size = {len(tail_types)};",
-                # 析构函数按元素类型单态化，由分配处写入$del（见开发疑问记录192）
-                tuple_del_assign_text(self._tail_var.name, self._tail_type)
-            ]
-            for i in range(len(tail_types)):
-                # 子元组同样持有其成员（见开发疑问记录192）
-                lines.append(f"{self._tail_var.name}->${i} = {returns_text}->${index + i};")
-                if tail_types[i].is_object:
-                    lines.append(retain_text(f"{self._tail_var.name}->${i}"))
-            lines.append(f"{var.name} = {self._tail_var.name};")
-            return "\n".join(lines)
-        # 元组持有其成员（见开发疑问记录192），故取到槽位后该槽位计一次数
-        return f"{var.name} = {returns_text}->${index};" + self._member_retain_text(var.name, var)
+        # 返回值槽位在C层是指向返回变量的指针（见VariableName.is_return）
+        deref: str = "*" if var.is_return else ""
+        return "\n".join([
+            f"if ({returns_text}) {{",
+            f"\t{deref}{var.name} = {returns_text}->${index};",
+            # 成员置0：该成员不再由元组持有（元组析构时不再递减，见上）
+            f"\t{returns_text}->${index} = 0;",
+            "}"
+        ])
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
         new_expr = copy(self)
@@ -801,7 +766,6 @@ class UnpackExpr(Expression):
                     f"Type mismatch: {ret.type.raw_name} can not convert to {expected_type.raw_name}.",
                     self._src_info
                 )
-        # 尾部解包路径（_tail_var）不受支持（见上方校验），保留以与同步路径一致
         last_expected_type = TupleTypeName(self._src_info, expr_type.types[-1:])
         if len(last_expected_type.types) == 1:
             last_expected_type = last_expected_type.types[0]
@@ -825,26 +789,12 @@ class UnpackExpr(Expression):
             # 临时元组（unpack=False），解包在等待之后由restore_text生成
             # （见开发疑问记录140）
             self._to_unpack.set_returns(returns, unpack=False)
-            if len(expr_type.types) > len(returns):
-                # 尾部目标接收剩余元素：等待之后需要临时尾部元组变量
-                tail_types: list[TypeName] = expr_type.types[len(returns) - 1:]
-                self._tail_type = TupleTypeName(self._src_info, tail_types)
-                self._tail_var = LocalVariableName(
-                    self._src_info, self._symbol_table.get_counter(), self._tail_type
-                )
             return True
         self._var = LocalVariableName(
             self._src_info,
             self._symbol_table.get_counter(),
             self._to_unpack.return_type
         )
-        # 最后一个返回变量接收剩余元素时，需要临时尾部元组变量
-        if len(expr_type.types) > len(returns):
-            tail_types: list[TypeName] = expr_type.types[len(returns) - 1:]
-            self._tail_type = TupleTypeName(self._src_info, tail_types)
-            self._tail_var = LocalVariableName(
-                self._src_info, self._symbol_table.get_counter(), self._tail_type
-            )
         return True
 
     def substitute(self, expr: dict[VariableName, "Expression"]) -> "Expression":
@@ -3271,21 +3221,46 @@ class CallOp(Expression):
         return self._closure_args
 
     def restore_text(self, var: VariableName) -> Optional[str]:
-        """生成把异步调用的返回值从返回元组复制回目标变量的代码。
+        """生成把异步调用的返回值从返回元组取回到目标变量的代码。
 
         异步调用的返回值由工作线程写入调用方分配的返回元组（见front_text），
-        等待（waitListener）完成后需要复制回语句的赋值目标；
+        等待（waitListener）完成后需要取回到语句的赋值目标；
         同步调用直接传递变量指针，无需此步骤。
+
+        取回按"取走"语义：把成员复制到目标变量后把元组成员置空，目标槽位就此
+        接手返回元组持有的那次引用（实参在C层是把新对象的所有权交给槽位，不在
+        此处另行计数）。原先由store_retain_text按目标变量的类型决定是否计数，
+        而本段文本在泛型函数体中会随等待语句在实例化之前生成：彼时目标变量的
+        类型还是泛型参数（如U），"是否对象"无法判定，一律按非对象处理。于是
+        泛型参数实例化为对象类型时（如map::<int, string>的异步路径）取回不计数，
+        而返回元组的析构会递减其成员——对象在取回之后即被释放，随后的读取与
+        存储（数组append的retain）作用在已释放的内存上，实测为堆破坏
+        （0xC0000409/0xC0000374，见开发疑问记录194）。改为取走后，这一段文本
+        不再依赖变量的类型，泛型实例化为对象或基本类型都成立。
+
+        取回代码还以返回元组指针为守卫：同一段代码会随等待语句输出到多处（正常
+        路径的等待、退出路径与清理路径的等待），其中退出路径与清理路径可能先后
+        在同一次执行中到达——throw先执行退出路径的等待与取回，再跳到块的清理
+        标签执行清理路径的等待与取回（见开发疑问记录194）。返回元组在取回之后
+        由deferred_release_text释放并置空，第二次取回因此会解引用已置空的指针
+        （实测为0xC0000005）。守卫使第二次取回为空操作。
         """
         if not self._is_async or self._returns_tuple is None:
             return None
         if var not in self._returns_list:
             return None
         index: int = self._returns_list.index(var)
-        # 目标槽位自此持有该对象：计一次数（返回元组本身也持有一次，其析构时递减，
-        # 见开发疑问记录190、192）
-        return f"{var.name} = {self._returns_tuple.text}->${index};" \
-               + store_retain_text(var.name, var)
+        returns_text: str = self._returns_tuple.text
+        # 返回值槽位在C层是指向返回变量的指针（见VariableName.is_return）
+        deref: str = "*" if var.is_return else ""
+        return "\n".join([
+            f"if ({returns_text}) {{",
+            f"\t{deref}{var.name} = {returns_text}->${index};",
+            # 成员置0：该成员不再由元组持有（元组析构时不再递减，见上）；
+            # 0对指针成员与基本类型成员都是合法初值
+            f"\t{returns_text}->${index} = 0;",
+            "}"
+        ])
 
     @property
     def _virtual_slot(self) -> Optional[int]:
@@ -3448,6 +3423,11 @@ class CallOp(Expression):
         new_expr._returns_list = list(map(lambda x: x.instantiation(x.name, type_args), self._returns_list))
         if new_expr._returns_tuple is not None:
             new_expr._returns_tuple = new_expr._returns_tuple.instantiation(type_args)
+        # 实参元组同样要实例化：其类型按实参类型构造，泛型函数体内的异步调用
+        # 会在实例化之前建立它（as_async时），不实例化则元组的C类型名残留占位
+        # 类型（如Tuple$T$$array$viola$lang$uint64，见开发疑问记录194）
+        if new_expr._args_tuple is not None:
+            new_expr._args_tuple = new_expr._args_tuple.instantiation(type_args)
         if new_expr._closure_args is not None:
             new_expr._closure_args = new_expr._closure_args.instantiation(type_args)
         if new_expr._func_expr is not None:

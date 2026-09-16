@@ -71,7 +71,16 @@ def destructor_name(var_type: TypeName) -> str:
         # （彼时类型还是占位符，如Tuple$U，见开发疑问记录192）
         return f"{TUPLE_T}$__del__"
     if isinstance(var_type, ArrayTypeName):
-        # 数组的C名称使用$$array形式
+        # 数组的C名称使用$$array形式。名字中直接含元素类型名，故只在元素类型
+        # 已完全实例化时可用：泛型函数体中若在实例化之前渲染这段文本，名字里
+        # 会残留占位类型（如T$$array$__del__$_0，见开发疑问记录193第4条）。
+        # 现有代码路径都在实例化之后渲染（释放语句经AttrOp按类型解析、函数级
+        # 清理在_source中生成），此处显式校验，使将来新增的提前渲染路径直接
+        # 报出内部错误而不是生成引用不存在函数名的C代码。
+        if not _type_is_fully_concrete(var_type):
+            raise InternalCompilerException(
+                f"Array type {var_type.name} is not fully instantiated: the release code "
+                f"must be rendered after instantiation.", var_type.src_info)
         return f"{var_type.c_alloc_name}$__del__$_0"
     if isinstance(var_type, ClassName):
         del_method = next(
@@ -745,6 +754,25 @@ class VariableName(NamedSymbol):
         获取变量的数据类型。
         """
         return self._type
+
+    def resolve_auto_type(self, real_type: TypeName) -> None:
+        """写入自动推断出的类型（声明为auto的变量，见开发疑问记录194）。
+
+        auto变量（闭包声明`auto f = sq(...) -> (...) {...};`）的类型对象是
+        AutoTypeName：推断出真实类型后整体替换该对象，而不是只记录在
+        AutoTypeName内部。类型的使用处会按真实类型做isinstance判断（如函数
+        类型）、读取其专有属性（args/returns/c_*_cast_text），也会据类型判定
+        变量是否为对象——这些在以AutoTypeName为变量类型时全部失配（实测经
+        auto变量调用闭包时，CallOp.return_type读取FunctionTypeName的returns
+        属性而抛AttributeError，编译过程中断）。
+
+        非auto声明的变量不在此列：其类型已是具体类型，调用方（statement.py的
+        声明语句与丢弃变量推断）只在本方法适用的场合调用。
+        """
+        if self._type.name != "auto":
+            raise InternalCompilerException(
+                f"Variable {self.raw_name} is not declared with auto type.", self._src_info)
+        self._type = real_type
 
     @property
     def type_name(self) -> str:
@@ -2321,7 +2349,7 @@ class AutoTypeName(TypeName):
     def is_object(self) -> bool:
         if self._real_type is None:
             raise CompilerException("Can not infer type.", self._src_info)
-        return self._real_type.is_generic
+        return self._real_type.is_object
 
     def set_real_type(self, real_type: TypeName) -> None:
         self._real_type = real_type
