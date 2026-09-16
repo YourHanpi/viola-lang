@@ -596,7 +596,7 @@ class SqDef(Definition):
         """获取函数名。"""
         return self._decl.name
 
-    def _cleanup_variables(self) -> list[VariableName]:
+    def _cleanup_variables(self, body_text: Optional[str] = None) -> list[VariableName]:
         """获取函数退出时统一释放的变量（见开发疑问记录191第1条）。
 
         除new_variables_ordered（本块内首次赋值的块外变量）外，还包含本函数体
@@ -604,14 +604,23 @@ class SqDef(Definition):
         若在声明之后再未被使用，不会出现在任何语句的used_variables中，因而不会
         进入"最后一次使用"的释放点，只分配不释放。
 
-        范围内只取本块直接声明的变量：它们的C声明位于函数体自己的C块内，在本块
-        末尾的清理标签处仍在作用域内；嵌套块内声明的变量由嵌套块自行释放
-        （见开发疑问记录115）。返回值槽位不在此列——其所有权随返回值交给调用方；
-        unsafe变量由用户手动管理内存，同样排除。
+        范围内只取本块直接声明的变量（body_statements会沿不引入C作用域的嵌套块
+        展开，从而越过函数体的包装块，见开发疑问记录196）：它们的C声明位于函数体
+        自己的C块内，在本块末尾的清理标签处仍在作用域内；引入C作用域的嵌套块内
+        声明的变量由该块自行释放，不在此列（见开发疑问记录115）。返回值槽位不在
+        此列——其所有权随返回值交给调用方；unsafe变量由用户手动管理内存，同样
+        排除。
+
+        :param body_text: 本函数体的C文本。临时变量的收集据此过滤：同一源码调用
+            可能在表达式树中存在多个等价的对象（如toString的转换调用与原文的
+            属性访问调用并存），只有被真正渲染到函数体中的那个其声明才会出现在
+            body_text里；未渲染者的临时变量在清理处引用会生成未声明的变量
+            （见开发疑问记录196）。
         """
         result: list[VariableName] = list(self._body.new_variables_ordered)
         seen: set[VariableName] = set(result)
         body_statements = getattr(self._body, "body_statements", [])
+
         for stmt in body_statements:
             candidates: list[VariableName] = []
             if isinstance(stmt, (DeclStmt, AssignStmt)):
@@ -627,8 +636,12 @@ class SqDef(Definition):
                 if var in seen:
                     continue
                 seen.add(var)
-                if var.is_object and not var.is_return and not var.is_unsafe_managed:
-                    result.append(var)
+                if not var.is_object or var.is_return or var.is_unsafe_managed:
+                    continue
+                if body_text is not None and var.name not in body_text:
+                    # 该变量的声明不在本函数体中（未被渲染的等价表达式对象）
+                    continue
+                result.append(var)
         return result
 
     def optimize(self) -> "SqDef":
@@ -713,6 +726,7 @@ class SqDef(Definition):
 
     def _source(self, is_native_func: bool) -> str:
         """生成函数的 C 源代码文本。"""
+
         self._decl: FunctionName
         if self._is_native:
             # 原生函数：实现由运行库提供，不生成函数体
@@ -731,13 +745,16 @@ class SqDef(Definition):
             closure_rets_tuple: TupleTypeName = TupleTypeName(self._src_info, self._decl.ret_types)
             async_define_name = f"void {self._decl.name}$async({closure_args_tuple.c_calling_name} params, " \
                                 f"{closure_rets_tuple.c_calling_name} returns, {LISTENER_T} *listener)"
+        # 函数体文本先生成，函数级统一释放据其过滤临时变量（见_cleanup_variables）
+        body_text: str = self._body.text
         sync_text: list[str] = [
             define_name + " {",
             (self._body.head_text or "") + ("\n\r" + self._body.tail_recursive_mark)
             if self._body.tail_recursive_mark is not None else self._body.head_text or "",
             f"\t{EXCEPTION_T_NAME} *$$exc = listener->exception;",
-            self._body.text,
-            CleanupBlock(self._src_info, self._symbol_table, self._var_states, self._cleanup_variables()).text,
+            body_text,
+            CleanupBlock(self._src_info, self._symbol_table, self._var_states,
+                         self._cleanup_variables(body_text)).text,
             "}"
         ]
         async_text: list[str] = [
@@ -1037,11 +1054,11 @@ class DestructorDef(SqDef):
         self._free_stmt: Optional[CStmt] = None
         if cls.is_c_part:
             return
-        if cls.is_wrapper:
-            # wrapper类的__del__由用户实现（其中的del(super)经__del__super完成
-            # 成员释放与对象回收），故不在此生成"转发+释放成员+回收对象"的前缀：
-            # 该前缀会在用户语句之前先把对象free掉，随后的del(super)对已释放的
-            # _this解引用（见开发疑问记录191）。
+        if cls.is_wrapper or cls.is_unsafe:
+            # wrapper类与unsafe类的__del__由用户实现（其中的del(super)经
+            # __del__super完成成员释放与对象回收），故不在此生成"转发+释放成员+
+            # 回收对象"的前缀：该前缀会在用户语句之前先把对象free掉，随后的
+            # del(super)对已释放的_this解引用（见开发疑问记录191、196）。
             return
         self._free_stmt = CStmt(src_info, self._symbol_table, self._var_states)
         self._free_stmt.set_text(self._forward_text(cls) + self._member_free_text(cls))
@@ -1301,16 +1318,18 @@ class ClassDef(Definition):
         self._import_name: str = module_name + "$" + name
         self._import_all: str = module_name + "$__all__"
         self._import_module: str = module_name + "$__module__"
-        # wrapper类必须由用户实现__del__（export=False的__del__为用户定义；
-        # 编译器自动注册的析构标记为export=True）。原生绑定类由运行库实现析构，
-        # 无需检查。
-        if self._decl.is_wrapper and not self._is_native:
+        # wrapper类与unsafe类必须由用户实现__del__（export=False的__del__为用户
+        # 定义；编译器自动注册的析构标记为export=True）。这两类对象不参与自动
+        # 成员释放，析构由用户显式给出（见开发疑问记录196）。原生绑定类由运行库
+        # 实现析构，无需检查。
+        if (self._decl.is_wrapper or self._decl.is_unsafe) and not self._is_native:
             has_user_del: bool = any(
                 m_name == "__del__" and not m.export
                 for (m_name, _), m in self._decl.methods.items()
             )
             if not has_user_del:
-                raise CompilerException(f"Wrapper class {name} must define sq __del__() -> ();.", self._src_info)
+                raise CompilerException(
+                    f"Wrapper class and unsafe class {name} must define sq __del__() -> ();.", self._src_info)
         # 实现接口的类必须实现接口的所有抽象方法（接口本身除外）
         if not self._decl.is_interface:
             for interface in self._decl.interfaces:
@@ -1332,7 +1351,7 @@ class ClassDef(Definition):
         self._del_super_body: Optional[str] = None
         if self._is_native:
             pass
-        elif self._decl.is_wrapper:
+        elif self._decl.is_wrapper or self._decl.is_unsafe:
             del_super_def = DestructorDef(self._src_info, self._symbol_table, var_states, self._namespace, name)
             del_super_def.finish()
             self._del_super_body = del_super_def._body.text

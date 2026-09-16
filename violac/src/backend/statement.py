@@ -38,6 +38,9 @@ from utils.text_utils import renumber_marks as _renumber_marks
 from utils.text_utils import sanitize_c_identifier
 
 LISTENER_WAIT_FUNC = "viola$threads$waitListener"
+# 把"与正在传播的异常同时出现"的异常挂到其被抑制异常链上（实现于
+# viola_libs/viola/lang/exception.c，见开发疑问记录196）
+SUPPRESS_EXC_FUNC = "viola$lang$exception$suppress"
 # 构造函数体中代表待构造对象的局部变量名（见ConstructorDef），
 # 父类构造调用（super = 父类名(...)）需要在该对象上初始化父类成员
 THIS_OBJ_NAME: str = "_thisObj"
@@ -2778,15 +2781,20 @@ class CleanupBlock(CStmt):
 class BlockStmt(Statement):
     """语句块，包含多条子语句。"""
 
-    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 introduces_c_scope: bool = False) -> None:
         """
         初始化语句块。
         :param src_info: 源代码信息。
         :param symbol_table: 符号表。
         :param var_states: 变量状态表。
+        :param introduces_c_scope: 本块是否在C层输出`do { ... } while(0);`（即
+            引入C作用域）。块内声明的变量在块外不可见，函数级统一释放不得展开
+            此类块（见开发疑问记录196）。
         """
         super().__init__(src_info, symbol_table, var_states, single_stmt=False)
         self._stmt: list[Statement] = []
+        self._introduces_c_scope: bool = introduces_c_scope
         self._release_stmt_list: list[Statement] = []
         self._is_async: bool = False
         self._is_finished: bool = False
@@ -3162,8 +3170,14 @@ class BlockStmt(Statement):
                 f"\tfree({listener}$$_call);",
                 f"\t{listener}$$_call = NULL;",
                 # 取回的任务异常同样发布到本函数的listener，使其在
-                # "本函数未捕获而退出"时被调用方感知（见开发疑问记录139）
-                "\tif ($$exc == NULL && $$waited_exc != NULL) { $$exc = $$waited_exc; listener->exception = $$exc; }",
+                # "本函数未捕获而退出"时被调用方感知（见开发疑问记录139）。
+                # 已有异常正在传播时不丢弃任务异常，而是把它挂到该异常的被抑制
+                # 异常链上（见开发疑问记录196）：丢弃会使它既不被报告、也不被
+                # 释放（异常对象的内存泄漏）
+                "\tif ($$waited_exc != NULL) {",
+                "\t\tif ($$exc == NULL) { $$exc = $$waited_exc; listener->exception = $$exc; }",
+                f"\t\telse {{ {SUPPRESS_EXC_FUNC}($$exc, $$waited_exc); }}",
+                "\t}",
                 "}"] + restores)
         # 块内的return/throw会直接退出函数，绕过块末尾的等待语句（return是C的
         # return，既不经过块末尾的等待，也不经过本块的清理路径），故把同一等待
@@ -3252,19 +3266,36 @@ class BlockStmt(Statement):
 
     @property
     def body_statements(self) -> list[Statement]:
-        """获取本块直接包含的语句（展开常量折叠产生的_StmtList）。
+        """获取本块直接包含的语句（展开常量折叠产生的_StmtList与不引入C作用域的嵌套块）。
 
         用于函数级统一释放时收集"本函数体直接声明的变量"：这些变量的C声明位于
         本块自己的C块内，故在本块末尾的清理标签处仍在作用域内；嵌套块内声明的
         变量不在其中（其声明在嵌套C块内，见开发疑问记录115）。
+
+        函数体块本身不引入C作用域，但函数体语句总被包在一个由_parse_block_stmt
+        产生的嵌套BlockStmt中（见开发疑问记录195），故须沿"不引入C作用域"的块
+        逐层展开，否则函数级统一释放永远收集不到任何变量、从不生效
+        （见开发疑问记录196）。引入C作用域的块（`do { ... } while(0);`，即源码中
+        以花括号书写的块语句）不展开：其中声明的变量在函数末尾不可见。
         """
         result: list[Statement] = []
         for stmt in self._stmt:
             if isinstance(stmt, _StmtList):
                 result.extend(stmt.stmts)
+            elif isinstance(stmt, BlockStmt) and not stmt.introduces_c_scope:
+                result.extend(stmt.body_statements)
             else:
                 result.append(stmt)
         return result
+
+    @property
+    def introduces_c_scope(self) -> bool:
+        """获取本块是否引入C作用域（在C层输出`do { ... } while(0);`）。
+
+        引入C作用域的块内声明的变量在块外不可见，函数级统一释放不得引用
+        （见开发疑问记录196）。
+        """
+        return self._introduces_c_scope
 
     @property
     def input_variables(self) -> set[VariableName]:
@@ -3561,14 +3592,16 @@ class BlockStmt(Statement):
 class FnBlockStmt(BlockStmt):
     """函数体语句块，支持变量依赖排序和条件语句缓冲。"""
 
-    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable) -> None:
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 introduces_c_scope: bool = False) -> None:
         """
         初始化函数体语句块。
         :param src_info: 源代码信息。
         :param symbol_table: 符号表。
         :param var_states: 变量状态表。
+        :param introduces_c_scope: 见BlockStmt的同名参数。
         """
-        super().__init__(src_info, symbol_table, var_states)
+        super().__init__(src_info, symbol_table, var_states, introduces_c_scope)
         self._stmt_set: set[Statement] = set()
         self._variable_dependencies: dict[VariableName, Statement] = {}
         self._cond_stmt_buffer: list[Statement] = []

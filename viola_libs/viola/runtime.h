@@ -214,8 +214,15 @@ struct viola$lang$exception$Exception {
     viola$lang$ptr $parent;
     viola$lang$ptr $$vtable;
     viola$lang$string *message;
+    /* 被抑制的异常链表（见开发疑问记录196）：清理路径上取回的任务异常在已有
+       异常正在传播时不再被丢弃，而是挂到该异常上随其一同报告与释放 */
+    viola$lang$exception$Exception *$suppressed;
+    viola$lang$exception$Exception *$suppressedNext;
 };
 extern viola$dynamic$TypeInfo viola$lang$exception$Exception$$vtable;
+/* 把与正在传播的异常同时出现的异常挂到其被抑制异常链上（见开发疑问记录196） */
+void viola$lang$exception$suppress(viola$lang$exception$Exception *primary,
+                                   viola$lang$exception$Exception *extra);
 
 /* ================= 函数（Function） ================= */
 /* 同步/异步函数指针的不透明类型（具体调用时按函数签名转换）。

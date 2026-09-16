@@ -8,6 +8,9 @@
 void viola$lang$exception$Exception$__del__$_0(viola$lang$exception$Exception *_this,
                                                viola$threads$Listener *listener);
 
+/* 释放一个局部持有的字符串（定义见下）：what()在拼接多个异常消息时使用 */
+static void releaseString(viola$lang$string *str);
+
 /* 异常基类的TypeInfo（子类的$parent链指向此处）。
    $del为虚析构入口（见开发疑问记录170(a)）；$name为类名（见开发疑问记录175(b)）；
    异常类不实现接口，故$interfaces为NULL（见开发疑问记录170(c)） */
@@ -24,6 +27,8 @@ void viola$lang$exception$Exception$__new__$_0(viola$lang$string *message,
     exc->$refCount = 1;
     exc->$parent = NULL;
     exc->$$vtable = &viola$lang$exception$Exception$$vtable;
+    exc->$suppressed = NULL;
+    exc->$suppressedNext = NULL;
     /* 成员持有message：计一次数（调用方随后释放自己的实参槽位）。
        与析构中的递减成对（见开发疑问记录190）。 */
     exc->message = message;
@@ -65,6 +70,49 @@ void viola$lang$exception$Exception$what$_0(viola$lang$exception$Exception *_thi
        （见开发疑问记录190）。 */
     *result = _this->message;
     viola$lang$refcount_inc(&(*result)->$refCount);
+    if (_this->$suppressed != NULL) {
+        /* 同时存在多个异常（被抑制的异常链，见开发疑问记录196）：
+           把它们的消息一并追加，使报告处一次给出全部报错。 */
+        viola$lang$exception$Exception *item = _this->$suppressed;
+        viola$lang$string *separator = viola$lang$string$fromCharString("\n\tcaused by: ");
+        while (item != NULL) {
+            if (item->message != NULL) {
+                viola$lang$string *joined = NULL;
+                viola$lang$string$__add__$_0(*result, separator, &joined, listener);
+                releaseString(*result);
+                *result = joined;
+                viola$lang$string$__add__$_0(*result, item->message, &joined, listener);
+                releaseString(*result);
+                *result = joined;
+            }
+            item = item->$suppressedNext;
+        }
+        releaseString(separator);
+    }
+}
+
+/* 抑制一个异常：在primary已在传播时，把与其同时出现的extra挂到primary上
+   （按出现顺序追加到链表尾部），随primary一同报告与释放（见开发疑问记录196）。
+   extra的所有权转入链表中，调用方不再持有。 */
+void viola$lang$exception$suppress(viola$lang$exception$Exception *primary,
+                                   viola$lang$exception$Exception *extra) {
+    viola$lang$exception$Exception *tail = NULL;
+    if (primary == NULL || extra == NULL || primary == extra) {
+        return;
+    }
+    tail = primary;
+    while (tail->$suppressedNext != NULL) {
+        if (tail->$suppressedNext == extra) {
+            /* 已在链上，不重复挂接 */
+            return;
+        }
+        tail = tail->$suppressedNext;
+    }
+    tail->$suppressedNext = extra;
+    extra->$suppressedNext = NULL;
+    primary->$suppressed = primary->$suppressedNext;
+    /* 链表持有extra：计一次数，其释放由primary的析构负责 */
+    viola$lang$refcount_inc(&extra->$refCount);
 }
 
 /* 释放一个局部持有的字符串：递减计数，归零则析构（见开发疑问记录190）。
@@ -169,6 +217,21 @@ void viola$lang$exception$Exception$__del__$_0(viola$lang$exception$Exception *_
             if (_this->message != NULL
                 && viola$lang$refcount_dec(&_this->message->$refCount) == 0) {
                 viola$lang$string$__del__$_0(_this->message, NULL);
+            }
+            /* 被抑制的异常链随本异常一同释放（见开发疑问记录196）：
+               链上的每个异常由suppress计过一次数，此处递减并递归释放 */
+            {
+                viola$lang$exception$Exception *item = _this->$suppressedNext;
+                _this->$suppressed = NULL;
+                _this->$suppressedNext = NULL;
+                while (item != NULL) {
+                    viola$lang$exception$Exception *next = item->$suppressedNext;
+                    item->$suppressedNext = NULL;
+                    if (viola$lang$refcount_dec(&item->$refCount) == 0) {
+                        viola$lang$exception$Exception$__del__$_0(item, NULL);
+                    }
+                    item = next;
+                }
             }
             free(_this);
         }

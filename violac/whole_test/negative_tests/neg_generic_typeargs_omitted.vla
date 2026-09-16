@@ -1,0 +1,13 @@
+// 泛型函数的类型实参不能省略（见开发疑问记录196）：
+// 期望报错：Generic function map requires explicit type arguments: write map::<type, ...>(...).
+from viola.io import *;
+from viola.util.functools import map;
+
+fn inc(int x) -> (int y) {
+    y = x + 1;
+}
+
+sq main() -> () {
+    int[] nums = [1, 2, 3];
+    int[] out = map(nums, inc, false);
+}

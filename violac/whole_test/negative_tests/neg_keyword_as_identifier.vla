@@ -1,0 +1,7 @@
+// 关键字不能用作标识符（见开发疑问记录196）：
+// 期望报错：Keyword 'fn' can not be used as an identifier.
+from viola.io import *;
+
+sq main() -> () {
+    int fn = 1;
+}

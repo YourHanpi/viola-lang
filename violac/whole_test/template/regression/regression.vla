@@ -1,0 +1,142 @@
+from viola.io import *;
+import viola.os;
+import viola.lang.exception;
+from viola.os import exit;
+// Viola 0.1 回归测试模板：覆盖开发疑问记录196的修复项
+// 覆盖：对象更新运算符的副本语义、作为实参的调用结果临时变量的释放、
+//       泛型类实例的虚方法分派、完整点分模块路径、基本类型的toString与
+//       string的静态转换、同时出现的多个异常（被抑制的异常链）
+
+// 断言：条件不成立时打印并以致非零退出码结束（供测试脚本判定）
+sq check(bool condition, string label) -> () {
+    if (condition) {
+        print("ok " + label + "\n");
+    } else {
+        print("FAILED " + label + "\n");
+        exit(1);
+    }
+}
+
+// 析构时向日志追加一个字符的wrapper类：用于观察对象是否被释放
+// （对象更新运算符的副本会持有成员，错误实现会让成员被重复释放或悬空）
+wrapper class Ticker${PID} {
+    unsafe uint32 marker;
+
+    public sq __new__() -> (this) {
+        this.marker = 1;
+    }
+
+    public sq __del__() -> () {
+        file log = open("regression_ticker.log", "a", "utf-8");
+        write(log, "x");
+        del(super);
+    }
+}
+
+fn makeTicker${PID}() -> (Ticker${PID} result) {
+    result = Ticker${PID}();
+}
+
+fn sinkTicker${PID}(Ticker${PID} t) -> (int r) {
+    r = 1;
+}
+
+// 调用结果作为实参：该调用结果的临时变量应在本函数退出时释放
+sq tickOnce${PID}() -> (int r) {
+    r = sinkTicker${PID}(makeTicker${PID}());
+}
+
+// 对象更新运算符的副本语义（成员类型含对象与基本类型）
+class Config${PID} {
+    public int width;
+    public int height;
+    public string label;
+
+    public sq __new__(int width, int height, string label) -> (this) {
+        this.width = width;
+        this.height = height;
+        this.label = label;
+    }
+}
+
+// 泛型类实例的虚方法分派
+class Box${PID}::<T> {
+    T value;
+
+    public sq __new__(T v) -> (this) {
+        this.value = v;
+    }
+
+    public fn get() -> (T r) {
+        r = this.value;
+    }
+}
+
+sq describeBox${PID}(Box${PID}::<int> b) -> (string r) {
+    r = b.get().toString();
+}
+
+fn inc${PID}(int x) -> (int y) {
+    y = x + 1;
+}
+
+// 同时出现两个异常：任务异常与正在传播的异常都应被报告。
+// 主异常的抛出放在被调函数中：throw语句自身之前会插入"退出路径上的等待"，
+// 使清理路径上的等待（取回任务异常时主异常已在传播）不被绕过
+sq failAsync${PID}() -> () {
+    throw Exception("task failed");
+}
+
+sq raisePrimary${PID}() -> () {
+    throw Exception("primary");
+}
+
+sq throwTwo${PID}() -> () {
+    async failAsync${PID}();
+    raisePrimary${PID}();
+}
+
+sq main() -> () {
+    // 1. 对象更新运算符：源对象不变、副本取新值、复制的成员保持可用
+    Config${PID} orig(${W}, ${H}, "orig${PID}");
+    Config${PID} upd = orig => {
+        .width = 9,
+        .label = "upd${PID}"
+    };
+    check(orig.width == ${W}, "object update keeps the source width");
+    check(orig.label == "orig${PID}", "object update keeps the source label");
+    check(upd.width == 9, "object update applies the new width");
+    check(upd.label == "upd${PID}", "object update applies the new label");
+    check(upd.height == ${H}, "object update copies the untouched member");
+    check(upd.label.length() == "upd${PID}".length(), "object update copy member is alive");
+
+    // 2. 作为实参的调用结果临时变量在本函数退出时释放
+    file tickTruncate = open("regression_ticker.log", "w", "utf-8");
+    int ticked = tickOnce${PID}();
+    file tickLog = open("regression_ticker.log", "r", "utf-8");
+    string ticks = read(tickLog);
+    check(ticked == 1 && ticks.length() >= 1, "call result temporary is released");
+
+    // 3. 泛型类实例参与虚方法分派
+    Box${PID}::<int> box = Box${PID}::<int>(${W});
+    check(describeBox${PID}(box) == "${W}", "generic class instance dispatches");
+
+    // 4. 以完整点分路径引用模块成员（本文件不导入该模块）
+    int[] nums = [1, 2, 3];
+    int[] mapped = viola.util.functools.map::<int, int>(nums, inc${PID}, false);
+    check(mapped.length() == 3, "dotted module path resolves");
+
+    // 5. 基本类型的toString与string的静态转换
+    check(string.fromInt(255, 16) == "ff", "string.fromInt with base");
+    check((1 + 2).toString() == "3", "basic type toString");
+
+    // 6. 同时出现的多个异常都被报告（被抑制的异常链）
+    try {
+        throwTwo${PID}();
+    } catch Exception e {
+        string msg = e.what();
+        check(msg.length() > 7, "suppressed exception is reported");
+    }
+
+    print("regression test #${PID} completed\n");
+}

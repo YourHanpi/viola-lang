@@ -38,9 +38,23 @@ _OPERATOR_TYPES: set[str] = {
     "ADD", "SUB", "MUL", "MATMUL", "DIV", "MOD", "POW", "LSHIFT", "RSHIFT", "AND", "BIT_AND", "OR", "BIT_OR",
     "BIT_XOR", "NOT", "INVERT", "EQ", "NE", "LT", "GT", "LE", "GE"
 }
+
+# 保留字记号的类型（与lexer.py的keywords列表一一对应，均为keyword.upper()）：
+# 这些记号不能出现在标识符位置（见_raise_if_keyword与开发疑问记录196）
+_KEYWORD_TOKEN_TYPES: set[str] = {
+    "ABSTRACT", "AS", "ASYNC", "CATCH", "CLASS", "CNAME", "CPART", "ELIF", "ELSE", "ENUM",
+    "EXPORT", "EXTENDS", "FALSE", "FINAL", "FINALLY", "FN", "FROM", "IF", "IMPL", "IMPORT",
+    "INTERFACE", "PRIVATE", "PROTECTED", "PUBLIC", "RETURN", "SQ", "STATIC", "SUPER", "THIS",
+    "THROW", "TRUE", "TRY", "UNSAFE", "USING", "WRAPPER"
+}
 _EXPR_SPLITTERS: set[str] = {"COMMA", "L_BRACKET", "L_SQUARE_BRACKET", "L_CURLY_BRACKET", "QUESTION", "COLON"}
 
 _BLANK_TOKEN: Token = Token("", ["_BLANK"])
+
+# 模块文件存在性探测的结果缓存（键为（工作区，命名空间））：同一次编译中
+# 文件系统不变，而每个解析文件都要为每个点分链探测其模块前缀
+# （见_load_referenced_modules与开发疑问记录196）
+_MODULE_EXISTENCE_CACHE: dict[tuple[str, str], bool] = {}
 
 
 class GlobalParser:
@@ -67,6 +81,8 @@ class GlobalParser:
         # 由import引入的符号裸名集合（写入符号类型表时需过滤，避免
         # 把导入符号误当作本模块自身导出的符号）
         self._imported_names: set[str] = set()
+        # 已按完整点分路径加载的模块（不重复加载，见_load_referenced_modules）
+        self._imported_modules: set[str] = set()
         # 已由import语句加载的符号条目正文（内容相同即重复导入，见_load_symbol）
         self._loaded_entries: set[str] = set()
         self._parser_generic_table: ParserGenericTable = ParserGenericTable()
@@ -94,6 +110,7 @@ class GlobalParser:
         self._imports = {}
         self._import_module_paths.clear()
         self._imported_names.clear()
+        self._imported_modules.clear()
         self._loaded_entries.clear()
         self._load_tokens(tokens)
         self._move_to_first_token()
@@ -114,6 +131,13 @@ class GlobalParser:
         if len(self._tasks) > 0:
             self._tasks.insert(0, ["violac", "parse", self._src_info.path])
             return None
+        # 以完整点分路径引用、但未导入的模块按导入处理（见开发疑问记录196）
+        loaded_result = self._load_referenced_modules()
+        if loaded_result is None:
+            self._tasks.insert(0, ["violac", "parse", self._src_info.path])
+            return None
+        command += loaded_result[0]
+        symbol += loaded_result[1]
         while not self._match_type("_EOF"):
             result = self._parse_def()
             if result is None:
@@ -167,6 +191,7 @@ class GlobalParser:
         # 解析器实例在线程池中复用，防止上一次解析的记录残留
         self._import_module_paths.clear()
         self._imported_names.clear()
+        self._imported_modules.clear()
         if not self._set_file_lock(cache_file_path):
             # 该文件正在被其他线程解析，重新入队等待
             self._logger.debug("File is being parsed by another thread")
@@ -383,6 +408,86 @@ class GlobalParser:
                     if found:
                         break
                     parts = parts[:-1]
+
+    def _module_source_exists(self, namespace: str) -> bool:
+        """
+        判断命名空间是否对应一个存在的.vla模块文件（不报错、不建任务）。
+
+        用于识别以完整点分路径书写的模块引用（见开发疑问记录196原条目：
+        第195条新增疑问3）；与_find_import不同，未找到时不产生任何错误。
+        本方法对每个解析文件都会调用（识别完整点分路径的模块前缀），故结果
+        按（工作区，命名空间）缓存：同一次编译中文件系统不变。
+        :param namespace: 点分的命名空间。
+        :return: 模块文件是否存在。
+        """
+        cache_key: tuple[str, str] = (self._workspace, namespace)
+        cached: Optional[bool] = _MODULE_EXISTENCE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        root_paths: list[str] = [self._workspace]
+        if "VIOLA_HOME" in os.environ:
+            root_paths += os.environ["VIOLA_HOME"].split(";" if os.name == "nt" else ":")
+        module_rel: str = namespace.replace(".", os.sep) + ".vla"
+        result: bool = any(os.path.exists(os.path.join(root_path, module_rel)) for root_path in root_paths)
+        _MODULE_EXISTENCE_CACHE[cache_key] = result
+        return result
+
+    def __collect_dotted_chains(self) -> list[str]:
+        """
+        从记号流中收集全部点分标识符链（如viola.util.functools.map）。
+
+        链中可含泛型实参（如viola.util.array.Array::<int>）：泛型起始记号处结束链。
+        :return: 点分链的列表（按出现顺序）。
+        """
+        chains: list[str] = []
+        significant: list[Token] = GlobalParser._filter_blank(self._tokens)
+        index: int = 0
+        while index < len(significant):
+            if "IDENTIFIER" not in significant[index].type:
+                index += 1
+                continue
+            parts: list[str] = [significant[index].text]
+            cursor: int = index + 1
+            while cursor + 1 < len(significant) and "DOT" in significant[cursor].type \
+                    and "IDENTIFIER" in significant[cursor + 1].type:
+                parts.append(significant[cursor + 1].text)
+                cursor += 2
+            index = cursor
+            if len(parts) > 1:
+                chains.append(".".join(parts))
+        return chains
+
+    def _load_referenced_modules(self) -> Optional[tuple[list[str], list[str]]]:
+        """
+        把以完整点分路径引用、但未以import语句导入的模块按导入处理。
+
+        手册的模块使用方式为import/from...import，但`viola.util.functools.map(...)`
+        这类完整点分路径也应可解析（见开发疑问记录196）。此处扫描记号流，对每个
+        点分链取其最长的、确实存在于工作区或VIOLA_HOME中的模块前缀，按import语句
+        的方式加载（登记导入映射与符号表，并生成IMPORT定义与符号表条目）。
+        :return: 追加的命令与符号条目；需要先解析被引用模块时返回None。
+        """
+        command: list[str] = []
+        symbol: list[str] = []
+        for chain in self.__collect_dotted_chains():
+            parts: list[str] = chain.split(".")
+            for i in range(len(parts) - 1, 0, -1):
+                candidate: str = ".".join(parts[:i])
+                if candidate in self._imported_modules:
+                    break
+                if not self._module_source_exists(candidate):
+                    continue
+                self._load_symbol_type_list(candidate, candidate)
+                if len(self._tasks) > 0:
+                    return None
+                entries = self._load_symbol(candidate)
+                if entries is None:
+                    return None
+                self._imported_modules.add(candidate)
+                command += ["MAKE DEF IMPORT " + candidate, "CALL ADD_DEF"]
+                symbol += entries
+                break
+        return command, symbol
 
     def _find_import(self, namespace: str) -> Optional[tuple[str, str, str, str]]:
         """
@@ -872,6 +977,21 @@ class GlobalParser:
         """
         return token_type in self._get_current().type
 
+    def _raise_if_keyword(self) -> bool:
+        """
+        当前记号是关键字时，报出"关键字不能用作标识符"的明确错误。
+
+        标识符位置上的关键字若沿用通用的"Unexpected token"报错，用户（尤其是写成
+        函数类型声明、变量名恰好是fn/sq时）只能看到与真实原因无关的后续报错，如
+        "Please use auto type here."（见开发疑问记录196）。
+        :return: 当前记号是否为关键字（即是否已报错）。
+        """
+        keyword_types: set[str] = _KEYWORD_TOKEN_TYPES & set(self._get_current().type)
+        if len(keyword_types) == 0:
+            return False
+        self._raise(f"Keyword '{self._get_current().text}' can not be used as an identifier.")
+        return True
+
     def _match_types(self, types: list[str]) -> bool:
         """
         判断当前记号是否包含指定类型列表中的任一类型。
@@ -978,8 +1098,12 @@ class GlobalParser:
 
     @_set_loc_command
     def _parse_block_stmt(self, new_scope: bool) -> Optional[tuple[list[str], list[str]]]:
-        """解析块语句（花括号内的语句序列）。"""
-        command: list[str] = ["MAKE STMT BLOCK"]
+        """解析块语句（花括号内的语句序列）。
+
+        new_scope为真时本块在C层输出`do { ... } while(0);`，因而引入一个C作用域：
+        块内声明的变量在块外不可见，函数级统一释放不得引用它们（见开发疑问记录196）。
+        """
+        command: list[str] = ["MAKE STMT BLOCK_SCOPE" if new_scope else "MAKE STMT BLOCK"]
         symbol: list[str] = []
         if not self._match_type("L_CURLY_BRACKET"):
             self._raise("Unexpected token: " + self._get_current().text)
@@ -1370,8 +1494,10 @@ class GlobalParser:
         brace_count: int = 0
         while self._current < self._tokens_num and \
                 not (self._match_type("SEMICOLON") and brace_count == 0) and \
-                not (self._match_type("FN") and brace_count == 0) and \
-                not (self._match_type("SQ") and brace_count == 0):
+                not (self._match_type("FN") and brace_count == 0
+                     and self._starts_func_literal()) and \
+                not (self._match_type("SQ") and brace_count == 0
+                     and self._starts_func_literal()):
             if self._match_type("L_CURLY_BRACKET"):
                 brace_count += 1
             elif self._match_type("R_CURLY_BRACKET"):
@@ -1381,7 +1507,8 @@ class GlobalParser:
         if len(token_buffer) == 0:
             self._next()
             return ["MAKE STMT OP"], []
-        is_closure: bool = "FN" in self._get_current().type or "SQ" in self._get_current().type
+        is_closure: bool = ("FN" in self._get_current().type or "SQ" in self._get_current().type) \
+            and self._starts_func_literal()
         if is_closure:
             return self._parse_closure_stmt(token_buffer)
         self._back_to(start_pos)
@@ -2385,7 +2512,8 @@ class GlobalParser:
                     expect_comma = True
                     continue
                 if not self._match_type("IDENTIFIER"):
-                    self._raise("Unexpected token: " + self._get_current().text)
+                    if not self._raise_if_keyword():
+                        self._raise("Unexpected token: " + self._get_current().text)
                     return None
                 symbol.append(type_decl + "%" + self._get_current().text)
                 command.append(f"MAKE EXPR TYPE_REF {type_decl}")
@@ -2543,6 +2671,22 @@ class GlobalParser:
                 bracket_level -= 1
             elif bracket_level == 0 and ("UPDATE" in token.type or "ASSIGN" in token.type):
                 return "UPDATE" in token.type
+        return False
+
+    def _starts_func_literal(self) -> bool:
+        """
+        判断当前记号（fn/sq）是否是一个函数字面量的开头（auto 名 = sq(...) -> (...) {...}）。
+
+        紧跟其后的有效记号必须是左括号。变量名恰好写成fn/sq时（如
+        `(int) -> (int) fn = addOne;`），该记号位于名称位置而非值位置，其后是
+        赋值号，不能当作闭包声明处理（见开发疑问记录196）。
+        :return: 是否为函数字面量的开头。
+        """
+        pos: int = self._current + 1
+        while pos < self._tokens_num:
+            if self._tokens[pos].type[0] not in ("_COMMENT", "_BLANK"):
+                return "L_BRACKET" in self._tokens[pos].type
+            pos += 1
         return False
 
     @staticmethod

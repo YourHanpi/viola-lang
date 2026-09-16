@@ -783,8 +783,18 @@ string var44 = var0.replace("l", "L", 1); // 替换子串（count为0时替换�
 
 ### 值到字符串的转换（toString）
 
-基本数据类型（整型、浮点型、布尔与字符串）的值可以调用`toString`方法转换为
-字符串：
+基本数据类型（整型、浮点型、布尔与字符串）**不是类，没有方法表**，因而不支持
+方法调用。值到字符串的转换由`string`类上的静态转换函数提供：
+
+```viola
+import viola.lang.string;
+
+string a = string.fromInt(3);       // "3"
+string b = string.fromInt(255, 16); // "ff"（按base转换）
+string c = string.fromFloat(3.5);   // "3.5"
+```
+
+作为书写上的便利，基本类型的值也可以直接书写`toString`：
 
 ```viola
 string a = (1 + 2).toString();   // "3"
@@ -793,10 +803,12 @@ string c = true.toString();      // "true"
 string d = "text".toString();    // "text"（字符串返回自身）
 ```
 
-转换由`string`类上的静态转换函数实现（`_int32ToString`/`_float64ToString`等），
-编译器按接收者的类型自动选择，无需显式指定。浮点数的转换结果与`string.fromFloat`
-一致（最多15位有效数字、去除多余的尾零），布尔的转换结果为`true`/`false`
-（与字面量一致）。整型之间的差异按C的隐式转换处理（如`int8`按`int32`转换）。
+编译器按接收者的类型自动选择`string`上对应的静态转换函数
+（`_int32ToString`/`_float64ToString`等），不会为基本类型生成任何方法表或
+虚函数入口：这一形式只是上述静态转换函数的语法糖。浮点数的转换结果与
+`string.fromFloat`一致（最多15位有效数字、去除多余的尾零），布尔的转换结果为
+`true`/`false`（与字面量一致）。整型之间的差异按C的隐式转换处理（如`int8`按
+`int32`转换）。
 
 #### 类的toString约定
 
@@ -813,15 +825,19 @@ class Point {
 ```
 
 定义了`toString`的类，其对象调用`x.toString()`时执行该实现（子类继承父类的
-实现，也可以重写）。未定义`toString`（且未从父类继承到）的类使用默认转换，
-返回类名：
+实现，也可以重写；该方法是虚方法，按对象的实际类型分派）。未定义`toString`
+（且未从父类继承到）的类使用默认转换，返回`<类名@地址>`：
 
 ```viola
 class Plain { ... }
 
 Plain p = Plain();
-string s = p.toString();   // "main.Plain"（模块名.类名）
+string s = p.toString();   // "<main.Plain@0x7ff6a1b2c3d0>"（类名@对象地址）
 ```
+
+地址是对象指针的实际值，仅用于区分同一类的不同对象，不要在程序中依赖其具体
+形式（不同运行、不同编译器的取值不同）。类名取自对象的实际类型（运行期由对象
+的虚函数表给出）。
 
 ## 输入与输出
 

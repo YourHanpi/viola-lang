@@ -3669,6 +3669,16 @@ class CallOp(Expression):
             self._arg_list = [expr] + self._arg_list
         elif isinstance(expr, VariableRef):
             if isinstance(expr.var, FunctionName):
+                if expr.var.type.is_generic:
+                    # 泛型函数未给出类型实参：调用点解析到的是泛型模板本身，
+                    # 模板的函数体无法按具体类型生成C代码（其返回类型可能是
+                    # 泛型参数构成的数组、函数值等）。0.1不实现按实参类型推断
+                    # 泛型实参，此处报出明确错误（见开发疑问记录196，原条目为
+                    # 第195条新增疑问2）
+                    func_name: str = expr.var.raw_name.rsplit(".", 1)[-1].split("$_")[0]
+                    raise CompilerException(
+                        f"Generic function {func_name} requires explicit type arguments: write "
+                        f"{func_name}::<type, ...>(...).", self._src_info)
                 self._func = expr.var
             else:
                 # 闭包或函数类型变量：通过结构体func成员调用
@@ -5202,10 +5212,7 @@ class UpdateExpr(Expression):
         lines0: list[str] = list(map(lambda x: x[0].front_text, filter(lambda x: x[0] is not None, self._expr_list)))
         # 副本先于各更新项生成：下标/切片更新项（__setitem__）以副本为接收者
         # （原先副本在更新项之后生成，会把刚写入的修改覆盖掉，见开发疑问记录134）
-        new_src_lines: list[str] = [
-            f"{self._temp_name} = ({self._src_expr.return_type.c_calling_name})malloc(sizeof({self._src_expr.return_type.c_alloc_name}));",
-            f"memcpy({self._temp_name}, {src_value_text}, sizeof({self._src_expr.return_type.c_alloc_name}));"
-        ]
+        new_src_lines: list[str] = self._copy_lines(src_value_text)
         # 每条更新项的求值代码与其作用代码必须相邻：下标/切片更新项的作用是把
         # __setitem__返回的新对象串接回结果临时变量，若把所有更新项的求值代码
         # 集中在前，后一项的接收者仍是未串接的旧对象，前一项的修改会丢失
@@ -5226,11 +5233,49 @@ class UpdateExpr(Expression):
                 # 属性写入按属性类型转换：类类型属性接收子类值时补显式C转换
                 # （见开发疑问记录159）
                 attr_type: TypeName = x[0].caller.return_type.properties[x[0].attr].type
-                lines.append(
-                    f"{self._temp_name}->{x[0].attr} = {implicit_cast_text(x[1], attr_type)};")
+                attr_target: str = f"{self._temp_name}->{x[0].attr}"
+                lines.append(f"{attr_target} = {implicit_cast_text(x[1], attr_type)};")
+                # 对象成员须持有其值：与普通成员赋值（store_retain_text）同一约定，
+                # 否则实参/字面量的临时槽位释放后成员悬空（见开发疑问记录196）
+                if attr_type.is_object:
+                    lines.append(retain_text(attr_target))
             else:
                 lines.append(f"{self._temp_name} = {x[1].text};")
         return "\n".join(lines)
+
+    def _copy_lines(self, src_value_text: str) -> list[str]:
+        """获取复制源对象的C文本（对象更新运算符的副本）。
+
+        类类型的源逐成员复制：memcpy整块会把源对象的引用计数与成员指针一并复制
+        过来——副本的引用计数沿用源的值（从而在源仍被持有时提前归零），且成员
+        与源共享而未被计数，两者的析构函数会重复释放同一成员（实测堆破坏，
+        见开发疑问记录196）。
+
+        数组类型保持memcpy：其副本只作为__setitem__的接收者（该调用按元素类型
+        分配新数组并返回），副本自身不参与析构。判据是"编译器生成的结构体"——
+        只有这类类型才有$$vtable字段（ArrayTypeName派生自ClassName，不能只按
+        ClassName判断，否则数组副本的data/size不会被复制）。
+        """
+        type_name: TypeName = self._src_expr.return_type
+        if not isinstance(type_name, ClassName) or not type_name.has_vtable_property:
+            return [
+                f"{self._temp_name} = ({type_name.c_calling_name})malloc("
+                f"sizeof({type_name.c_alloc_name}));",
+                f"memcpy({self._temp_name}, {src_value_text}, sizeof({type_name.c_alloc_name}));"
+            ]
+        lines: list[str] = [
+            f"{self._temp_name} = ({type_name.c_calling_name})malloc(sizeof({type_name.c_alloc_name}));",
+            f"{self._temp_name}->$refCount = 1;",
+            f"{self._temp_name}->$parent = NULL;",
+        ]
+        for prop in type_name.ordered_properties:
+            member: str = prop.self_name
+            if member in ("$refCount", "$parent"):
+                continue
+            lines.append(f"{self._temp_name}->{member} = {src_value_text}->{member};")
+            if prop.type.is_object:
+                lines.append(retain_text(f"{self._temp_name}->{member}"))
+        return lines
 
     @property
     def global_init_text(self) -> Optional[str]:

@@ -158,7 +158,8 @@ class CompilerVM:
                 statement.FinallyStmt(self._src_info, self._symbol_table, self._var_state_table)),
             "TYPE_DEF": lambda cmd: self.__make(
                 statement.TypeDefStmt(self._src_info, self._symbol_table, self._var_state_table, cmd[0])),
-            "BLOCK": lambda cmd: self.__make_stmt_block()
+            "BLOCK": lambda cmd: self.__make_stmt_block(),
+            "BLOCK_SCOPE": lambda cmd: self.__make_stmt_block(True)
         }
         self._CALLER_DICT: dict[str, Callable[[list[str]], None]] = {
             "ADD_ARG": lambda cmd: self.__call_add_arg(cmd),
@@ -820,15 +821,21 @@ class CompilerVM:
         )
         return decl, arg_types
 
-    def __make_stmt_block(self) -> statement.BlockStmt:
-        """创建语句块（普通块或函数块）并添加新的作用域。"""
+    def __make_stmt_block(self, introduces_c_scope: bool = False) -> statement.BlockStmt:
+        """创建语句块（普通块或函数块）并添加新的作用域。
+
+        introduces_c_scope为真表示本块在C层输出`do { ... } while(0);`：块内声明的
+        变量在块外（含函数级统一释放处）不可见（见开发疑问记录196）。
+        """
         self._exec_mode_stack.append(self._exec_mode_stack[-1])
         self._scope_count_stack.append(_ScopeCount.INC)
         self._symbol_table.add_scope()
         self._var_state_table.add_scope()
         if self._exec_mode_stack[-1] == _ExecMode.FN:
-            return statement.FnBlockStmt(self._src_info, self._symbol_table, self._var_state_table)
-        return statement.BlockStmt(self._src_info, self._symbol_table, self._var_state_table)
+            return statement.FnBlockStmt(self._src_info, self._symbol_table, self._var_state_table,
+                                         introduces_c_scope)
+        return statement.BlockStmt(self._src_info, self._symbol_table, self._var_state_table,
+                                   introduces_c_scope)
 
     def __make_variable_ref(self, cmd: list[str]) -> expression.Expression:
         """创建变量引用表达式，根据作用域级别决定是全局变量还是局部变量。"""
