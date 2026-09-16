@@ -1327,7 +1327,15 @@ class AssignStmt(Statement):
             args: str = ", ".join(map(lambda a: a.text, self._var_value._arg_list))
             if args != "":
                 args += ", "
-            return f"{super_new_name}({args}({parent.c_calling_name}){THIS_OBJ_NAME}, listener);"
+            call_text: str = f"{super_new_name}({args}({parent.c_calling_name}){THIS_OBJ_NAME}, listener);"
+            # 实参自身的求值代码必须在此输出：本语句不走常规赋值路径，实参中
+            # 作为值使用的调用（如 super = P(a, sqrt(x)); 的sqrt）其返回值先落入
+            # 临时变量，若只取实参的text，临时变量只被声明而从未赋值，
+            # 父类构造收到的是未初始化的实参（见开发疑问记录196）
+            arg_front_text: Optional[str] = self._var_value.front_text
+            if arg_front_text is not None and arg_front_text.strip() != "":
+                return arg_front_text + "\n" + call_text
+            return call_text
         if self._var_value is None:
             return ""
         if len(self._var) == 1:

@@ -72,6 +72,48 @@ class Box${PID}::<T> {
     }
 }
 
+// 抽象类、抽象方法、父类构造调用（super = 父类名(...)）与经抽象基类的分派。
+// 父类构造调用的实参若含调用（如sqrt），其求值代码必须被输出，否则父类
+// 构造收到未初始化的实参（见开发疑问记录196）
+abstract class Shape${PID} {
+    public abstract fn area() -> (double result);
+    public abstract fn perimeter() -> (double result);
+}
+
+abstract class Tri${PID} extends Shape${PID} {
+    double a;
+    double b;
+    double c;
+
+    public fn perimeter() -> (double result) {
+        result = this.a + this.b + this.c;
+    }
+
+    public sq __new__(double a, double b, double c) -> (this) {
+        this.a = a;
+        this.b = b;
+        this.c = c;
+    }
+}
+
+class Right${PID} extends Tri${PID} {
+    public sq __new__(double a, double b) -> (this) {
+        super = Tri${PID}(a, b, viola.math.sqrt(a * a + b * b));
+    }
+
+    public fn area() -> (double result) {
+        result = 0.5 * this.a * this.b;
+    }
+}
+
+sq areaOf${PID}(Shape${PID} s) -> (double r) {
+    r = s.area();
+}
+
+sq perimeterOf${PID}(Shape${PID} s) -> (double r) {
+    r = s.perimeter();
+}
+
 sq describeBox${PID}(Box${PID}::<int> b) -> (string r) {
     r = b.get().toString();
 }
@@ -130,7 +172,12 @@ sq main() -> () {
     check(string.fromInt(255, 16) == "ff", "string.fromInt with base");
     check((1 + 2).toString() == "3", "basic type toString");
 
-    // 6. 同时出现的多个异常都被报告（被抑制的异常链）
+    // 6. 抽象基类分派与父类构造调用的实参求值
+    Right${PID} rt = Right${PID}(3.0, 4.0);
+    check(areaOf${PID}(rt) == 6.0, "abstract base dispatch");
+    check(perimeterOf${PID}(rt) == 12.0, "parent constructor argument is evaluated");
+
+    // 7. 同时出现的多个异常都被报告（被抑制的异常链）
     try {
         throwTwo${PID}();
     } catch Exception e {
