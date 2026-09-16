@@ -38,6 +38,9 @@ from utils.text_utils import renumber_marks as _renumber_marks
 from utils.text_utils import sanitize_c_identifier
 
 LISTENER_WAIT_FUNC = "viola$threads$waitListener"
+# 函数级清理标签（CleanupBlock与各生成器共用的固定名称）：return语句跳到此处，
+# 使函数级统一释放对带return的函数同样生效（见开发疑问记录196）
+FUNCTION_CLEANUP_LABEL: str = "$$cleanup"
 # 把"与正在传播的异常同时出现"的异常挂到其被抑制异常链上（实现于
 # viola_libs/viola/lang/exception.c，见开发疑问记录196）
 SUPPRESS_EXC_FUNC = "viola$lang$exception$suppress"
@@ -1639,7 +1642,11 @@ class ReturnStmt(Statement):
         finally_text: str = "\n".join(map(lambda finally_stmt: finally_stmt.text, self._finally_stmt_list))
         if finally_text != "":
             finally_text += "\n"
-        return finally_text + "return;"
+        # 跳到函数级清理标签而不是用C的return：函数级统一释放（CleanupBlock）就
+        # 输出在该标签处，用C的return会跳过它——只由函数级清理释放的变量（如作为
+        # 实参的调用结果临时变量）在带return的函数中不被释放（见开发疑问记录196）。
+        # 返回值经指针形参写入，与C的return等价。
+        return finally_text + f"goto {FUNCTION_CLEANUP_LABEL};"
 
 
 class ThrowStmt(Statement):
