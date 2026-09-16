@@ -787,12 +787,12 @@ string var44 = var0.replace("l", "L", 1); // 替换子串（count为0时替换�
 方法调用。值到字符串的转换由`string`类上的静态转换函数提供：
 
 ```viola
-import viola.lang.string;
-
 string a = string.fromInt(3);       // "3"
 string b = string.fromInt(255, 16); // "ff"（按base转换）
 string c = string.fromFloat(3.5);   // "3.5"
 ```
+
+`string`是编译器内置类型，其静态转换函数无需导入即可使用。
 
 作为书写上的便利，基本类型的值也可以直接书写`toString`：
 
