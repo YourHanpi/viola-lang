@@ -110,6 +110,40 @@ sq areaOf${PID}(Shape${PID} s) -> (double r) {
     r = s.area();
 }
 
+// 接口：声明、类impl接口、接口继承接口、经接口类型分派
+interface Named${PID} {
+    fn name() -> (string result);
+}
+
+interface HasArea${PID} extends Named${PID} {
+    public static uint32 KIND${PID} = 7;
+    fn area() -> (double result);
+}
+
+class Circle${PID} impl HasArea${PID} {
+    public double radius;
+
+    public sq __new__(double r) -> (this) {
+        this.radius = r;
+    }
+
+    public fn name() -> (string result) {
+        result = "circle${PID}";
+    }
+
+    public fn area() -> (double result) {
+        result = 3.0 * this.radius * this.radius;
+    }
+}
+
+sq nameOf${PID}(Named${PID} item) -> (string r) {
+    r = item.name();
+}
+
+sq areaOf2${PID}(HasArea${PID} item) -> (double r) {
+    r = item.area();
+}
+
 sq perimeterOf${PID}(Shape${PID} s) -> (double r) {
     r = s.perimeter();
 }
@@ -177,7 +211,13 @@ sq main() -> () {
     check(areaOf${PID}(rt) == 6.0, "abstract base dispatch");
     check(perimeterOf${PID}(rt) == 12.0, "parent constructor argument is evaluated");
 
-    // 7. 同时出现的多个异常都被报告（被抑制的异常链）
+    // 7. 接口：类型作变量/形参、经接口类型分派到实际类型
+    HasArea${PID} face = Circle${PID}(2.0);
+    check(nameOf${PID}(face) == "circle${PID}", "interface dispatch to the actual type");
+    check(areaOf2${PID}(face) == 12.0, "interface typed parameter");
+    check(HasArea${PID}.KIND${PID} == 7, "interface static property");
+
+    // 8. 同时出现的多个异常都被报告（被抑制的异常链）
     try {
         throwTwo${PID}();
     } catch Exception e {
