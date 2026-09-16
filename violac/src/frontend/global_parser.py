@@ -2611,6 +2611,14 @@ class GlobalParser:
             prefix: str = ".".join(id_list[:i])
             if prefix in self._imports:
                 return [self._imports[prefix]] + id_list[i:]
+        # 未匹配到任何前缀：若其中一段前缀确实是模块（完整点分路径写法），
+        # 则报出"模块中不存在该成员"的明确错误——否则该链会被当作逐级取属性，
+        # 报出与真实原因无关的"Type <首段> not found"（见开发疑问记录196）
+        for i in range(len(id_list) - 1, 0, -1):
+            prefix = ".".join(id_list[:i])
+            if self._module_source_exists(prefix):
+                self._raise(f"Module {prefix} has no member {'.'.join(id_list[i:])}.")
+                return id_list
         return id_list
 
     def __get_segments_num(self, token_buffer: list[Token]) -> Optional[int]:

@@ -1,0 +1,8 @@
+// 完整点分路径的模块成员不存在时报明确错误（见开发疑问记录196）：
+// 期望报错：Module viola.math has no member abs.
+from viola.io import *;
+import viola.math;
+
+sq main() -> () {
+    print(viola.math.abs(-3).toString() + "\n");
+}

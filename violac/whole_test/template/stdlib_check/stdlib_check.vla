@@ -1,0 +1,57 @@
+from viola.io import *;
+// Viola 0.1 标准库抽查模板：字符串/数组方法、functools、math、os.path
+// 以及完整点分模块路径（viola.math.fabs / viola.os.path.*，本文件不导入后者）
+import viola.os;
+from viola.os import exit;
+import viola.math;
+import viola.util.control_flow;
+import viola.util.functools;
+
+sq check(bool c, string label) -> () {
+    if (c) { print("ok " + label + "\n"); }
+    else { print("FAILED " + label + "\n"); exit(1); }
+}
+
+fn twice(int x) -> (int r) {
+    r = x * 2;
+}
+
+fn isSmall(int x) -> (bool r) {
+    r = x < 3;
+}
+
+sq main() -> () {
+    // 字符串
+    string s = "Hello, World";
+    check(s.length() == 12, "string.length");
+    check(s.upper() == "HELLO, WORLD", "string.upper");
+    check(s.lower() == "hello, world", "string.lower");
+    check(s.split(", ").length() == 2, "string.split");
+    check(s.find("World") == 7, "string.find");
+    check("  pad  ".strip() == "pad", "string.strip");
+    check(s[0:5] == "Hello", "string slice");
+    check("a-b-c".replace("-", "+") == "a+b+c", "string.replace");
+    check(s.startswith("Hello"), "string.startswith");
+    check("42".int() == 42, "string.int");
+    check("3.5".float() == 3.5, "string.float");
+    check("abc".isalpha() && "ab1".isalnum(), "string.isalpha/isalnum");
+    // 数组
+    int[] a = [3, 1, 2];
+    check(a.length() == 3, "array.length");
+    check(a.append(4).length() == 4, "array.append");
+    check(a.insert(0, 9)[0] == 9, "array.insert");
+    check(a.concat([7]).length() == 4, "array.concat");
+    check(a[1:] .length() == 2, "array slice");
+    check(a[0] == 3 && a[2] == 2, "array indexing");
+    // control_flow / functools
+    int[] doubled = viola.util.functools.map::<int, int>(a, twice, false);
+    check(doubled.length() == 3 && doubled[0] == 6, "functools.map");
+    int[] kept = viola.util.functools.filter::<int>(a, isSmall, false);
+    check(kept.length() >= 1, "functools.filter");
+    // math
+    check(viola.math.fabs(-3.0) == 3, "math.abs");
+    // os.path
+    check(viola.os.path.basename("/a/b.txt") == "b.txt", "os.path.basename");
+    check(viola.os.path.join(["a", "b"]).length() >= 3, "os.path.join");
+    print("stdlib spot check completed\n");
+}
