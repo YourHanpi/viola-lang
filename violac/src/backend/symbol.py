@@ -1156,11 +1156,6 @@ class ClassName(TypeName):
         )
         result: ClassName = ClassName(self._src_info, [], new_name, self._parent,
                                       self._is_abstract, False, None)
-        # 保留模板声明的接口（含继承自父类的）：接口的多态与虚方法分派同样适用于
-        # 泛型实例（见开发疑问记录196）。构造函数的接口参数按声明顺序传入，故此处
-        # 以模板的接口列表为准（模板侧的接口在泛型实参上仍是占位类型，实例化后
-        # 才具体化，故_instance的接口表在实例化时另行生成）
-        result._interfaces = list(self._interfaces)
         # 将原类自身加入替换字典，使方法中 this 的类型指向新的实例化类
         generic_dict[GenericArgument(self._src_info, self.name)] = result
         if on_shell is not None:
@@ -1346,11 +1341,15 @@ class ClassName(TypeName):
         不缓存结果：泛型实例化先登记空壳、再填充成员（见开发疑问记录102），
         缓存会在成员填充之前形成错误（偏少）的槽位表。
 
-        泛型实例同样参与虚方法分派（见开发疑问记录196，原条目为第183条的
-        "请生成TypeInfo"）：实例化时方法名按实例的C名前缀重写（见
-        instantiation_full），虚函数表的条目与调用点因而一致（见开发疑问
-        记录170(b)）。
+        泛型实例不参与虚方法分派（见开发疑问记录196的复核结论）：仅放开本
+        属性并不够——跨模块的泛型实例（如viola.util.array的Array::<int>）其
+        TypeInfo从未被初始化（$vfunc/$name/$del均为NULL，定义该实例的模块的
+        __global__中没有任何对它的赋值），放开后调用点会经$vtable->vfunc
+        分派到NULL而崩溃。原先的说明（待虚函数表对泛型实例就绪后再放开）仍然
+        成立。
         """
+        if self.is_generic_instance:
+            return []
         slots: list[tuple[str, tuple[str, ...]]] = []
         if self._parent is not None:
             slots.extend(self._parent.virtual_slots)
