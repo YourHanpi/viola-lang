@@ -571,6 +571,8 @@ class DeclStmt(Statement):
         else:
             # 丢弃变量的C名称需要唯一，避免同一作用域内多次声明冲突
             var.rename("$_discard$" + str(self._symbol_table.get_counter()))
+            # 标记为丢弃变量：其值无人读取，不参与释放逻辑（见VariableName.is_discard）
+            var._is_discard = True
 
     def as_async(self) -> "Statement":
         for var in self._var:
@@ -982,6 +984,7 @@ class AssignStmt(Statement):
                 "$_discard$" + str(self._symbol_table.get_counter()),
                 AutoTypeName(self._src_info)
             )
+            discard_var._is_discard = True
             self._var.append(discard_var)
             self._discard_vars.add(discard_var)
             return
@@ -1107,6 +1110,11 @@ class AssignStmt(Statement):
                     var.type.set_real_type(TupleTypeName(self._src_info, expr_type.types[i:]))
             else:
                 var.type.set_real_type(expr_type)
+
+    @property
+    def discard_variables(self) -> set[VariableName]:
+        """获取本语句的丢弃变量（赋值目标为`_`，C名形如`$_discard$<n>`）。"""
+        return self._discard_vars
 
     @property
     def head_text(self) -> Optional[str]:
@@ -2871,8 +2879,10 @@ class BlockStmt(Statement):
         null_stmt = CStmt(src_info, self._symbol_table, self._var_states)
         null_stmt.remove_jump_mark()
         null_stmt.remove_mark()
-        null_stmt.add_text(f"\t{var} = NULL;")
-        release_guard: str = f"if ({var} && {REFCOUNT_DEC_FUNC}(&{var}->$refCount) == 0) {{"
+        # 文本中一律使用变量的C名（var.name）：改写过的变量（内联重命名、
+        # 丢弃变量等）其源码名与C名不同，按源码名输出会引用到未声明的变量
+        null_stmt.add_text(f"\t{var.name} = NULL;")
+        release_guard: str = f"if ({var.name} && {REFCOUNT_DEC_FUNC}(&{var.name}->$refCount) == 0) {{"
         begin_guard_stmt = CStmt(src_info, self._symbol_table, self._var_states)
         begin_guard_stmt.remove_jump_mark()
         begin_guard_stmt.remove_mark()
@@ -2942,6 +2952,10 @@ class BlockStmt(Statement):
             # 它们的释放由该嵌套块自身的本段逻辑生成。
             if isinstance(stmt, DeclStmt):
                 for var in sorted(stmt.declared_variables, key=lambda v: v.name):
+                    if var.is_discard:
+                        # 丢弃变量（`_`）：其C名与源码名不同（`$_discard$<n>`）、
+                        # 由语句自身声明，其值由返回元组或被调方处理，不在此释放
+                        continue
                     if var in all_used_variables or var not in self._inner_variables:
                         # 被读取过（由上面的"最后一次使用"处理），或并非本块
                         # 声明的变量

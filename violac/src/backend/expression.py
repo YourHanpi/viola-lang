@@ -156,19 +156,10 @@ class Expression(CompilingItem, ABC):
 
         仅异步调用（CallOp）需要：其返回值由工作线程写入调用方分配的返回
         元组，没有返回值目标时入队的rets为NULL。其余表达式无此问题。
+        丢弃目标所持有的对象无需单独的释放代码：它由返回元组持有，等待之后
+        随返回元组的释放一并销毁（见开发疑问记录192）。
         """
         pass
-
-    @property
-    def discard_release_text(self) -> Optional[str]:
-        """获取丢弃用返回值目标（见set_discard_returns）的释放代码。
-
-        0.1起返回值对象由异步调用的返回元组持有（见开发疑问记录192），等待之后
-        随返回元组的释放一并销毁（见CallOp.deferred_release_text），故不再需要
-        单独的释放代码：原先在此逐个取回并释放，而返回元组随后也会释放同一对象，
-        会重复释放。
-        """
-        return None
 
     @property
     def deferred_release_text(self) -> Optional[str]:

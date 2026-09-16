@@ -653,6 +653,15 @@ class VariableName(NamedSymbol):
         return getattr(self, "_is_member", False)
 
     @property
+    def is_discard(self) -> bool:
+        """该变量是否为丢弃变量（赋值目标为`_`，C名形如`$_discard$<n>`）。
+
+        丢弃变量的C名与源码名不同（源码名为`_`），其值无人读取、由返回元组或
+        被调方处理，故既不参与常量折叠也不参与释放逻辑。
+        """
+        return getattr(self, "_is_discard", False)
+
+    @property
     def free_text(self) -> str:
         """
         获取这一变量的释放文本。
