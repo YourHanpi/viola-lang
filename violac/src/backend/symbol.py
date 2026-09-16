@@ -25,6 +25,10 @@ LISTENER_INIT_FUNC: str = "viola$threads$initListener"
 EXCEPTION_T: str = "viola$lang$exception$Exception"
 EXCEPTION_T_NAME: str = "viola$lang$exception$Exception"
 TUPLE_T: str = "viola$collections$Tuple"
+# 元组结构体的析构函数指针成员（位于size之后、元素成员之前）：由分配处写入该
+# 元组类型按元素类型单态化的析构函数，释放时代码只调用TUPLE_T$__del__转发
+# （见destructor_name与开发疑问记录192）
+TUPLE_DEL_FIELD_T: str = f"void (*$del)(void *_this, {LISTENER_T} *listener);"
 # 数组方法的$async包装（见array_type_impl_texts）所用的运行库符号：
 # 与definition.py/expression.py/statement.py中的同名常量一致，因模块依赖方向
 # （definition/statement引用symbol）无法跨模块引用，故在此重复声明
@@ -61,7 +65,10 @@ def destructor_name(var_type: TypeName) -> str:
     按类型实际注册的析构方法取名，避免与定义不一致（见开发疑问记录102）。
     """
     if isinstance(var_type, TupleTypeName):
-        # 所有元组类型共享同一C名称的析构函数
+        # 元组一律经运行库的固定名字转发到具体类型的析构函数（该函数由元组的
+        # $del成员指出，见TupleTypeName.c_typedef_text）：按元素类型单态化的
+        # 析构函数名含元素类型名，而释放代码的文本可能在泛型函数体中提前渲染
+        # （彼时类型还是占位符，如Tuple$U，见开发疑问记录192）
         return f"{TUPLE_T}$__del__"
     if isinstance(var_type, ArrayTypeName):
         # 数组的C名称使用$$array形式
@@ -72,6 +79,26 @@ def destructor_name(var_type: TypeName) -> str:
         if del_method is not None:
             return del_method.name
     return f"{var_type.name}$__del__$_0"
+
+
+def tuple_del_name(tuple_c_name: str) -> str:
+    """获取元组类型按元素类型单态化的析构函数的C名（由分配处写入元组的$del）。"""
+    return f"{tuple_c_name}$__del__$_0"
+
+
+def tuple_del_decl_text(tuple_c_name: str) -> str:
+    """获取元组类型析构函数的声明文本（与元组结构体一同输出到模块头文件）。
+
+    首形参为void *：所有元组析构共用同一函数指针类型，分配处写入$del时无需
+    强制转换（见TupleTypeName.c_typedef_text）。
+    """
+    return f"void {tuple_del_name(tuple_c_name)}(void *_this, " \
+           f"{LISTENER_T} *listener);"
+
+
+def tuple_del_assign_text(tuple_text: str, tuple_type: TypeName) -> str:
+    """获取把元组的$del指向其具体类型析构函数的赋值文本（在元组分配处输出）。"""
+    return f"{tuple_text}->$del = {tuple_del_name(tuple_type.c_alloc_name)};"
 
 
 def release_text(var_text: str, free_stmts: str) -> str:
@@ -614,6 +641,16 @@ class VariableName(NamedSymbol):
         """
         return getattr(self, "is_unsafe", False) or \
             (isinstance(self._type, ClassName) and self._type.is_unsafe)
+
+    @property
+    def is_member(self) -> bool:
+        """该变量是否表示对象成员（`this.X = ...`形式的赋值目标，C名为`_thisObj->X`）。
+
+        成员赋值不参与常量折叠：本块内对该成员的读取虽可由常量表替代，但对象
+        可能在本块之外被读取（如构造函数把对象交给调用方、对象存入成员或数组），
+        折叠掉赋值语句会使这些读取得到未初始化的值（见开发疑问记录193）。
+        """
+        return getattr(self, "_is_member", False)
 
     @property
     def free_text(self) -> str:
@@ -2152,6 +2189,10 @@ class TupleTypeName(ClassName):
         """获取元组结构体的typedef文本（用于生成到模块头文件中）。
 
         第n个元素的字段名为$n：类类型为T *$n，基本类型为T $n。
+        $del（析构函数指针，位于成员之前）由分配处写入本类型按元素类型单态化的
+        析构函数；释放元组的代码只调用运行库的固定名字转发（见destructor_name），
+        故释放代码的文本不含元素类型名（见开发疑问记录192）。析构函数的声明
+        一并输出（实现位于__main__.c），供分配处与运行库之外的调用方使用。
         """
         members: str = "\n".join(list(map(
             lambda i, t: f"\t{t.c_calling_name} ${i};", range(len(self._type_args)), self._type_args
@@ -2165,8 +2206,10 @@ class TupleTypeName(ClassName):
             "\tviola$lang$atomic_uint32 $refCount;",
             "\tviola$lang$ptr $parent;",
             "\tviola$lang$uint64 size;",
+            f"\t{TUPLE_DEL_FIELD_T}",
             members,
             f"}} {self.name};",
+            tuple_del_decl_text(self.name),
             "#endif"
         ])
 
@@ -2182,7 +2225,7 @@ class TupleTypeName(ClassName):
         return False
 
     def has_method(self, name: str) -> bool:
-        """所有元组类型共享同一C名称的析构方法，由运行库提供。"""
+        """元组的析构方法由编译器按元素类型生成（单态化，见开发疑问记录192）。"""
         if name == "__del__":
             return True
         return super().has_method(name)
@@ -2192,10 +2235,10 @@ class TupleTypeName(ClassName):
 
     @property
     def methods(self) -> dict[tuple[str, tuple[TypeName, ...]], "MethodName"]:
-        """获取方法表。元组的__del__方法为惰性共享的原生方法。"""
+        """获取方法表。元组的__del__方法为按元素类型生成的析构（单态化）。"""
         result: dict[tuple[str, tuple[TypeName, ...]], MethodName] = dict(self._methods)
         if "__del__" not in map(lambda x: x[0], result.keys()):
-            result[("__del__", ())] = _get_tuple_del_method(self._src_info)
+            result[("__del__", ())] = _get_tuple_del_method(self)
         return result
 
     @property
@@ -3276,20 +3319,28 @@ object_destructor: MethodName = MethodName(
     True
 )
 
-# 所有元组类型共享的原生析构方法（惰性创建，避免与类型定义的循环依赖）
-_TUPLE_DEL_METHOD: Optional[MethodName] = None
+# 元组类型各自的析构方法（按C类型名缓存，惰性创建，避免与类型定义的循环依赖）
+_TUPLE_DEL_METHODS: dict[str, MethodName] = {}
 
 
-def _get_tuple_del_method(src_info: SourceInfo) -> MethodName:
-    """获取（必要时创建）元组共享的原生析构方法。C名称为viola$collections$Tuple$__del__。"""
-    global _TUPLE_DEL_METHOD
-    if _TUPLE_DEL_METHOD is None:
-        shared_cls: ClassName = ClassName(src_info, VIOLA_COLLECTIONS, "Tuple", None, False, False)
-        _TUPLE_DEL_METHOD = MethodName(
-            src_info, shared_cls, "__del__", FunctionTypeName(src_info, [], []), False,
-            False, [], [], Modifier.PRIVATE, True, True
-        )
-    return _TUPLE_DEL_METHOD
+def _get_tuple_del_method(tuple_type: "TupleTypeName") -> MethodName:
+    """获取（必要时创建）某个元组类型的析构方法。
+
+    元组按元素类型单态化（见开发疑问记录192）：方法所在类以元组的C类型名为名，
+    故C名称为`<元组C名>$__del__$_0`，实现由编译器按元素类型生成。
+    """
+    cached: Optional[MethodName] = _TUPLE_DEL_METHODS.get(tuple_type.name)
+    if cached is not None:
+        return cached
+    src_info: SourceInfo = tuple_type.src_info
+    c_cls: ClassName = ClassName(src_info, [], tuple_type.name, None, False, False)
+    # 方法名以__del__$_0给出（重载序号由注册顺序决定，此处只有这一个析构）
+    method: MethodName = MethodName(
+        src_info, c_cls, "__del__$_0", FunctionTypeName(src_info, [], []), False,
+        False, [], [], Modifier.PRIVATE, True, True
+    )
+    _TUPLE_DEL_METHODS[tuple_type.name] = method
+    return method
 
 
 Object.add_property(VIOLA_INIT, "$refCount", UINT32, Modifier.PRIVATE, False)
@@ -4435,8 +4486,8 @@ class SymbolTable:
     def _tuple_typedef_text(name: str, member_c_types: list[str]) -> str:
         """获取元组结构体的typedef文本（不构造元组对象，避免注册新类型）。
 
-        与TupleTypeName.c_typedef_text一致（含include guard），保证两处生成的
-        文本同名时互相兼容。
+        与TupleTypeName.c_typedef_text一致（含include guard与析构函数声明），
+        保证两处生成的文本同名时互相兼容。
         """
         members: str = "\n".join(
             f"\t{c_type} ${i};" for i, c_type in enumerate(member_c_types))
@@ -4449,10 +4500,63 @@ class SymbolTable:
             "\tviola$lang$atomic_uint32 $refCount;",
             "\tviola$lang$ptr $parent;",
             "\tviola$lang$uint64 size;",
+            f"\t{TUPLE_DEL_FIELD_T}",
             members,
             f"}} {name};",
+            tuple_del_decl_text(name),
             "#endif"
         ])
+
+    @staticmethod
+    def _tuple_elem_release_text(tuple_name: str, index: int, member: TypeName) -> str:
+        """获取元组析构中释放一个对象成员的C文本（成员非对象类型时为空）。
+
+        元组持有其元素（元素存入时retain，见TupleRef.front_text），析构时逐个
+        递减并调用元素自身的析构函数（与数组同一做法，见开发疑问记录190、192）。
+        计数按"$refCount位于对象首字段（偏移0）"直接取址，不按成员名访问：
+        元素类型可能是只有前向声明的类。
+        """
+        if not member.is_object:
+            return ""
+        member_text: str = f"_this->${index}"
+        return "\n".join([
+            f"\t\t\tif ({member_text} && {REFCOUNT_DEC_FUNC}("
+            f"(viola$lang$atomic_uint32 *)(void *)({member_text})) == 0) {{",
+            f"\t\t\t\t{destructor_name(member)}({member_text}, listener);",
+            "\t\t\t}",
+        ])
+
+    @classmethod
+    def tuple_type_impl_texts(cls) -> list[str]:
+        """获取所有已注册元组类型的析构函数实现文本（生成到唯一编译单元__main__.c中）。
+
+        元组按元素类型单态化（见开发疑问记录192）：每个元组类型有自己的析构函数，
+        逐个释放其持有的对象成员后回收结构体。按类型名排序，避免输出随并行编译的
+        线程交错变化（见开发疑问记录117）。
+        """
+        results: list[str] = []
+        for name in sorted(_TUPLE_TYPE_DEFS.keys()):
+            tuple_type: TupleTypeName = _TUPLE_TYPE_DEFS[name]
+            members: list[str] = list(filter(
+                lambda x: x != "",
+                (cls._tuple_elem_release_text(name, i, t)
+                 for i, t in enumerate(tuple_type.types))))
+            results.append("\n".join([
+                # 首形参为void *：元组的$del成员与运行库的转发函数共用同一
+                # 函数指针类型，分配处写入时无需强制转换（见tuple_del_decl_text）
+                f"void {tuple_del_name(name)}(void *$$this, {LISTENER_T} *listener) {{",
+                f"\t{name} *_this = ({name} *)$$this;",
+                # 调用方已递减至0（见开发疑问记录190），此处释放成员后回收元组
+                "\tif (_this == NULL) { return; }",
+                "\tif (_this->$refCount == 0) {",
+                "\t\tif (_this->$parent) { ((viola$lang$uint32 *)_this->$parent)[0]--; }",
+                "\t\telse {",
+                *members,
+                "\t\t\tfree(_this); _this = NULL;",
+                "\t\t}",
+                "\t}",
+                "}"]))
+        return results
 
     @classmethod
     def array_type_impl_texts(cls) -> list[str]:

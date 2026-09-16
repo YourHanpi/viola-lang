@@ -53,6 +53,41 @@ sq nameOf(${CLASS_NAME} x) -> (string result) {
     result = x.name;
 }
 
+// 析构时向日志追加一个字符的wrapper类：用于观察对象是否被释放
+// （元组持有对象成员、未使用变量的尽早释放，见开发疑问记录192）
+wrapper class ReleaseTicker {
+    unsafe uint32 marker;
+
+    public sq __new__() -> (this) {
+        this.marker = 1;
+    }
+
+    public sq __del__() -> () {
+        file log = open("refcount_ticker.log", "a", "utf-8");
+        write(log, "x");
+        del(super);
+    }
+}
+
+fn makeTicker() -> (ReleaseTicker result) {
+    result = ReleaseTicker();
+}
+
+fn tickerValue(ReleaseTicker t) -> (int result) {
+    result = 1;
+}
+
+// 构造函数中赋常量值的成员：常量折叠不得删除该赋值语句
+// （原先`this.seed = 123;`被折叠掉，构造出的对象成员保持未初始化，
+// 见开发疑问记录193）
+class ConstHolder {
+    public int seed;
+
+    public sq __new__() -> (this) {
+        this.seed = 123;
+    }
+}
+
 // 返回新建对象
 sq make(string n, int w) -> (${CLASS_NAME} result) {
     result = ${CLASS_NAME}(n, w);
@@ -116,6 +151,104 @@ sq chain(${CLASS_NAME} x, int depth) -> (int result) {
     result = chain(y, depth - 1) + h.held.weight;
 }
 
+// 异步调用的实参元组持有对象实参：调用方的局部变量在等待之前已无使用而释放，
+// 任务期间对象必须保持有效（未持有则会读到已释放的对象，见开发疑问记录191、192）
+sq asyncArgLifetime(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    ${CLASS_NAME} local = ${CLASS_NAME}("${STRING_A}", round);
+    async string read = nameOf(local);
+    int same = read == "${STRING_A}" ? 1 : 0;
+    result = asyncArgLifetime(rounds, next) + (1 - same);
+}
+
+// 返回元组持有被返回的对象：等待之后由调用方槽位接手，元组的释放不得
+// 使返回值失效（见开发疑问记录192）
+sq asyncReturnLifetime(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    async string read = nameOf(make("${STRING_B}", round));
+    int same = read == "${STRING_B}" ? 1 : 0;
+    result = asyncReturnLifetime(rounds, next) + (1 - same);
+}
+
+// 括号中的条件表达式后接二元运算：括号之后的运算不得被丢弃
+// （括号是表达式的首个记号时，条件扫描曾把括号内的`?`当作顶层`?`，
+// 使`+ 4`之后的部分不产生任何命令而被静默丢弃，见开发疑问记录193）
+sq ternaryArithmetic(int seed) -> (int result) {
+    int[] nums = [7, 8, 9];
+    int sum1 = (seed >= 0 ? 2 : 3) + 4;
+    int sum2 = (seed >= 0 ? 2 : 3) + (seed >= 0 ? 5 : 6);
+    int sum3 = 4 + (seed >= 0 ? 2 : 3);
+    int product = (seed >= 0 ? 2 : 3) * 5;
+    int arraySum = (seed >= 0 ? 1 : 0) + nums[0];
+    int ok = (sum1 == 6 ? 1 : 0) + (sum2 == 7 ? 1 : 0) + (sum3 == 6 ? 1 : 0)
+             + (product == 10 ? 1 : 0) + (arraySum == 8 ? 1 : 0);
+    result = ok;
+}
+
+// 异步调用的实参元组/返回元组持有的对象：任务结束后必须释放
+// （包装体原先对实参/返回元组成员计数却不释放，对象因此永不回收，
+// 见开发疑问记录193）
+sq asyncArgTickRelease(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    ReleaseTicker tick = ReleaseTicker();
+    async int got = tickerValue(tick);
+    int bad = got == 1 ? 0 : 1;
+    result = asyncArgTickRelease(rounds, next) - bad;
+}
+
+sq asyncReturnTickRelease(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    async ReleaseTicker made = makeTicker();
+    int marker = made.marker;
+    int bad = marker == 1 ? 0 : 1;
+    result = asyncReturnTickRelease(rounds, next) - bad;
+}
+
+// 嵌套块内声明后从未被读取的对象：应在声明处之后立即释放（见开发疑问记录192）
+sq unusedNestedRelease(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = round;
+        return;
+    }
+    int next = round + 1;
+    int inner = unusedNestedRelease(rounds, next);
+    if (round >= 0) {
+        ReleaseTicker unusedTick = ReleaseTicker();
+    }
+    result = inner;
+}
+
+// 异步声明且从未被读取的变量：其值在等待之后写入，故在等待之后释放
+sq asyncUnusedRelease(int rounds, int round) -> (int result) {
+    if (round >= rounds) {
+        result = round;
+        return;
+    }
+    int next = round + 1;
+    int inner = asyncUnusedRelease(rounds, next);
+    if (round >= 0) {
+        async string unusedText = nameOf(make("${STRING_C}", round));
+        async ReleaseTicker unusedTick = makeTicker();
+    }
+    result = inner;
+}
+
 sq main() -> () {
     // 1. 别名：两个局部变量各持一次引用
     ${CLASS_NAME} ${OBJ_A} = ${CLASS_NAME}("${STRING_A}", ${WEIGHT_A});
@@ -169,6 +302,38 @@ sq main() -> () {
     // 9. 对象在多个持有者之间流转后全部释放
     int chainOk = chain(${OBJ_A}, ${CHAIN_DEPTH});
     check(chainOk == ${WEIGHT_A} * ${CHAIN_DEPTH} + ${WEIGHT_A}, "objects released after the chain");
+
+    // 10. 元组持有对象：异步调用的实参元组与返回元组在等待期间保持对象有效
+    int asyncArgOk = asyncArgLifetime(30, 0);
+    check(asyncArgOk == 0, "async argument tuple keeps the object alive");
+    int asyncRetOk = asyncReturnLifetime(30, 0);
+    check(asyncRetOk == 0, "async return tuple keeps the object alive");
+
+    // 11. 声明后从未使用的对象尽早释放：其析构各向日志追加一个字符
+    file tickTruncate = open("refcount_ticker.log", "w", "utf-8");
+    write(tickTruncate, "");
+    int unusedOk = unusedNestedRelease(30, 0);
+    int asyncUnusedOk = asyncUnusedRelease(30, 0);
+    file tickLog = open("refcount_ticker.log", "r", "utf-8");
+    string ticks = read(tickLog);
+    check(unusedOk == 30 && asyncUnusedOk == 30 && ticks.length() >= 60,
+          "unused objects released early");
+
+    // 12. 括号中的条件表达式后接二元运算（见开发疑问记录193）
+    int ternaryOk = ternaryArithmetic(${WEIGHT_A});
+    check(ternaryOk == 5, "parenthesized ternary followed by an operator");
+
+    // 13. 构造函数中的常量成员赋值必须真正写入（见开发疑问记录193）
+    ConstHolder holder = ConstHolder();
+    check(holder.seed == 123, "constant member assignment in constructor");
+
+    // 14. 异步实参/返回元组持有的对象在任务结束后释放（见开发疑问记录193）
+    int tickArgOk = asyncArgTickRelease(30, 0);
+    int tickRetOk = asyncReturnTickRelease(30, 0);
+    file tickLog2 = open("refcount_ticker.log", "r", "utf-8");
+    string ticks2 = read(tickLog2);
+    check(tickArgOk == 0 && tickRetOk == 0 && ticks2.length() >= 120,
+          "objects held by async tuples released");
 
     print("0.1 reference counting test completed\n");
 }

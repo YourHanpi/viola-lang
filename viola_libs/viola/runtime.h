@@ -250,15 +250,22 @@ typedef struct viola$lang$function$Function {
     viola$lang$string$$array *argNames;
 } viola$lang$function$Function;
 
-/* ================= 元组（共享析构） ================= */
-/* 具体的元组结构体由编译器按元素类型生成（成员为$0、$1等）；
-   此处定义无元素的通用元组结构体前缀。 */
+/* ================= 元组 ================= */
+/* 具体的元组结构体由编译器按元素类型生成（成员为$0、$1等，析构函数按元素类型
+   单态化，见开发疑问记录192）；此处定义所有元组共有的前缀，顺序为
+   $refCount、$parent、size、$del。
+   $del指向该元组具体类型的析构函数（元素类型为对象时需逐个释放成员，故析构
+   必须按类型单态化），由编译器在元组的分配处写入。释放元组的代码一律调用
+   固定名字的viola$collections$Tuple$__del__转发：这样释放代码的文本不含元素
+   类型名，可以在泛型函数体（彼时类型仍是占位符，如Tuple$U）中提前渲染而不会
+   引用到不存在的符号（泛型体的释放代码在语句加入块时渲染、实例化后复用）。 */
+typedef struct viola$threads$Listener viola$threads$Listener;
 typedef struct viola$collections$Tuple {
     viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
     viola$lang$uint64 size;
+    void (*$del)(void *_this, viola$threads$Listener *listener);
 } viola$collections$Tuple;
-typedef struct viola$threads$Listener viola$threads$Listener;
 void viola$collections$Tuple$__del__(void *_this, viola$threads$Listener *listener);
 
 /* object类型的析构。编译器为object注册了__del__（见symbol.py的Object.add_method），

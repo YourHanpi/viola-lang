@@ -39,6 +39,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$float64  $0;
 
 } viola$collections$Tuple$viola$lang$float64;
@@ -50,6 +51,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$float64  $0;
 	viola$lang$float64  $1;
 
@@ -62,6 +64,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$uint32  $0;
 
 } viola$collections$Tuple$viola$lang$uint32;
@@ -73,6 +76,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$uint64  $0;
 
 } viola$collections$Tuple$viola$lang$uint64;
@@ -84,6 +88,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$float64  $0;
 	viola$lang$int32  $1;
 
@@ -96,6 +101,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$int64  $0;
 	viola$lang$int64  $1;
 
@@ -108,6 +114,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$int64  $0;
 
 } viola$collections$Tuple$viola$lang$int64;
@@ -119,6 +126,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$uint32  $0;
 	viola$lang$uint32  $1;
 
@@ -131,6 +139,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$float64$$array *  $0;
 
 } viola$collections$Tuple$viola$lang$float64$$array;
@@ -142,6 +151,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$float64$$array *  $0;
 	viola$lang$float64$$array *  $1;
 
@@ -154,6 +164,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$bool  $0;
 
 } viola$collections$Tuple$viola$lang$bool;
@@ -165,6 +176,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$string *  $0;
 
 } viola$collections$Tuple$viola$lang$string;
@@ -176,6 +188,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 
 } viola$collections$Tuple$;
 #endif
@@ -186,6 +199,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$object *  $0;
 
 } viola$collections$Tuple$viola$lang$object;
@@ -197,6 +211,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$string *  $0;
 	viola$lang$string *  $1;
 	viola$lang$string *  $2;
@@ -210,6 +225,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$io$file *  $0;
 
 } viola$collections$Tuple$viola$io$file;
@@ -221,6 +237,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$uint8$$array *  $0;
 
 } viola$collections$Tuple$viola$lang$uint8$$array;
@@ -232,6 +249,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$io$file *  $0;
 	viola$lang$string *  $1;
 
@@ -244,6 +262,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$io$file *  $0;
 	viola$lang$uint8$$array *  $1;
 
@@ -256,6 +275,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$string *  $0;
 	viola$lang$uint32  $1;
 
@@ -268,6 +288,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$string *  $0;
 	viola$lang$uint32  $1;
 	viola$lang$uint32  $2;
@@ -281,6 +302,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$int32  $0;
 
 } viola$collections$Tuple$viola$lang$int32;
@@ -292,6 +314,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$int32  $0;
 	viola$lang$int32  $1;
 
@@ -304,6 +327,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$int32  $0;
 	viola$lang$uint32  $1;
 
@@ -316,6 +340,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$int32  $0;
 	viola$lang$uint32  $1;
 	viola$lang$uint32  $2;
@@ -329,6 +354,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$os$Stat *  $0;
 
 } viola$collections$Tuple$viola$os$Stat;
@@ -340,6 +366,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$string *  $0;
 	viola$lang$string *  $1;
 
@@ -352,6 +379,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$string$$array *  $0;
 
 } viola$collections$Tuple$viola$lang$string$$array;
@@ -363,6 +391,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$int32  $0;
 	viola$lang$int32  $1;
 	viola$lang$int32  $2;
@@ -376,6 +405,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$string *  $0;
 	viola$lang$int32  $1;
 
@@ -388,6 +418,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$os$StatVFS *  $0;
 
 } viola$collections$Tuple$viola$os$StatVFS;
@@ -399,6 +430,7 @@ typedef struct {
 	viola$lang$atomic_uint32 $refCount;
 	viola$lang$ptr $parent;
 	viola$lang$uint64 size;
+	void (*$del)(void *_this, viola$threads$Listener *listener);
 	viola$lang$int32  $0;
 	viola$lang$string *  $1;
 

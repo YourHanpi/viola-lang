@@ -471,7 +471,19 @@ def parse_struct_field(field_text: str) -> tuple[str, str]:
 
     对应原先的re.match(r"^(.+?)\\s*(\\**)\\s*([A-Za-z_$][A-Za-z0-9_$]*)$", field_text)：
     字段名是行尾的标识符串，"*"紧随其后（如"viola$lang$uint16 *data"）。
+
+    函数指针字段按"返回类型 (*名字)(形参表)"的写法解析（如元组的$del，
+    见开发疑问记录192）：字段名位于括号内，不在行尾。这类字段只出现在不由
+    .vla声明决定布局的结构体中，此处以规范化的整段声明作为其"类型"。
     """
+    pointer_pos: int = field_text.find("(*")
+    if pointer_pos >= 0:
+        name_end_pos: int = field_text.find(")", pointer_pos + 2)
+        if name_end_pos > pointer_pos + 2:
+            pointer_name: str = field_text[pointer_pos + 2:name_end_pos].strip()
+            if pointer_name != "" and \
+                    (is_c_identifier_start(pointer_name[0]) or pointer_name[0] == "$"):
+                return pointer_name, field_text
     name_end: int = len(field_text)
     name_start: int = name_end
     while name_start > 0 and (is_c_identifier_char(field_text[name_start - 1]) or field_text[name_start - 1] == "$"):
@@ -601,6 +613,9 @@ def gen_tuple_def(types: list[CType]) -> str:
         "\tviola$lang$atomic_uint32 $refCount;",
         "\tviola$lang$ptr $parent;",
         "\tviola$lang$uint64 size;",
+        # 析构函数指针：由编译器在元组的分配处写入该元组具体类型的析构函数，
+        # 释放元组的代码只调用运行库的固定名字转发（见开发疑问记录192）
+        f"\tvoid (*$del)(void *_this, {LISTENER_T} *listener);",
     ]
     lines += [f"\t{t.calling}  ${i};" for i, t in enumerate(types)]
     lines += ["", f"}} {name};", "#endif"]

@@ -632,6 +632,16 @@ class ExprParser(GlobalParser):
         square_bracket_count: int = 0
         curly_bracket_count: int = 0
         question_mark_count: int = 0
+        # 首个记号必须在此单独计数：循环体先_next再检查括号，因而看不到起始记号，
+        # 若表达式以括号开头（如`(cond ? a : b) + x`、`[a ? b : c][0]`），
+        # 括号内的`?`会被当作顶层`?`而在此提前结束扫描，括号之后的部分被静默丢弃
+        # （语句中余下的记号不再产生任何命令，见开发疑问记录193）。
+        if self._match_type("L_BRACKET"):
+            bracket_count += 1
+        elif self._match_type("L_SQUARE_BRACKET"):
+            square_bracket_count += 1
+        elif self._match_type("L_CURLY_BRACKET"):
+            curly_bracket_count += 1
         start_pos: int = self._current
         while self._current < self._tokens_num and (
             not self._match_types(end_token_types) or bracket_count > 0 or square_bracket_count > 0 or

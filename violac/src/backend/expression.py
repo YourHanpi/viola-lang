@@ -6,7 +6,8 @@ from .symbol import (
     INT32, UINT32, INT64, UINT64, FLOAT, DOUBLE, FLOAT128, GlobalVariableName, FunctionName, MethodName, Modifier,
     LISTENER_T, LISTENER_INIT_FUNC, EmptyArrayTypeName, base_type_degrade, SliceTypeName, INT_TYPES, StringTypeName,
     AnyTypeName, AutoTypeName, SIZE_T, FUNCTION_T, FUNCTION_ASYNC_PTR_T, FUNCTION_SYNC_PTR_T, VOID_PTR,
-    get_to_string_method, EnumName, release_text as refcount_release_text, STRING_T, retain_text
+    get_to_string_method, EnumName, release_text as refcount_release_text, STRING_T, retain_text,
+    tuple_del_assign_text
 )
 from utils import CompilerException, InternalCompilerException, COMPILER_PARAMS, SourceInfo
 
@@ -24,6 +25,20 @@ FUNC_ENQUEUE_FUNC: str = "viola$threads$enqueue"
 LISTENER_WAIT_FUNC: str = "viola$threads$waitListener"
 
 I_SIZE_MAX: str = "I_SIZE_MAX"
+
+
+def store_retain_text(target_text: str, target_var: VariableName) -> str:
+    """生成把值存入槽位（变量、返回值槽位）后对目标对象的一次retain。
+
+    目标槽位自此持有一个对象，故计一次数；该槽位释放时递减并归零才析构
+    （见开发疑问记录190）。与statement.store_retain_text同义，但本模块不能
+    反向引用statement（后者引用本模块），故在此重复定义；两者的判据须一致：
+    非对象类型不计数，unsafe变量由用户手动管理内存、同样不计数
+    （见开发疑问记录191第4条）。返回含前导换行的文本（无动作时为空）。
+    """
+    if not target_var.type.is_object or target_var.is_unsafe_managed:
+        return ""
+    return "\n" + retain_text(target_text)
 
 
 def _is_base_value_type(t: TypeName) -> bool:
@@ -148,8 +163,19 @@ class Expression(CompilingItem, ABC):
     def discard_release_text(self) -> Optional[str]:
         """获取丢弃用返回值目标（见set_discard_returns）的释放代码。
 
-        等待任务完成后才可取回其返回值并释放，故不能与调用自身的释放代码
-        一同输出（见开发疑问记录141）。
+        0.1起返回值对象由异步调用的返回元组持有（见开发疑问记录192），等待之后
+        随返回元组的释放一并销毁（见CallOp.deferred_release_text），故不再需要
+        单独的释放代码：原先在此逐个取回并释放，而返回元组随后也会释放同一对象，
+        会重复释放。
+        """
+        return None
+
+    @property
+    def deferred_release_text(self) -> Optional[str]:
+        """获取异步调用在等待（waitListener）之后释放的编译器临时对象。
+
+        仅异步调用（CallOp）有这类对象（实参元组、闭包实参元组与返回元组），
+        其余表达式无此问题（见开发疑问记录192）。
         """
         return None
 
@@ -266,6 +292,11 @@ class Expression(CompilingItem, ABC):
                 restore_text: Optional[str] = self.restore_text(var)
                 if restore_text is not None:
                     lines.append(restore_text)
+        # 实参元组/返回元组等临时对象的释放必须晚于取回（restore_text会读取返回
+        # 元组的成员、并各计一次数转到目标槽位），故放在最后（见开发疑问记录192）
+        deferred_release: Optional[str] = self.deferred_release_text
+        if deferred_release is not None:
+            lines.append(deferred_release)
         return lines
 
     @property
@@ -550,6 +581,9 @@ class UnpackExpr(Expression):
         # 同步调用的直接解包（0.1）：被解包表达式为同步函数调用且返回值
         # 与目标变量一一对应时，由调用直接把结果写入目标变量，不物化元组
         self._delegate_call: bool = False
+        # 目标变量是否只借用成员而不持有：异步包装体中解包的形参/返回值局部变量
+        # 由元组（或调用方）持有，包装体自身不释放它们，故不计数（见开发疑问记录192）
+        self._borrow_members: bool = False
 
     @property
     def _is_async_unpack(self) -> bool:
@@ -608,22 +642,36 @@ class UnpackExpr(Expression):
             for i, ret in enumerate(self._returns[:-1]):
                 deref: str = "*" if ret.is_return else ""
                 result += f"\n{deref}{ret.name} = {self._var.name}->${i};"
+                result += self._member_retain_text(deref + ret.name, ret)
             tail_var: LocalVariableName = self._tail_var
             tail_types: list[TypeName] = self._tail_type.types
             result += f"\n{tail_var.name} = ({self._tail_type.c_calling_name})malloc(sizeof({self._tail_type.c_alloc_name}));"
             result += f"\n{tail_var.name}->$refCount = 1;"
             result += f"\n{tail_var.name}->$parent = NULL;"
             result += f"\n{tail_var.name}->size = {len(tail_types)};"
+            # 析构函数按元素类型单态化，由分配处写入$del（见开发疑问记录192）
+            result += "\n" + tuple_del_assign_text(tail_var.name, self._tail_type)
             for i in range(len(tail_types)):
+                # 子元组同样持有其成员（见开发疑问记录192）
                 result += f"\n{tail_var.name}->${i} = {self._var.name}->${len(self._returns) - 1 + i};"
+                result += retain_text(f"{tail_var.name}->${i}") \
+                    if tail_types[i].is_object else ""
             tail_deref: str = "*" if self._returns[-1].is_return else ""
             result += f"\n{tail_deref}{self._returns[-1].name} = {tail_var.name};"
         else:
-            # 返回数与元素数相同：逐一提取成员
+            # 返回数与元素数相同：逐一提取成员。
+            # 元组持有其成员（见开发疑问记录192），故取到槽位后该槽位计一次数
             for i, ret in enumerate(self._returns):
                 deref: str = "*" if ret.is_return else ""
                 result += f"\n{deref}{ret.name} = {self._var.name}->${i};"
+                result += self._member_retain_text(deref + ret.name, ret)
         return result
+
+    def _member_retain_text(self, target_text: str, target_var: VariableName) -> str:
+        """获取把元组成员取到槽位后的retain文本（成员非对象或只借用时为空）。"""
+        if self._borrow_members:
+            return ""
+        return store_retain_text(target_text, target_var)
 
     @property
     def global_init_text(self) -> Optional[str]:
@@ -678,13 +726,19 @@ class UnpackExpr(Expression):
                 f"{self._tail_var.name} = ({self._tail_type.c_calling_name})malloc(sizeof({self._tail_type.c_alloc_name}));",
                 f"{self._tail_var.name}->$refCount = 1;",
                 f"{self._tail_var.name}->$parent = NULL;",
-                f"{self._tail_var.name}->size = {len(tail_types)};"
+                f"{self._tail_var.name}->size = {len(tail_types)};",
+                # 析构函数按元素类型单态化，由分配处写入$del（见开发疑问记录192）
+                tuple_del_assign_text(self._tail_var.name, self._tail_type)
             ]
             for i in range(len(tail_types)):
+                # 子元组同样持有其成员（见开发疑问记录192）
                 lines.append(f"{self._tail_var.name}->${i} = {returns_text}->${index + i};")
+                if tail_types[i].is_object:
+                    lines.append(retain_text(f"{self._tail_var.name}->${i}"))
             lines.append(f"{var.name} = {self._tail_var.name};")
             return "\n".join(lines)
-        return f"{var.name} = {returns_text}->${index};"
+        # 元组持有其成员（见开发疑问记录192），故取到槽位后该槽位计一次数
+        return f"{var.name} = {returns_text}->${index};" + self._member_retain_text(var.name, var)
 
     def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Expression":
         new_expr = copy(self)
@@ -726,6 +780,10 @@ class UnpackExpr(Expression):
             to_unpack: 需要解包的表达式（必须是元组类型）。
         """
         self._to_unpack = to_unpack
+
+    def set_borrow_members(self) -> None:
+        """标记目标变量只借用元组成员（不持有），见_borrow_members。"""
+        self._borrow_members = True
 
     def set_returns(self, returns: list[VariableName]) -> bool:
         if self._returns == returns:
@@ -1976,11 +2034,15 @@ class ArrayConvertExpr(ValueRef):
 
 
 class TupleRef(ValueRef):
-    # 元组是否持有其对象成员：仅异步实参元组为True（见开发疑问记录191）
     """元组字面量表达式。
 
     表示 (v1, v2, ...) 形式的元组构造，编译为运行时元组对象。
     支持索引和切片访问、左侧追加元素等操作。
+
+    元组持有其对象成员（与数组持有其元素一致）：成员存入时计一次数，
+    元组析构时逐个释放（见开发疑问记录190、192）。异步调用的实参/返回元组
+    也由本表达式构造：前者使对象实参在任务期间保持有效，后者接收被调函数
+    交出的返回值。
     """
 
     def __getitem__(self, item: slice | int) -> Expression:
@@ -2006,8 +2068,6 @@ class TupleRef(ValueRef):
         self._values: list[Expression] = []
         self._type: Optional[TypeName] = None
         self._temp_var: Optional[VariableName] = None
-        # 是否持有对象成员（存入时retain、释放时递减）：异步实参元组为True
-        self._owns_elements: bool = False
 
     def __len__(self) -> int:
         """返回元组中元素的数量。"""
@@ -2088,6 +2148,8 @@ class TupleRef(ValueRef):
         lines.append(f"{self._temp_var.name}->$refCount = 1;")
         lines.append(f"{self._temp_var.name}->$parent = NULL;")
         lines.append(f"{self._temp_var.name}->size = {len(self._values)};")
+        # 析构函数按元素类型单态化，由分配处写入$del（见开发疑问记录192）
+        lines.append(tuple_del_assign_text(self._temp_var.name, self._type))
         member_types: list[TypeName] = list(self._type.types)
         for i, value in enumerate(self._values):
             # 成员写入按成员类型转换：子类实参赋给父类形参的元组成员时补显式C转换
@@ -2095,10 +2157,10 @@ class TupleRef(ValueRef):
             target: TypeName = member_types[i] if i < len(member_types) else value.return_type
             element: str = f"{self._temp_var.name}->${i}"
             lines.append(f"{element} = {implicit_cast_text(value, target)};")
-            if self._owns_elements and target.is_object:
-                # 异步实参元组需持有对象实参：调用方的槽位在任务完成前就可能被释放
-                # （其"最后一次使用"即发起调用之处），元组释放时再递减
-                # （见开发疑问记录191）
+            if target.is_object:
+                # 元组持有其对象成员：成员表达式自身的槽位随后可能被释放（异步调用的
+                # 对象实参还要在任务期间保持有效），故此处计一次数，元组析构时递减
+                # （见开发疑问记录190、191、192）
                 lines.append(retain_text(element))
         return "\n".join(lines)
 
@@ -2135,18 +2197,14 @@ class TupleRef(ValueRef):
 
     @property
     def release_text(self) -> Optional[str]:
-        elements: list[str] = []
-        if self._owns_elements and self._is_finished:
-            # 先释放元组持有的对象成员，再回收元组本身（见开发疑问记录191）
-            for i, member_type in enumerate(self._type.types):
-                if not member_type.is_object:
-                    continue
-                member: LocalVariableName = LocalVariableName(
-                    self._src_info, f"{self._temp_var.name}->${i}", member_type)
-                elements.append(member.free_text)
-        body: str = "\n".join(filter(lambda x: x != "", elements + [
-            f"free({self._temp_var.name});\n{self._temp_var.name} = NULL;"]))
-        return refcount_release_text(self._temp_var.name, body)
+        """释放本元组（递减计数、归零则调用该元组类型的析构函数）。
+
+        元组按其元素类型单态化（见开发疑问记录192）：析构函数逐个释放元组持有的
+        对象成员后回收结构体，故此处只需按变量释放（与数组类型的变量一致）。
+        """
+        if not self._is_finished:
+            return None
+        return self._temp_var.free_text
 
     @property
     def return_type(self) -> TypeName:
@@ -2952,9 +3010,6 @@ class CallOp(Expression):
         result._listener_name = self._symbol_table.get_counter()
         result._call_name = result._listener_name + "$$_call"
         result._args_tuple = TupleRef(self._src_info, self._symbol_table)
-        # 实参元组由被调方（另一个线程上的任务）使用，其生命周期可能长于调用方
-        # 各实参槽位的生命周期，故元组持有对象实参（见开发疑问记录191）
-        result._args_tuple._owns_elements = True
         for arg in self._arg_list:
             result._args_tuple.add_value(arg)
         result._args_tuple.finish(self._async_arg_types())
@@ -2977,8 +3032,8 @@ class CallOp(Expression):
         （f();）一致。
 
         丢弃变量不登记符号表（与赋值目标为_的丢弃变量一致），其声明由
-        head_text输出；返回值对象在等待之后由discard_release_text释放，
-        即纳入编译器临时对象的释放路径（见开发疑问记录141）。
+        head_text输出；返回值对象由返回元组持有，等待之后随返回元组的释放
+        一并销毁（见开发疑问记录141、192）。
         """
         if not self._is_async or len(self._returns_list) > 0:
             # 已有返回值目标（赋值形式）或非异步调用：无需处理
@@ -2999,28 +3054,6 @@ class CallOp(Expression):
         # unpack=False：返回值目标为丢弃变量，无人读取其值，不需要解包
         self._discard_returns = discards
         self.set_returns(discards, unpack=False)
-
-    @property
-    def discard_release_text(self) -> Optional[str]:
-        """获取丢弃用返回值目标的释放代码（见开发疑问记录141）。
-
-        返回值由工作线程写入返回元组，故须等待任务完成后先取回到丢弃目标
-        再释放；释放语句由所在语句的等待文本输出（OpStmt.restore_listeners），
-        与普通编译器临时对象一样受引用计数保护（见开发疑问记录125）——
-        当前$refCount尚不递减，实际不释放（与既有的临时对象一致）。
-        """
-        if len(self._discard_returns) == 0 or self._returns_tuple is None:
-            return None
-        lines: list[str] = []
-        for i, discard in enumerate(self._discard_returns):
-            if not discard.is_object:
-                # 非对象类型无释放动作
-                continue
-            lines.append(f"{discard.name} = {self._returns_tuple.text}->${i};")
-            lines.append(f"if ({discard.name}) {{")
-            lines.append("\t" + discard.free_text)
-            lines.append("}")
-        return "\n".join(lines) if len(lines) > 0 else None
 
     @property
     def returns_list(self) -> list[VariableName]:
@@ -3258,7 +3291,10 @@ class CallOp(Expression):
         if var not in self._returns_list:
             return None
         index: int = self._returns_list.index(var)
-        return f"{var.name} = {self._returns_tuple.text}->${index};"
+        # 目标槽位自此持有该对象：计一次数（返回元组本身也持有一次，其析构时递减，
+        # 见开发疑问记录190、192）
+        return f"{var.name} = {self._returns_tuple.text}->${index};" \
+               + store_retain_text(var.name, var)
 
     @property
     def _virtual_slot(self) -> Optional[int]:
@@ -3481,21 +3517,45 @@ class CallOp(Expression):
 
     @property
     def release_text(self) -> Optional[str]:
+        """获取调用点（等待之前）释放的编译器临时对象。
+
+        异步调用由工作线程使用的三个临时对象——实参元组、闭包实参元组与返回
+        元组——都改在等待之后释放（见deferred_release_text）：本处代码位于
+        waitListener之前，任务此时可能仍在读写它们，提前释放会使工作线程读到
+        已释放的对象（实测为堆损坏）。
+        """
         result: list[Optional[str]] = [
             # 实参元组仅在真正分配时释放：无实参的异步调用以args=NULL入队，
             # 其元组从未分配，对NULL解引用会崩溃（语句形式的表达式语句会输出
-            # 本释放代码，见开发疑问记录138的附带发现）。
-            # 异步调用的实参元组不在此释放：本处代码位于等待（waitListener）之前，
-            # 而任务此时可能仍在读取元组及其成员（提前释放会使工作线程读到
-            # 已释放的对象）。当前版本对异步调用的实参元组与其中的对象实参
-            # 不做释放（元组持有它们一次，随进程存续），以保证任务期间有效
-            # （见开发疑问记录191）。
+            # 本释放代码，见开发疑问记录138的附带发现）
             self._args_tuple.release_text
             if self._args_tuple is not None and self._has_args_tuple and not self._is_async else None,
+            self._closure_args.release_text
+            if self._closure_args is not None and not self._is_async else None,
+            self._unpack_expr.release_text if self._unpack_expr is not None else None
+        ]
+        result_str: str = "\n".join(filter(lambda x: x is not None, result))
+        return result_str if result_str != "" else None
+
+    @property
+    def deferred_release_text(self) -> Optional[str]:
+        """获取异步调用在等待（waitListener）之后释放的编译器临时对象。
+
+        实参元组（含其中的对象实参）、闭包实参元组与返回元组都由工作线程使用，
+        其释放必须晚于等待：实参元组在任务期间保持对象实参有效，返回元组接收
+        被调函数交出的返回值（见开发疑问记录191、192）。这些代码随等待语句输出
+        （BlockStmt.add_stmt/finish的restores），而与取回代码同处一段时
+        （async_wait_lines）必须排在取回之后——restore_text会读取返回元组的成员。
+        """
+        if not self._is_async:
+            return None
+        result: list[Optional[str]] = [
+            # 实参元组仅在真正分配时释放（无实参的异步调用以args=NULL入队）
+            self._args_tuple.release_text
+            if self._args_tuple is not None and self._has_args_tuple else None,
             self._closure_args.release_text if self._closure_args is not None else None,
-            self._unpack_expr.release_text if self._unpack_expr is not None else None,
-            # 返回元组仅由异步调用分配，同步调用不释放
-            self._returns_tuple.release_text if self._is_async and self._has_return_values else None
+            # 返回元组仅由异步调用分配
+            self._returns_tuple.release_text if self._has_return_values else None
         ]
         result_str: str = "\n".join(filter(lambda x: x is not None, result))
         return result_str if result_str != "" else None
@@ -3817,6 +3877,8 @@ class ClosureCallArgs(Expression):
         lines.append(f"{self._temp_var.name}->$refCount = 1;")
         lines.append(f"{self._temp_var.name}->$parent = NULL;")
         lines.append(f"{self._temp_var.name}->size = {len(self._type.types)};")
+        # 析构函数按元素类型单态化，由分配处写入$del（见开发疑问记录192）
+        lines.append(tuple_del_assign_text(self._temp_var.name, self._type))
         n_args: int = len(self._type.types) - (1 if self._with_capture else 0)
         # 槽位初值：对象/指针为NULL，值类型为0
         for i, t in enumerate(self._type.types):
@@ -3825,11 +3887,16 @@ class ClosureCallArgs(Expression):
         # 位置实参填入前部槽位
         for i, e in enumerate(self._positional):
             lines.append(f"{self._temp_var.name}->${i} = {e.text};")
+            if self._type.types[i].is_object:
+                # 实参元组持有其对象成员（与元组字面量一致，见开发疑问记录192）
+                lines.append(retain_text(f"{self._temp_var.name}->${i}"))
         # 捕获环境作为末尾元素
         if self._with_capture:
             lines.append(f"{self._temp_var.name}->${n_args} = {self._func_expr.text}->$capture;")
         # 关键字实参：生成名称字符串临时变量，并逐槽匹配填入
         for k, (name, value) in enumerate(self._kwargs):
+            # 元组持有其对象成员（见开发疑问记录192）：填槽处按条件表达式写出，
+            # 其retain在下方逐槽补上（与位置实参一致）
             kname: str = self._symbol_table.get_counter()
             lines.append(f"viola$lang$string *{kname} = viola$lang$string$fromCharString(\"{name}\");")
             self._name_temps.append(kname)
@@ -3837,9 +3904,13 @@ class ClosureCallArgs(Expression):
                 t: TypeName = self._type.types[i]
                 cond: str = f"{i} < {self._func_expr.text}->argNames->size && " \
                             f"viola$lang$string$equals({self._func_expr.text}->argNames->data[{i}], {kname})"
-                lines.append(
-                    f"{self._temp_var.name}->${i} = ({cond}) ? "
-                    f"({t.c_calling_name})({value.text}) : {self._temp_var.name}->${i};")
+                element: str = f"{self._temp_var.name}->${i}"
+                # 命中该名称的槽位才填入（原为条件表达式，与其后按同一条件retain，
+                # 使计数与填槽一致：元组析构时每个成员只递减一次）
+                lines.append(f"if ({cond}) {{ {element} = ({t.c_calling_name})({value.text}); }}")
+                if t.is_object:
+                    # 实参元组持有其对象成员（见开发疑问记录192）
+                    lines.append(f"if ({cond}) {{ {retain_text(element)} }}")
         return "\n".join(lines)
 
     @property
@@ -3867,8 +3938,12 @@ class ClosureCallArgs(Expression):
 
     @property
     def release_text(self) -> Optional[str]:
-        return refcount_release_text(
-            self._temp_var.name, f"free({self._temp_var.name});\n{self._temp_var.name} = NULL;")
+        """释放实参元组（递减计数、归零则调用该元组类型的析构函数）。
+
+        元组按其元素类型单态化（见开发疑问记录192）：析构函数逐个释放元组持有的
+        对象实参后回收结构体，故此处只需按变量释放。
+        """
+        return self._temp_var.free_text
 
     @property
     def return_type(self) -> TypeName:

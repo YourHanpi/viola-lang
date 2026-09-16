@@ -719,6 +719,10 @@ class SqDef(Definition):
                                                  VariableRef(self._src_info, self._symbol_table, LocalVariableName(
                                                      self._src_info, "params", arg_tuple_name
                                                  )))
+        # 实参元组由调用方持有（等待之后才释放），本包装体只借用其成员：
+        # 取用时不计数、退出时也不释放。计数会使包装体多持有一份而永不释放
+        # （包装体不生成任何释放语句），对象因此从不回收（见开发疑问记录193）
+        arg_unpack_expr.set_borrow_members()
         arg_unpack_stmt: DeclStmt = DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)
         arg_unpack_stmt.set_var_value(arg_unpack_expr)
         arg_unpack_stmt.set_vars_with_known_type(async_arg_names, async_arg_types,
@@ -729,6 +733,9 @@ class SqDef(Definition):
                                                  VariableRef(self._src_info, self._symbol_table, LocalVariableName(
                                                      self._src_info, "returns", ret_tuple_name
                                                  )))
+        # 返回元组同样由调用方持有：被调函数的返回值写入本地变量后交回元组
+        # （ret_write_back_text），本包装体不持有也不释放（见上）
+        ret_unpack_expr.set_borrow_members()
         ret_unpack_stmt: DeclStmt = DeclStmt(self._src_info, self._symbol_table, self._var_states, self._namespace)
         ret_unpack_stmt.set_var_value(ret_unpack_expr)
         ret_unpack_stmt.set_vars_with_known_type(self._decl.ret_names, self._decl.ret_types,

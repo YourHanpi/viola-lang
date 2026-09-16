@@ -266,7 +266,7 @@ class _MainFile:
             f"typedef struct {name} {name};" for name in sorted(type_def_class_names())
         ]
         runtime_defs: list[str] = fwd_decls + SymbolTable.type_def_texts() + \
-            SymbolTable.array_type_impl_texts()
+            SymbolTable.tuple_type_impl_texts() + SymbolTable.array_type_impl_texts()
         main_body: list[str] = [
             "viola$threads$Listener *listener = (viola$threads$Listener *)malloc(sizeof(viola$threads$Listener));",
             "viola$threads$initListener(listener, 0);",

@@ -82,20 +82,17 @@ const char *viola$lang$objectTypeName(viola$lang$ptr object) {
     return type_info->$name;
 }
 
-/* ================= 元组共享析构 ================= */
-/* 所有元组结构体共享相同的前缀（$refCount、$parent、size），因此可用统一析构。 */
+/* ================= 元组析构转发 ================= */
+/* 所有元组结构体共享相同的前缀（$refCount、$parent、size、$del），故可在此
+   统一转发到该元组具体类型的析构函数（$del，由编译器在分配处写入；元素类型为
+   对象时需逐个释放成员，故析构按元素类型单态化，见开发疑问记录192）。
+   编译器生成的释放代码只引用本固定名字，不引用具体类型的析构函数名。 */
 void viola$collections$Tuple$__del__(void *_this, viola$threads$Listener *listener) {
-    (void)listener;
-    viola$lang$uint32 *refCount = (viola$lang$uint32 *)_this;
-    void **parent = (void **)((char *)_this + sizeof(viola$lang$uint32));
-    if (*refCount == 0) {
-        if (*parent) {
-            viola$lang$uint32 *parentRefCount = (viola$lang$uint32 *)*parent;
-            (*parentRefCount)--;
-        } else {
-            free(_this);
-        }
+    viola$collections$Tuple *tuple = (viola$collections$Tuple *)_this;
+    if (tuple == NULL || tuple->$del == NULL) {
+        return;
     }
+    tuple->$del(_this, listener);
 }
 
 /* ================= object析构 ================= */

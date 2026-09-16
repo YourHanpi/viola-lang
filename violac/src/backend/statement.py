@@ -774,6 +774,10 @@ class DeclStmt(Statement):
             self._var_value.set_returns(self._var)
         restores: list[str] = list(filter(
             lambda x: x is not None, map(lambda var: self._var_value.restore_text(var), self._var)))
+        # 异步调用的实参元组/返回元组在等待之后释放（见开发疑问记录192）
+        deferred_release: Optional[str] = self._var_value.deferred_release_text
+        if deferred_release is not None:
+            restores.append(deferred_release)
         if len(restores) == 0:
             return {}
         return {self._var_value.listener_name: restores}
@@ -997,6 +1001,8 @@ class AssignStmt(Statement):
             # 成员自身的unsafe标记需随目标变量带下去：引用计数要按它决定是否
             # retain/release（见开发疑问记录191）
             symbol._is_unsafe = property_symbol.is_unsafe
+            # 对象成员的赋值目标：不参与常量折叠（见VariableName.is_member）
+            symbol._is_member = True
         else:
             symbol = self._symbol_table[var_name, None]
         if not isinstance(symbol, VariableName):
@@ -1163,6 +1169,10 @@ class AssignStmt(Statement):
             self._var_value.set_returns(self._var)
         restores: list[str] = list(filter(
             lambda x: x is not None, map(lambda var: self._var_value.restore_text(var), self._var)))
+        # 异步调用的实参元组/返回元组在等待之后释放（见开发疑问记录192）
+        deferred_release: Optional[str] = self._var_value.deferred_release_text
+        if deferred_release is not None:
+            restores.append(deferred_release)
         if len(restores) == 0:
             return {}
         return {self._var_value.listener_name: restores}
@@ -1400,20 +1410,19 @@ class OpStmt(Statement):
 
     @property
     def restore_listeners(self) -> dict[str, list[str]]:
-        """获取等待之后执行的代码：释放被丢弃的返回值对象。
+        """获取等待之后执行的代码：释放异步调用由工作线程使用的临时对象。
 
-        语句形式的异步调用若有返回值（见开发疑问记录138的丢弃用返回值目标），
-        其返回值对象是编译器临时对象，不在符号表中，因而不会被所在块的释放
-        逻辑覆盖；且其值在任务完成后才可取回，故随waitListener之后的复制代码
-        一并释放（见开发疑问记录141）。
+        语句形式的异步调用没有返回值目标，其返回值对象由返回元组持有
+        （见开发疑问记录192）；实参元组与返回元组的释放同样必须在任务结束后
+        （见CallOp.deferred_release_text），故随waitListener之后一并输出。
         """
         listener: Optional[str] = self._expr.listener_name
         if listener is None:
             return {}
-        release_text: Optional[str] = self._expr.discard_release_text
-        if release_text is None:
+        deferred_release: Optional[str] = self._expr.deferred_release_text
+        if deferred_release is None:
             return {}
-        return {listener: [release_text]}
+        return {listener: [deferred_release]}
 
     @property
     def new_variables(self) -> set[VariableName]:
@@ -2835,12 +2844,75 @@ class BlockStmt(Statement):
         """获取闭包结构体设置代码。"""
         return self._closure_struct_setting_code
 
+    def _release_variable(self, var: VariableName, src_info: SourceInfo,
+                          new_stmt_list: list[Statement]) -> None:
+        """生成释放一个对象变量的语句，追加到块的语句列表（见finish）。
+
+        释放=递减引用计数，归零才调用析构（见开发疑问记录190）。递减与判断合并在
+        同一个条件里：分两步时另一线程可能在同一对象上并发释放，两次都读到0而
+        重复析构（见开发疑问记录178）。同一变量的释放代码会输出到多处（正常路径
+        的释放点与块的异常清理路径），各处的守卫使重复执行为空操作。
+
+        :param new_stmt_list: 正在按反序拼接的语句列表（末尾整体反转，故此处
+            按"先出现者后追加"的顺序追加，反转后为 守卫 → 释放 → 守卫结束 → 置空）
+        """
+        release_stmt = OpStmt(src_info, self._symbol_table, self._var_states)
+        call_op = CallOp(src_info, self._symbol_table)
+        call_op._is_internal = True
+        attr_op = AttrOp(src_info, self._symbol_table)
+        attr_op.set_attr("__del__")
+        attr_op.set_caller(VariableRef(src_info, self._symbol_table, var))
+        call_op.set_func(attr_op)
+        release_stmt.set_expr(call_op)
+        release_stmt.indent()
+        # 释放代码位于块的异常清理路径中：异常时不应跳出本块
+        # （否则try块的catch分发标签不可达），而是继续执行清理
+        release_stmt.remove_jump_mark()
+        null_stmt = CStmt(src_info, self._symbol_table, self._var_states)
+        null_stmt.remove_jump_mark()
+        null_stmt.remove_mark()
+        null_stmt.add_text(f"\t{var} = NULL;")
+        release_guard: str = f"if ({var} && {REFCOUNT_DEC_FUNC}(&{var}->$refCount) == 0) {{"
+        begin_guard_stmt = CStmt(src_info, self._symbol_table, self._var_states)
+        begin_guard_stmt.remove_jump_mark()
+        begin_guard_stmt.remove_mark()
+        begin_guard_stmt.add_text(release_guard)
+        end_guard_stmt = CStmt(src_info, self._symbol_table, self._var_states)
+        end_guard_stmt.remove_jump_mark()
+        end_guard_stmt.remove_mark()
+        end_guard_stmt.add_text("}")
+        new_stmt_list.append(null_stmt)
+        new_stmt_list.append(end_guard_stmt)
+        new_stmt_list.append(release_stmt)
+        new_stmt_list.append(begin_guard_stmt)
+        # 异常清理路径上的同一释放：与正常路径的语句分开创建（同一语句对象
+        # 在块内出现两次时，其调试标记与跳转标记的维护会互相影响）
+        check_null_stmt = CStmt(src_info, self._symbol_table, self._var_states)
+        check_null_stmt.add_text(release_guard)
+        check_null_stmt.remove_jump_mark()
+        check_null_stmt.remove_mark()
+        end_check_null_stmt = CStmt(src_info, self._symbol_table, self._var_states)
+        end_check_null_stmt.remove_jump_mark()
+        end_check_null_stmt.remove_mark()
+        end_check_null_stmt.add_text("}")
+        self._release_stmt_list.append(check_null_stmt)
+        self._release_stmt_list.append(release_stmt)
+        self._release_stmt_list.append(null_stmt)
+        self._release_stmt_list.append(end_check_null_stmt)
+
     def finish(self) -> None:
         """完成语句块的设置，进行变量清理和代码生成。"""
         # 块中任何会导致退出的语句（如return）都意味着其后代码不可达
         self._drops_out = any(map(lambda s: s.drop_out, self._stmt))
         self._stmt.reverse()
         used_variables: set[VariableName] = set()
+        # 本块内（含嵌套语句）被读取的全部变量：用于识别"声明后从未被读取"
+        # 的变量（见下）
+        all_used_variables: set[VariableName] = set()
+        for stmt in self._stmt:
+            all_used_variables |= stmt.used_variables
+        # 异步声明且从未被读取的变量（见下），其在等待之后释放
+        unused_async_releases: list[VariableName] = []
         new_stmt_list: list[Statement] = []
         for stmt in self._stmt:
             # 判断“最后一次使用”必须用used_variables（input_variables已减去
@@ -2858,55 +2930,32 @@ class BlockStmt(Statement):
                     self._input_variables.discard(var)
                     # unsafe变量由用户手动管理内存，不参与引用计数（见开发疑问记录191）
                     if var.is_object and not var.is_unsafe_managed:
-                        release_stmt = OpStmt(stmt.src_info, self._symbol_table, self._var_states)
-                        call_op = CallOp(stmt.src_info, self._symbol_table)
-                        call_op._is_internal = True
-                        attr_op = AttrOp(stmt.src_info, self._symbol_table)
-                        attr_op.set_attr("__del__")
-                        attr_op.set_caller(VariableRef(stmt.src_info, self._symbol_table, var))
-                        call_op.set_func(attr_op)
-                        release_stmt.set_expr(call_op)
-                        release_stmt.indent()
-                        # 释放代码位于块的异常清理路径中：异常时不应跳出本块
-                        # （否则try块的catch分发标签不可达），而是继续执行清理
-                        release_stmt.remove_jump_mark()
-                        null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
-                        null_stmt.remove_jump_mark()
-                        null_stmt.remove_mark()
-                        null_stmt.add_text(f"\t{var} = NULL;")
-                        # 释放=递减引用计数，归零才调用析构（见开发疑问记录190）。
-                        # 递减与判断合并在同一个条件里：分两步时另一线程可能在同
-                        # 一对象上并发释放，两次都读到0而重复析构
-                        release_guard: str = f"if ({var} && {REFCOUNT_DEC_FUNC}(&{var}->$refCount) == 0) {{"
-                        end_guard_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
-                        end_guard_stmt.remove_jump_mark()
-                        end_guard_stmt.remove_mark()
-                        end_guard_stmt.add_text("}")
-                        begin_guard_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
-                        begin_guard_stmt.remove_jump_mark()
-                        begin_guard_stmt.remove_mark()
-                        begin_guard_stmt.add_text(release_guard)
-                        # 正常路径上的内联释放：new_stmt_list最后会整体反转，
-                        # 故按"先出现者后追加"的顺序追加，反转后为
-                        # guard → release → end_guard → null
-                        new_stmt_list.append(null_stmt)
-                        new_stmt_list.append(end_guard_stmt)
-                        new_stmt_list.append(release_stmt)
-                        new_stmt_list.append(begin_guard_stmt)
-                        check_null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
-                        check_null_stmt.add_text(release_guard)
-                        check_null_stmt.remove_jump_mark()
-                        check_null_stmt.remove_mark()
-                        end_check_null_stmt = CStmt(stmt.src_info, self._symbol_table, self._var_states)
-                        end_check_null_stmt.remove_jump_mark()
-                        end_check_null_stmt.remove_mark()
-                        end_check_null_stmt.add_text("}")
-                        self._release_stmt_list.append(check_null_stmt)
-                        self._release_stmt_list.append(release_stmt)
-                        self._release_stmt_list.append(null_stmt)
-                        self._release_stmt_list.append(end_check_null_stmt)
+                        self._release_variable(var, stmt.src_info, new_stmt_list)
                 elif var in self._outer_variables and var not in self._used_outer_variables and not var.is_global:
                     self._used_outer_variables.append(var)
+            # 声明后从未被读取的变量：没有任何语句能触发其"最后一次使用"，
+            # 其释放语句因而从不生成（见开发疑问记录192）。此类变量在其声明
+            # 语句之后立即释放——尽早释放已分配但未使用的对象。
+            # 只处理声明语句本身：复合语句（if/while/try/嵌套块）的
+            # declared_variables会递归并入嵌套语句内声明的变量，那些变量的
+            # C声明在嵌套C块内，在此处引用会超出作用域（见开发疑问记录115）；
+            # 它们的释放由该嵌套块自身的本段逻辑生成。
+            if isinstance(stmt, DeclStmt):
+                for var in sorted(stmt.declared_variables, key=lambda v: v.name):
+                    if var in all_used_variables or var not in self._inner_variables:
+                        # 被读取过（由上面的"最后一次使用"处理），或并非本块
+                        # 声明的变量
+                        continue
+                    if not var.is_object or var.is_unsafe_managed or var.is_return:
+                        # 非对象类型无释放动作；unsafe变量由用户手动管理内存；
+                        # 返回值槽位在C层是指针形参，其对象随返回值交给调用方
+                        continue
+                    if var in stmt.new_listeners:
+                        # 异步声明的变量在等待之后才有值，此处释放会与其后的
+                        # 赋值错位（释放时变量仍为NULL，赋值后再无人释放）
+                        unused_async_releases.append(var)
+                        continue
+                    self._release_variable(var, stmt.src_info, new_stmt_list)
             stmt.set_jump_mark(self._cleanup_mark_name)
             new_stmt_list.append(stmt)
         new_stmt_list.reverse()
@@ -2979,6 +3028,15 @@ class BlockStmt(Statement):
             # 同一等待被插入块内每条退出语句，带调试标记会重复输出标记声明
             exit_wait_stmt.remove_mark()
             self.insert_finally_stmt(exit_wait_stmt)
+        # 异步声明且从未被读取的变量（见finish的说明）：其值由上面的等待写入，
+        # 故释放语句位于这些等待之后（异常路径上的同一释放已登记在
+        # _release_stmt_list中，位于清理路径的等待之后）
+        if len(unused_async_releases) > 0:
+            late_release_list: list[Statement] = []
+            for var in unused_async_releases:
+                self._release_variable(var, self.src_info, late_release_list)
+            late_release_list.reverse()
+            self._stmt.extend(late_release_list)
         cleanup_mark = CStmt(self.src_info, self._symbol_table, self._var_states)
         cleanup_mark.remove_jump_mark()
         cleanup_mark.add_text(f"goto {self._after_cleanup_mark_name};")
@@ -3102,9 +3160,13 @@ class BlockStmt(Statement):
         # 只有本块内定义的变量才允许折叠掉赋值语句：常量表随本块结束而丢弃，
         # 折叠本块外变量的赋值会使其被静默丢弃（见开发疑问记录104）。
         # 模块级（全局）变量同样不允许折叠：其赋值是对模块存储的写入，
-        # 折叠掉语句会使全局变量保持未初始化（见开发疑问记录167）
+        # 折叠掉语句会使全局变量保持未初始化（见开发疑问记录167）。
+        # 对象成员（this.X = ...）同样不允许：对象可能在本块之外被读取，
+        # 折叠掉赋值语句会使成员保持未初始化（见开发疑问记录193。
+        # 实测构造函数中的`this.value = 7;`被删除，构造出的对象成员为0）
         foldable: set[VariableName] = set(
-            filter(lambda var: var not in self._outer_variables and not var.is_global, self._inner_variables))
+            filter(lambda var: var not in self._outer_variables and not var.is_global and not var.is_member,
+                   self._inner_variables))
         for i, stmt in enumerate(self._stmt):
             stmt = stmt.substitute(const_vars)
             if isinstance(stmt, AssignStmt):
