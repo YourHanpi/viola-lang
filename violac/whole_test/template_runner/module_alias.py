@@ -43,6 +43,8 @@ def generate(project_id: str) -> None:
         "${CLASS_1}": cls_name,
         "${MAKE_FUNC}": make_name,
         "${SCALE_FUNC}": f"double_{make_name}",
+        "${GENERIC_FUNC}": f"countExtra_{make_name}",
+        "${MODULE_ALIAS}": f"lib_alias_{pid}",
         "${FUNC_ALIAS}": f"aliased_{func_name}_{pid}",
         "${CLASS_ALIAS}": f"Aliased{cls_name}{pid}",
         "${ALIAS_TYPE}": f"LibInt_{pid}",

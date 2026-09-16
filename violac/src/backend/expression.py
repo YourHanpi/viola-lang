@@ -989,6 +989,8 @@ class VariableRef(ValueRef):
             f"{wrap}->asyncPtr = ({FUNCTION_ASYNC_PTR_T} *){self._async_wrap_func_name()};",
             f"{wrap}->syncPtr = ({FUNCTION_SYNC_PTR_T} *){self._sync_wrap_func_name()};",
             f"{wrap}->$capture = NULL;",
+            # 静态函数封装没有捕获环境，无释放入口（见runtime.h的Function结构体）
+            f"{wrap}->$captureDel = NULL;",
             f"{wrap}->argNames = (viola$lang$string$$array *)malloc(sizeof(viola$lang$string$$array));",
             f"{wrap}->argNames->$refCount = 1;",
             f"{wrap}->argNames->$parent = NULL;",
@@ -1087,6 +1089,10 @@ class VariableRef(ValueRef):
             # 函数值包装临时变量（Function结构体）的释放
             wrap: str = self._ensure_function_wrap()
             return refcount_release_text(wrap, f"free({wrap});\n{wrap} = NULL;")
+        if isinstance(self._var.type, FunctionTypeName):
+            # 持有函数值的变量由所在语句块的释放逻辑负责（走运行库的析构入口，
+            # 见symbol.destructor_name），此处不重复释放
+            return None
         if not self.return_type.is_object:
             return None
         return refcount_release_text(
@@ -3578,10 +3584,19 @@ class CallOp(Expression):
         """根据调用参数解析方法并绑定其完整C名称。"""
         # 使用实际的类型对象（泛型实例化后的数组等方法查找需要具体类型）
         attr_op._arg_type_objs = list(self.arg_types)
-        method: MethodName = attr_op.find_method(
-            list(map(lambda x: x.return_type.name, self._arg_list)),
-            dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
-        )
+        # x.toString()在set_func中解析到string类上的静态转换函数（基本类型等
+        # 没有方法表的类型，见开发疑问记录166）。泛型实例化后的重新绑定必须走
+        # 同一条路径：否则按常规方法查找会报"Variable to get attribute is not
+        # a class type"（实测泛型函数体内的局部变量调用toString，见开发疑问
+        # 记录195）
+        to_string_method: Optional[MethodName] = self._find_to_string_method(attr_op)
+        if to_string_method is not None:
+            method: MethodName = to_string_method
+        else:
+            method = attr_op.find_method(
+                list(map(lambda x: x.return_type.name, self._arg_list)),
+                dict(map(lambda x: (x[0], x[1].return_type.name), self._kwarg_dict.items()))
+            )
         self._func = method.as_function()
         self._method = method
         self._resolved_name = method.name
@@ -3593,8 +3608,12 @@ class CallOp(Expression):
         仅当无实参且调用者的类型有对应转换函数时生效（string自身也在映射表中）；
         自定义类由其自身的方法表解析，不在映射表中，因而返回None，
         由常规方法查找给出错误。
+
+        动态调用（_call_dynamic）的第一个实参是接收者自身，不属于形参，
+        故判断"无实参"时须扣除（见开发疑问记录195）。
         """
-        if attr_op.attr != "toString" or len(self._arg_list) > 0 or len(self._kwarg_dict) > 0:
+        receiver_count: int = 1 if self._call_dynamic else 0
+        if attr_op.attr != "toString" or len(self._arg_list) > receiver_count or len(self._kwarg_dict) > 0:
             return None
         caller_type: Optional[TypeName] = attr_op.caller.return_type
         if caller_type is None:

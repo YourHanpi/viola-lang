@@ -240,6 +240,7 @@ typedef struct viola$lang$string$$array {
 /* 函数值结构体（原Closure，0.1起更名为Function并扩展）。
    所有函数（无论静态还是动态）作为值使用时均封装为本结构体；
    调用静态函数时仍然直接传递函数指针。 */
+typedef struct viola$threads$Listener viola$threads$Listener;
 typedef struct viola$lang$function$Function {
     viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;
@@ -248,7 +249,17 @@ typedef struct viola$lang$function$Function {
     /* 捕获的环境（元组类型）。以$开头，避免被用户代码意外修改 */
     void *$capture;
     viola$lang$string$$array *argNames;
+    /* 捕获环境的释放入口：由编译器为每个闭包生成（释放$capture中的对象成员
+       并free捕获结构体自身，见开发疑问记录195）；静态函数封装为Function值时
+       $capture为NULL、本指针也为NULL。形参写成void *，以免依赖Listener类型
+       在本头文件中的声明顺序 */
+    void (*$captureDel)(void *, void *);
 } viola$lang$function$Function;
+
+/* 函数值（Function结构体）的析构：释放捕获环境、形参名数组与结构体自身。
+   编译器生成的释放代码在引用计数归零后调用本函数（见开发疑问记录195：
+   此前函数值从不释放，捕获结构体与其捕获的对象成员都随之泄漏）。 */
+void viola$lang$function$__del__(viola$lang$function$Function *_this, viola$threads$Listener *listener);
 
 /* ================= 元组 ================= */
 /* 具体的元组结构体由编译器按元素类型生成（成员为$0、$1等，析构函数按元素类型
@@ -259,7 +270,6 @@ typedef struct viola$lang$function$Function {
    固定名字的viola$collections$Tuple$__del__转发：这样释放代码的文本不含元素
    类型名，可以在泛型函数体（彼时类型仍是占位符，如Tuple$U）中提前渲染而不会
    引用到不存在的符号（泛型体的释放代码在语句加入块时渲染、实例化后复用）。 */
-typedef struct viola$threads$Listener viola$threads$Listener;
 typedef struct viola$collections$Tuple {
     viola$lang$atomic_uint32 $refCount;
     viola$lang$ptr $parent;

@@ -21,6 +21,10 @@ from .symbol import (
     AutoTypeName,
     ArrayTypeName,
     retain_text,
+    destructor_name,
+    LISTENER_T,
+    FUNCTION_DEL_FUNC,
+    type_is_fully_concrete,
     REFCOUNT_DEC_FUNC
 )
 from utils import CompilerException, unreachable_warning, SourceInfo, InternalCompilerException, SUPER_ASSIGN_MARKER
@@ -31,6 +35,7 @@ from enum import Enum
 from typing import Optional
 
 from utils.text_utils import renumber_marks as _renumber_marks
+from utils.text_utils import sanitize_c_identifier
 
 LISTENER_WAIT_FUNC = "viola$threads$waitListener"
 # 构造函数体中代表待构造对象的局部变量名（见ConstructorDef），
@@ -799,11 +804,20 @@ class DeclStmt(Statement):
         """获取本语句携带的值表达式（无则为None，供函数级清理收集变量用）。"""
         return self._var_value
 
-    def optimize(self) -> "Statement":
+    def optimize(self, foldable: Optional[set[VariableName]] = None) -> "Statement":
+        """
+        :param foldable: 允许被常量折叠移除声明语句的变量集合（本块内定义的变量）。
+        为None时不做限制。
+        """
         if self._var_value is not None:
             self._var_value = self._var_value.optimize()
             if self._var_value.is_const and len(self._var) == 1 and not self._is_const_def:
                 self._const_vars[self._var[0]] = self._var_value
+                if foldable is not None and self._var[0] not in foldable:
+                    # 本块外可见的变量（如被闭包捕获者）不删除声明语句：常量表随
+                    # 本块结束而丢弃，而闭包体是独立语句块、不经由本块的常量表读取，
+                    # 删除声明会使闭包体引用未声明的变量（见开发疑问记录195）
+                    return self
                 return _StmtList(self._src_info, self._symbol_table, self._var_states, [], self._const_vars)
         if isinstance(self._var_value, UnpackExpr):
             to_unpack = self._var_value.to_unpack
@@ -1826,6 +1840,92 @@ class CStmt(Statement):
     @property
     def _inner_text(self) -> str:
         return self._text if self._text is not None else ""
+
+
+class DeferredReleaseStmt(Statement):
+    """类型尚未确定的变量的释放语句（见开发疑问记录195）。
+
+    泛型函数体内声明的变量，其类型可能是泛型参数：解析期无法判定"是否对象"，
+    也无法拼写`->$refCount`与析构函数名（前者对基本类型非法）。本语句把判定与
+    文本一并推迟到输出期：实例化时变量的类型被替换为具体类型（见instantiation），
+    _inner_text据其实际类型渲染（复用VariableName.free_text，非对象类型为空串）；
+    仍未实例化的伪实例（其代码不输出）同样不渲染。
+
+    释放语句的守卫与递减计数都包含在free_text中，故本语句代替了普通释放路径的
+    四条语句（守卫、释放、守卫结束、置空）。
+    """
+
+    def __init__(self, src_info: SourceInfo, symbol_table: SymbolTable, var_states: VariableStateTable,
+                 var: VariableName) -> None:
+        """
+        初始化延迟释放语句。
+        :param var: 待释放的变量（其类型在实例化后成为具体类型）。
+        """
+        super().__init__(src_info, symbol_table, var_states)
+        self._var: VariableName = var
+
+    def as_async(self) -> "Statement":
+        return super().as_async()
+
+    def as_inline(self, inline_mapping: dict[str, str]) -> "Statement":
+        return copy(self)
+
+    def check_tail_recursive(self, func_name: str) -> "Statement":
+        return self
+
+    @property
+    def global_init_text(self) -> str:
+        return ""
+
+    @property
+    def head_text(self) -> Optional[str]:
+        return None
+
+    @property
+    def input_variables(self) -> set[VariableName]:
+        return set()
+
+    @property
+    def used_variables(self) -> set[VariableName]:
+        return set()
+
+    def insert_finally_stmt(self, finally_stmt: "Statement") -> None:
+        pass
+
+    def instantiation(self, type_args: dict[GenericArgument, TypeName]) -> "Statement":
+        new_stmt = copy(self)
+        new_stmt._var = self._var.instantiation(self._var.name, type_args)
+        return new_stmt
+
+    @property
+    def is_finished(self) -> bool:
+        return True
+
+    @property
+    def new_listeners(self) -> dict[VariableName, str]:
+        return {}
+
+    @property
+    def new_variables(self) -> set[VariableName]:
+        return set()
+
+    def optimize(self) -> "Statement":
+        return self
+
+    @property
+    def outer_text(self) -> Optional[str]:
+        return None
+
+    @property
+    def variables_states(self) -> dict[VariableName, VariableState]:
+        return {}
+
+    @property
+    def _inner_text(self) -> str:
+        if not type_is_fully_concrete(self._var.type):
+            # 仍是泛型参数（伪实例，其代码不输出）：没有可渲染的释放代码
+            return ""
+        return self._var.free_text
 
 
 class _CondKw(Enum):
@@ -2872,15 +2972,38 @@ class BlockStmt(Statement):
             （_release_stmt_list）。退出路径（return/throw）上的释放按同一变量
             另行调用本方法生成一套独立的语句，此时不再重复登记清理路径。
         """
-        release_stmt = OpStmt(src_info, self._symbol_table, self._var_states)
-        call_op = CallOp(src_info, self._symbol_table)
-        call_op._is_internal = True
-        attr_op = AttrOp(src_info, self._symbol_table)
-        attr_op.set_attr("__del__")
-        attr_op.set_caller(VariableRef(src_info, self._symbol_table, var))
-        call_op.set_func(attr_op)
-        release_stmt.set_expr(call_op)
-        release_stmt.indent()
+        if not type_is_fully_concrete(var.type):
+            # 类型尚未实例化（泛型函数体内的泛型参数类型）：此处无法判定"是否
+            # 对象"、也无法拼写->$refCount与析构函数名（前者对基本类型非法），
+            # 故生成一条在输出期按实例化后的类型渲染的释放语句
+            # （见开发疑问记录195）
+            deferred_stmt = DeferredReleaseStmt(src_info, self._symbol_table, self._var_states, var)
+            deferred_stmt.remove_jump_mark()
+            deferred_stmt.remove_mark()
+            new_stmt_list.append(deferred_stmt)
+            if register_cleanup:
+                # 异常清理路径上的同一释放：与正常路径的语句分开创建
+                cleanup_stmt = DeferredReleaseStmt(src_info, self._symbol_table, self._var_states, var)
+                cleanup_stmt.remove_jump_mark()
+                cleanup_stmt.remove_mark()
+                self._release_stmt_list.append(cleanup_stmt)
+            return
+        if isinstance(var.type, FunctionTypeName):
+            # 函数值（Function结构体）的释放走运行库的固定入口：函数类型没有
+            # 方法表，按__del__方法解析会报"Variable to get attribute is not
+            # a class type"（见开发疑问记录195）
+            release_stmt = CStmt(src_info, self._symbol_table, self._var_states)
+            release_stmt.add_text(f"\t{FUNCTION_DEL_FUNC}({var.name}, listener);")
+        else:
+            release_stmt = OpStmt(src_info, self._symbol_table, self._var_states)
+            call_op = CallOp(src_info, self._symbol_table)
+            call_op._is_internal = True
+            attr_op = AttrOp(src_info, self._symbol_table)
+            attr_op.set_attr("__del__")
+            attr_op.set_caller(VariableRef(src_info, self._symbol_table, var))
+            call_op.set_func(attr_op)
+            release_stmt.set_expr(call_op)
+            release_stmt.indent()
         # 释放代码位于块的异常清理路径中：异常时不应跳出本块
         # （否则try块的catch分发标签不可达），而是继续执行清理
         release_stmt.remove_jump_mark()
@@ -2949,7 +3072,9 @@ class BlockStmt(Statement):
                     # 变量已在本块内完成最后一次使用并释放，不再向外层传播
                     self._input_variables.discard(var)
                     # unsafe变量由用户手动管理内存，不参与引用计数（见开发疑问记录191）
-                    if var.is_object and not var.is_unsafe_managed:
+                    # 类型尚未实例化时也要生成释放语句：泛型函数体内的变量其
+                    # "是否对象"须待实例化后才能判定（见开发疑问记录195）
+                    if (var.is_object or not type_is_fully_concrete(var.type)) and not var.is_unsafe_managed:
                         self._release_variable(var, stmt.src_info, new_stmt_list)
                 elif var in self._outer_variables and var not in self._used_outer_variables and not var.is_global:
                     self._used_outer_variables.append(var)
@@ -2970,8 +3095,10 @@ class BlockStmt(Statement):
                         # 被读取过（由上面的"最后一次使用"处理），或并非本块
                         # 声明的变量
                         continue
-                    if not var.is_object or var.is_unsafe_managed or var.is_return:
-                        # 非对象类型无释放动作；unsafe变量由用户手动管理内存；
+                    if not (var.is_object or not type_is_fully_concrete(var.type)) or \
+                            var.is_unsafe_managed or var.is_return:
+                        # 非对象类型无释放动作（类型未实例化时不能判定，见
+                        # 开发疑问记录195）；unsafe变量由用户手动管理内存；
                         # 返回值槽位在C层是指针形参，其对象随返回值交给调用方
                         continue
                     if var in stmt.new_listeners:
@@ -3207,12 +3334,17 @@ class BlockStmt(Statement):
         # 对象成员（this.X = ...）同样不允许：对象可能在本块之外被读取，
         # 折叠掉赋值语句会使成员保持未初始化（见开发疑问记录193。
         # 实测构造函数中的`this.value = 7;`被删除，构造出的对象成员为0）
+        # 被闭包捕获的变量同样不允许折叠：闭包体是独立语句块，其读取不经由本块
+        # 的常量表，折叠掉声明/赋值会使闭包体引用未声明的变量（见开发疑问记录195）
         foldable: set[VariableName] = set(
-            filter(lambda var: var not in self._outer_variables and not var.is_global and not var.is_member,
+            filter(lambda var: var not in self._outer_variables and not var.is_global and not var.is_member
+                               and not self._symbol_table.is_captured(var),
                    self._inner_variables))
         for i, stmt in enumerate(self._stmt):
             stmt = stmt.substitute(const_vars)
-            if isinstance(stmt, AssignStmt):
+            if isinstance(stmt, (AssignStmt, DeclStmt)):
+                # 限定可折叠变量的集合：本块外可见的变量（外层变量、模块级变量、
+                # 对象成员、被闭包捕获者）不删除赋值/声明语句
                 stmt = stmt.optimize(foldable)
             else:
                 stmt = stmt.optimize()
@@ -3238,6 +3370,11 @@ class BlockStmt(Statement):
         self._is_closure = True
         self._closure_name = closure_name
         self._used_outer_variables = [v for v in self._used_outer_variables if v not in args]
+        # 被捕获的外层变量不参与外层块的常量折叠：闭包体是独立语句块，对捕获
+        # 变量的读取不经由外层块的常量表，折叠掉其声明/赋值语句会使闭包体引用
+        # 未声明的变量（见开发疑问记录195）
+        for var in self._used_outer_variables:
+            self._symbol_table.mark_captured(var)
         self._rebuild_closure_texts()
         if self._closure_init_stmt is None:
             self._closure_init_stmt = CStmt(self._src_info, self._symbol_table, self._var_states)
@@ -3257,18 +3394,71 @@ class BlockStmt(Statement):
         used_outer_variables_decl: list[str] = list(
             map(lambda x: f"\t{x.type_name_pair_calling};", self._used_outer_variables))
         # 捕获结构体的定义输出到模块级（外层函数分配捕获结构体时同样需要它），
-        # 闭包体内仅做成员转换
+        # 闭包体内仅做成员转换；捕获结构体的析构函数与其定义一同输出
         self._closure_struct_def = "\n".join([
             f"{struct_name} {{",
             "\n".join(used_outer_variables_decl),
-            "};"
+            "};",
+            self._closure_capture_del_text
         ])
         struct_alloc: str = \
             f"{struct_name} *{self._closure_name}$$capture = ({struct_name} *)malloc(sizeof({struct_name}));"
-        used_outer_variables_set: list[str] = list(
-            map(lambda x: f"{self._closure_name}$$capture->{x.name} = {x.name};",
-                self._used_outer_variables))
+        # 捕获对象成员时retain：捕获结构体自此持有一个引用，闭包因而比被捕获的
+        # 局部变量活得更久时不致访问已释放的对象（对象随闭包的释放而释放，
+        # 见_closure_capture_del_text；原实现不计数，见开发疑问记录195）
+        used_outer_variables_set: list[str] = []
+        for x in self._used_outer_variables:
+            used_outer_variables_set.append(f"{self._closure_name}$$capture->{x.name} = {x.name};")
+            if x.is_object and not x.is_unsafe_managed:
+                used_outer_variables_set.append(retain_text(
+                    f"{self._closure_name}$$capture->{x.name}"))
         self._closure_struct_setting_code = struct_alloc + "\n" + "\n".join(used_outer_variables_set)
+
+    @property
+    def capture_del_name(self) -> str:
+        """获取捕获结构体析构函数的C名。
+
+        名字含各捕获变量的类型名：本闭包的捕获结构体按捕获变量的类型生成，
+        泛型函数体内实例化后各实例的类型不同（见rebuild_for_instantiation），
+        名字必须随之不同，否则同一模块中的多个实例会定义同名函数。
+        无捕获变量时不需要类型后缀（各实例的捕获结构体形状相同）。
+        """
+        suffix: str = "$".join(sanitize_c_identifier(v.type.name) for v in self._used_outer_variables)
+        return f"{self._closure_name}$capture$del" + (f"${suffix}" if suffix != "" else "")
+
+    @property
+    def _closure_capture_del_text(self) -> str:
+        """获取捕获结构体的析构函数文本。
+
+        Function结构体的$captureDel指向本函数：引用计数归零时由
+        viola$lang$function$__del__调用，释放捕获的对象成员并free捕获结构体
+        自身（原实现只free Function结构体，二者都不释放，见开发疑问记录195）。
+        成员类型可能是泛型参数，故本文本在实例化时随捕获结构体一同重建
+        （见rebuild_for_instantiation）。
+        """
+        del_name: str = self.capture_del_name
+        member_releases: list[str] = []
+        for x in self._used_outer_variables:
+            if not x.is_object or x.is_unsafe_managed:
+                continue
+            if not type_is_fully_concrete(x.type):
+                # 捕获变量的类型仍是泛型参数（如T[]）：析构函数名含元素类型名，
+                # 此刻拼不出来。实例化时本段文本会随捕获结构体一同重建
+                # （见rebuild_for_instantiation），届时类型已是具体类型
+                continue
+            member_releases.append("\n".join([
+                f"\tif ($$p->{x.name} && {REFCOUNT_DEC_FUNC}(&$$p->{x.name}->$refCount) == 0) {{",
+                f"\t\t{destructor_name(x.type)}($$p->{x.name}, listener);",
+                "\t}"
+            ]))
+        return "\n".join([
+            f"static void {del_name}(void *$$capture, {LISTENER_T} *listener) {{",
+            f"\tstruct {self._closure_name}$Capture *$$p = (struct {self._closure_name}$Capture *)$$capture;",
+            "\tif ($$p == NULL) { return; }",
+            *member_releases,
+            "\tfree($$p);",
+            "}"
+        ])
 
     @property
     def _closure_convert_text(self) -> str:

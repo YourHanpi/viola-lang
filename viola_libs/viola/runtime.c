@@ -5,6 +5,43 @@
 
 /* ================= 内置释放函数 ================= */
 
+/* viola.lang.string的析构（定义见lang/string.c）：释放Function.argNames中
+   由fromCharString创建的形参名字符串。本文件只包含runtime.h，故在此声明。 */
+void viola$lang$string$__del__$_0(viola$lang$string *_this, viola$threads$Listener *listener);
+
+/* 函数值（Function结构体）的析构：引用计数归零后释放其持有的一切。
+   构造函数与调用约定见runtime.h的viola$lang$function$Function。
+   $capture由编译器为每个闭包生成的$captureDel释放（其中含捕获的对象成员
+   与捕获结构体自身）；静态函数封装的$capture与$captureDel均为NULL。
+   argNames与其中的形参名字符串同样在此释放（此前二者都不释放，见开发疑问
+   记录195）。 */
+void viola$lang$function$__del__(viola$lang$function$Function *_this, viola$threads$Listener *listener) {
+    if (_this == NULL) {
+        return;
+    }
+    if (_this->$capture != NULL) {
+        if (_this->$captureDel != NULL) {
+            _this->$captureDel(_this->$capture, listener);
+        }
+        _this->$capture = NULL;
+    }
+    if (_this->argNames != NULL) {
+        viola$lang$string$$array *names = _this->argNames;
+        _this->argNames = NULL;
+        if (viola$lang$refcount_dec(&names->$refCount) == 0) {
+            for (viola$lang$uint64 i = 0; i < names->size; i++) {
+                viola$lang$string *name = names->data[i];
+                if (name != NULL && viola$lang$refcount_dec(&name->$refCount) == 0) {
+                    viola$lang$string$__del__$_0(name, listener);
+                }
+            }
+            free(names->data);
+            free(names);
+        }
+    }
+    free(_this);
+}
+
 /* viola.lang.del的内置实现。
    仅有意义的用法是del(super);（wrapper类__del__中释放普通成员），
    该形式由编译器直接生成当前类的$__del__super$_0调用；

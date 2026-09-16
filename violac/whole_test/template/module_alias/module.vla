@@ -27,3 +27,8 @@ fn ${MAKE_FUNC}() -> (${ALIAS_TYPE} result) {
 fn ${SCALE_FUNC}(int value) -> (int result) {
     result = value * 2;
 }
+
+// 泛型函数（供调用方以模块别名+泛型实参调用，见开发疑问记录195）
+fn ${GENERIC_FUNC}::<T>(T[] values, size_t extra) -> (size_t result) {
+    result = values.length() + extra;
+}

@@ -364,6 +364,58 @@ fn captureInGeneric::<T>(T[] src) -> (size_t result) {
     result = sizeOf();
 }
 
+// 闭包捕获函数体内的局部变量：捕获变量的声明不得被常量折叠删除（闭包体是
+// 独立语句块，不经由外层块的常量表读取，见开发疑问记录195）
+sq closureCaptureLocal(int seed) -> (int result) {
+    int local = 5;
+    auto grab = sq() -> (int r) {
+        r = local + seed;
+    };
+    result = grab();
+}
+
+// 闭包捕获对象局部变量：捕获时必须retain（闭包比局部变量活得久），
+// 闭包释放时释放捕获结构体与其中的对象成员（见开发疑问记录195）
+sq closureCaptureObject(int times, int round) -> (int result) {
+    if (round >= times) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    ReleaseTicker tick = ReleaseTicker();
+    auto grab = sq() -> (int r) {
+        r = tick.marker;
+    };
+    int marker = grab();
+    int bad = marker == 1 ? 0 : 1;
+    result = closureCaptureObject(times, next) - bad;
+}
+
+// 泛型函数体内的异步调用取回对象：目标变量的类型是泛型参数，其"是否对象"的
+// 判定与释放文本须一并推迟到实例化之后（原先不生成释放语句，对象从不析构，
+// 见开发疑问记录195）
+fn sameAs::<T>(T x) -> (T result) {
+    result = x;
+}
+
+fn asyncSamePass::<T>(T x) -> (T result) {
+    async T got = sameAs::<T>(x);
+    result = got;
+}
+
+sq genericAsyncTickRelease(int times, int round) -> (int result) {
+    if (round >= times) {
+        result = 0;
+        return;
+    }
+    int next = round + 1;
+    ReleaseTicker src = ReleaseTicker();
+    ReleaseTicker got = asyncSamePass::<ReleaseTicker>(src);
+    int marker = got.marker;
+    int bad = marker == 1 ? 0 : 1;
+    result = genericAsyncTickRelease(times, next) - bad;
+}
+
 sq main() -> () {
     // 1. 别名：两个局部变量各持一次引用
     ${CLASS_NAME} ${OBJ_A} = ${CLASS_NAME}("${STRING_A}", ${WEIGHT_A});
@@ -477,6 +529,28 @@ sq main() -> () {
     check(closureOk == ${WEIGHT_A} + 1, "closure declared with auto");
     size_t captureOk = captureInGeneric::<string>(["${STRING_A}", "${STRING_B}", "${STRING_F}"]);
     check(captureOk == 3, "closure capturing a generic parameter");
+
+    // 19. 闭包捕获函数体内的局部变量（见开发疑问记录195）
+    int closureLocalOk = closureCaptureLocal(${WEIGHT_A});
+    check(closureLocalOk == ${WEIGHT_A} + 5, "closure capturing a function-local variable");
+    file tickTruncate4 = open("refcount_ticker.log", "w", "utf-8");
+    write(tickTruncate4, "");
+    int closureObjOk = closureCaptureObject(30, 0);
+    file tickLog4 = open("refcount_ticker.log", "r", "utf-8");
+    string ticks4 = read(tickLog4);
+    check(closureObjOk == 0 && ticks4.length() >= 30,
+          "closure keeps its captured object alive and releases it");
+
+    // 20. 泛型函数体内的异步调用返回对象：释放代码按实例化后的类型生成
+    // （见开发疑问记录195）
+    file tickTruncate5 = open("refcount_ticker.log", "w", "utf-8");
+    write(tickTruncate5, "");
+    int genericTickOk = genericAsyncTickRelease(30, 0);
+    file tickLog5 = open("refcount_ticker.log", "r", "utf-8");
+    string ticks5 = read(tickLog5);
+    // 每轮创建的对象只有一个（got与src是同一对象）：30轮应恰好析构30次
+    check(genericTickOk == 0 && ticks5.length() >= 30,
+          "generic async call returning an object releases it");
 
     print("0.1 reference counting test completed\n");
 }

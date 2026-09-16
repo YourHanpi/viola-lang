@@ -4,6 +4,16 @@ from viola.io import *;
 // imported symbol references in its signature
 
 from ${MODULE_1} import ${FUNC_1} as ${FUNC_ALIAS}, ${CLASS_1} as ${CLASS_ALIAS}, ${MAKE_FUNC}, ${SCALE_FUNC};
+import ${MODULE_1} as ${MODULE_ALIAS};
+
+// 泛型函数体内以模块别名调用泛型函数：限定名与泛型实参同时出现时，
+// 调用点的C名必须与定义处一致（原实现重复拼接命名空间，链接失败，
+// 见开发疑问记录195）
+fn callViaModuleAlias::<T>(T[] values) -> (size_t result) {
+    T[] local = values;
+    int[] nums = [1, 2, 3];
+    result = ${MODULE_ALIAS}.${GENERIC_FUNC}::<int>(nums, local.length());
+}
 
 sq main() -> () {
     // Calling an aliased function
@@ -36,5 +46,14 @@ sq main() -> () {
         print("alias-deptype2-ok");
     } else {
         print("alias-deptype2-FAIL");
+    }
+
+    // 泛型函数体内以模块别名调用泛型函数（限定名+泛型实参）
+    // 3（nums的长度）+ 4（viaAlias的长度）
+    int[] viaAlias = [7, 8, 9, 10];
+    if (callViaModuleAlias::<int>(viaAlias) == 7) {
+        print("alias-generic-ok");
+    } else {
+        print("alias-generic-FAIL");
     }
 }

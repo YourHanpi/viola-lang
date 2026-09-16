@@ -48,6 +48,8 @@ STACK_B_POP_FUNC: str = "viola$threads$popStackB"
 # 与definition.py的同名常量一致，因模块依赖方向（definition引用symbol）在此重复声明。
 REFCOUNT_INC_FUNC: str = "viola$lang$refcount_inc"
 REFCOUNT_DEC_FUNC: str = "viola$lang$refcount_dec"
+# 函数值（Function结构体）的析构入口（定义见viola/runtime.c）
+FUNCTION_DEL_FUNC: str = "viola$lang$function$__del__"
 
 
 def retain_text(var_text: str) -> str:
@@ -82,6 +84,11 @@ def destructor_name(var_type: TypeName) -> str:
                 f"Array type {var_type.name} is not fully instantiated: the release code "
                 f"must be rendered after instantiation.", var_type.src_info)
         return f"{var_type.c_alloc_name}$__del__$_0"
+    if isinstance(var_type, FunctionTypeName):
+        # 函数值（闭包与作为值使用的函数）在C层是Function结构体指针，其释放由
+        # 运行库的固定入口完成（释放捕获环境、形参名数组与结构体自身，
+        # 见runtime.h与开发疑问记录195）
+        return FUNCTION_DEL_FUNC
     if isinstance(var_type, ClassName):
         del_method = next(
             (m for (n, _), m in var_type.methods.items() if n == "__del__"), None)
@@ -730,8 +737,12 @@ class VariableName(NamedSymbol):
     def is_object(self) -> bool:
         """
         获取这一变量是否为对象。
+
+        函数值（闭包、作为值使用的函数）在C层是Function结构体指针、带引用计数，
+        按对象管理其生存期（见开发疑问记录195）。其余判据不变。
         """
-        return isinstance(self._type, ClassName) and self._type.is_object
+        return (isinstance(self._type, ClassName) and self._type.is_object) or \
+            isinstance(self._type, FunctionTypeName)
 
     @property
     def raw_name(self) -> str:
@@ -1511,6 +1522,15 @@ def _generic_instance_index(symbol_c_name: str, arg_names: tuple[str, ...]) -> i
         if arg_names not in index_table:
             index_table[arg_names] = len(index_table)
         return index_table[arg_names]
+
+
+def type_is_fully_concrete(t: TypeName) -> bool:
+    """判断类型是否完全实例化（见_type_is_fully_concrete）。
+
+    供语句生成使用：类型含泛型参数时"是否对象"的判定与释放文本都要推迟到
+    实例化之后（见开发疑问记录195）。
+    """
+    return _type_is_fully_concrete(t)
 
 
 def _type_is_fully_concrete(t: TypeName) -> bool:
@@ -2585,6 +2605,16 @@ class FunctionTypeName(TypeName):
         )
 
     @property
+    def is_object(self) -> bool:
+        """函数值按对象管理生存期：C层为带引用计数的Function结构体指针。
+
+        作为值使用的函数（静态函数与闭包）都封装为该结构体，释放由运行库的
+        固定入口完成（见开发疑问记录195）。函数类型的形参仍是借用的：实参由
+        调用方持有、被调方不释放（形参不在函数体内声明的变量之列）。
+        """
+        return True
+
+    @property
     def is_generic(self) -> bool:
         return self._generic_args is not None and len(self._generic_args) > 0
 
@@ -2939,9 +2969,26 @@ class FunctionName(GlobalVariableName):
 
     def instantiation(self, new_name: str, t: dict["GenericArgument", TypeName]) -> "FunctionName":
         new_type: FunctionTypeName = self.type.instantiation(t)
-        result: FunctionName = FunctionName(self._src_info, self._namespace, new_name,
+        result: FunctionName = FunctionName(self._src_info, self._namespace,
+                                            self._unqualified_name(new_name),
                                             new_type, self._arg_names, self._ret_names, self._export)
         return result
+
+    def _unqualified_name(self, new_name: str) -> str:
+        """把可能是完整C名的名称还原为自身名（不含命名空间前缀）。
+
+        本方法的new_name参数按"自身名"解释（命名空间由符号自身的_namespace补全），
+        而调用方常直接传入.name——完整C名。此类调用会使命名空间被重复拼接
+        （main$inc$_0 -> main$main$inc$_0、viola$util$functools$map$_0$_0 ->
+        viola$util$functools$viola$util$functools$map$_0$_0）：泛型函数体内引用
+        本模块函数、以及经由模块别名调用泛型函数时，调用点的C名与定义处不一致，
+        链接时报未定义符号（见开发疑问记录195）。此处对已带本符号命名空间
+        前缀的名称做还原，使传入完整名与传入自身名等价。
+        """
+        prefix: str = "$".join(n.name for n in self._namespace)
+        if prefix != "" and new_name.startswith(prefix + "$"):
+            return new_name[len(prefix) + 1:]
+        return new_name
 
     def instantiation_full(self, new_name: str, real_types: list[TypeName]) -> "FunctionName":
         """
@@ -4808,6 +4855,8 @@ class SymbolTable:
         # 键为变量的限定C名称（含模块前缀），故跨模块也不会混淆。
         self._assigned_globals: set[str] = set()
         self._read_globals: set[str] = set()
+        # 被闭包捕获的变量名（见mark_captured）：不参与常量折叠
+        self._captured_variables: set[str] = set()
         if not src_path == "" and not workspace == "":
             # 元数据中的路径为缓存路径（含__viola_cache__与..段），
             # 还原为真实的源文件路径
@@ -4951,6 +5000,21 @@ class SymbolTable:
     def mark_global_read(self, name: str) -> None:
         """记录本编译单元读取过某个模块级变量（见_read_globals）。"""
         self._read_globals.add(name)
+
+    def mark_captured(self, var: VariableName) -> None:
+        """记录该变量被某个闭包捕获（见开发疑问记录195）。
+
+        被捕获的变量不参与常量折叠：闭包体是独立语句块，对捕获变量的读取不经由
+        外层块的常量表，折叠掉其声明/赋值语句会使闭包体引用未声明的变量。
+        按名称记录：同一编译单元内不同函数的同名局部变量会一并被排除（只损失
+        一次折叠机会，不影响正确性），而VariableName按名称比较、按名称哈希，
+        按对象记录反而可能因闭包体内外的对象不是同一个而漏掉。
+        """
+        self._captured_variables.add(var.name)
+
+    def is_captured(self, var: VariableName) -> bool:
+        """判断该变量是否被闭包捕获（见mark_captured）。"""
+        return var.name in self._captured_variables
 
     def needs_global_storage(self, name: str) -> bool:
         """判断本模块是否要为某个模块级变量提供存储（否则只生成extern声明）。

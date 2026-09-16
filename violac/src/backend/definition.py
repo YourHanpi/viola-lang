@@ -319,6 +319,11 @@ class SqDef(Definition):
         """获取闭包结构体设置代码。"""
         return self._body.closure_struct_setting_code
 
+    @property
+    def capture_del_name(self) -> str:
+        """获取闭包捕获结构体析构函数的C名（见BlockStmt.capture_del_name）。"""
+        return self._body.capture_del_name
+
     def finish(self) -> None:
         """完成函数定义，生成异步函数体。"""
         if self._is_finished:
@@ -674,8 +679,14 @@ class SqDef(Definition):
 
     @property
     def used_variables(self) -> set[VariableName]:
-        """获取函数中使用的非参数外部变量集合。"""
-        return self._body.input_variables - set(self._args)
+        """获取函数中使用的非参数外部变量集合。
+
+        含闭包捕获的外层变量（_body.used_variables并入_used_outer_variables）：
+        捕获变量由闭包体读取，必须计入本定义的读取集合，否则外层函数体的依赖
+        排序（FnBlockStmt._sort_stmt）会把捕获变量的声明语句当作"结果无人使用"
+        而丢弃，生成的C代码引用未声明的变量（见开发疑问记录194末尾第2条）。
+        """
+        return self._body.used_variables - set(self._args)
 
     def _get_default_params_decl(self) -> str:
         # noinspection PyTypeChecker
@@ -1893,6 +1904,9 @@ class Closure(Expression):
             f"{self._var_name}->asyncPtr = ({FUNCTION_ASYNC_PTR_T} *){self._sq_def.name}$async;",
             f"{self._var_name}->syncPtr = ({FUNCTION_SYNC_PTR_T} *){self._sq_def.name};",
             f"{self._var_name}->$capture = {self._var_name}$$capture;",
+            # 捕获环境的释放入口（引用计数归零时由Function的析构调用）
+            f"{self._var_name}->$captureDel = "
+            f"(void (*)(void *, void *)){self._sq_def.capture_del_name};",
             *arg_names_setting
         ]
         return "\n".join(result)
@@ -1944,10 +1958,18 @@ class Closure(Expression):
         return source
 
     @property
+    def transfers_ownership(self) -> bool:
+        """闭包表达式的临时变量（Function结构体）不被语句块释放。
+
+        创建它的槽位即成为唯一持有者：赋值处不再retain（否则只增不减而泄漏），
+        语句块在槽位的最后一次使用处释放（见开发疑问记录195）。
+        """
+        return True
+
+    @property
     def release_text(self) -> Optional[str]:
-        """获取闭包的释放代码（递减引用计数，归零则释放结构体）。"""
-        return release_text(
-            self._var_name, f"free({self._var_name});\n{self._var_name} = NULL;")
+        """获取闭包的释放代码：所有权交给接收它的槽位（见transfers_ownership）。"""
+        return None
 
     @property
     def return_type(self) -> TypeName:
